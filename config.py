@@ -24,6 +24,27 @@ class Settings(BaseSettings):
     reranker_model: str = ""
     reranker_top_n: int = 6
     reranker_candidates: int = 25
+    reranker_query_template: str = ""
+    reranker_instruction: str = ""
+
+    # Retrieval
+    retrieval_top_k: int = 10
+    min_confidence_score: float = 0.45
+
+    # Hybrid search
+    hybrid_vector_candidates: int = 20
+    hybrid_bm25_candidates: int = 20
+
+    # Embedding
+    embedding_query_prefix: str = ""
+    embedding_passage_prefix: str = ""
+
+    # Chunking
+    chunk_min_tokens: int = 50
+    chunk_max_tokens: int = 400
+
+    # Escalation
+    escalation_ticket_prefix: str = "LEG"
 
     # BM25
     bm25_enabled: bool = False

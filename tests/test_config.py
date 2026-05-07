@@ -17,6 +17,17 @@ def test_config_loads_from_env(monkeypatch):
     monkeypatch.setenv("RERANKER_MODEL", "bge-reranker")
     monkeypatch.setenv("RERANKER_TOP_N", "6")
     monkeypatch.setenv("RERANKER_CANDIDATES", "25")
+    monkeypatch.setenv("RERANKER_QUERY_TEMPLATE", "")
+    monkeypatch.setenv("RERANKER_INSTRUCTION", "")
+    monkeypatch.setenv("RETRIEVAL_TOP_K", "10")
+    monkeypatch.setenv("MIN_CONFIDENCE_SCORE", "0.45")
+    monkeypatch.setenv("HYBRID_VECTOR_CANDIDATES", "20")
+    monkeypatch.setenv("HYBRID_BM25_CANDIDATES", "20")
+    monkeypatch.setenv("EMBEDDING_QUERY_PREFIX", "")
+    monkeypatch.setenv("EMBEDDING_PASSAGE_PREFIX", "")
+    monkeypatch.setenv("CHUNK_MIN_TOKENS", "50")
+    monkeypatch.setenv("CHUNK_MAX_TOKENS", "400")
+    monkeypatch.setenv("ESCALATION_TICKET_PREFIX", "LEG")
     monkeypatch.setenv("BM25_ENABLED", "false")
     monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-local")
@@ -41,6 +52,13 @@ def test_config_loads_from_env(monkeypatch):
     assert settings.reranker_model == "bge-reranker"
     assert settings.reranker_top_n == 6
     assert settings.reranker_candidates == 25
+    assert settings.retrieval_top_k == 10
+    assert settings.min_confidence_score == 0.45
+    assert settings.hybrid_vector_candidates == 20
+    assert settings.hybrid_bm25_candidates == 20
+    assert settings.chunk_min_tokens == 50
+    assert settings.chunk_max_tokens == 400
+    assert settings.escalation_ticket_prefix == "LEG"
     assert settings.bm25_enabled is False
     assert settings.langfuse_host == "http://localhost:3000"
     assert settings.langfuse_public_key == "pk-lf-local"
