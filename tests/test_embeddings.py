@@ -1,11 +1,14 @@
 # tests/test_embeddings.py
 from unittest.mock import MagicMock, patch
 
+from config import get_settings
+
 
 def test_embed_texts_calls_ollama(monkeypatch):
     """embed_texts() sends correct payload to Ollama /api/embed."""
     monkeypatch.setenv("EMBEDDING_MODEL", "embeddinggemma:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
 
     import importlib
     import rag.embeddings as mod
@@ -31,6 +34,7 @@ def test_embed_query_calls_ollama(monkeypatch):
     """embed_query() returns a single vector."""
     monkeypatch.setenv("EMBEDDING_MODEL", "embeddinggemma:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
 
     import importlib
     import rag.embeddings as mod
