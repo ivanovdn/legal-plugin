@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
 
     # Redis
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = "redis://:myredissecret@localhost:6379"
 
     # Reranker
     reranker_enabled: bool = True
@@ -30,8 +30,8 @@ class Settings(BaseSettings):
 
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
+    langfuse_public_key: str = "pk-lf-local"
+    langfuse_secret_key: str = "sk-lf-local"
 
     # Phoenix
     phoenix_host: str = "http://localhost:6006"
