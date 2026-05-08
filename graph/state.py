@@ -23,5 +23,5 @@ class LegalAgentState(TypedDict):
     attorney_notes: str
     report: dict
     session_id: str
-    checkpoint_id: str
+    checkpoint_ref: str
     trace_id: str
