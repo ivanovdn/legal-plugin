@@ -32,7 +32,7 @@ def route_intent(state: LegalAgentState) -> str:
     return "skill_dispatcher"
 
 
-def build_graph() -> StateGraph:
+def build_graph(checkpointer=None) -> StateGraph:
     """Build and compile the supervisor graph. Returns compiled graph."""
     graph = StateGraph(LegalAgentState)
 
@@ -100,4 +100,4 @@ def build_graph() -> StateGraph:
     graph.add_edge("output_formatter", "memory_writer")
     graph.add_edge("memory_writer", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
