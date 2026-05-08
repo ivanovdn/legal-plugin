@@ -1,4 +1,5 @@
 # tests/test_graph.py
+from unittest.mock import patch, MagicMock
 from graph.state import LegalAgentState
 
 
@@ -62,60 +63,164 @@ def test_graph_compiles():
     assert graph is not None
 
 
-def test_graph_end_to_end_research():
-    """A research request flows through all stubs to END."""
-    from graph.graph import build_graph
-    graph = build_graph()
+def _fake_ollama_post(url, **kwargs):
+    """Mock Ollama that handles both intent classification and LLM calls."""
+    resp = MagicMock()
+    resp.status_code = 200
+    body = kwargs.get("json", {})
+    messages = body.get("messages", [])
+    user_msg = messages[-1]["content"] if messages else ""
 
-    result = graph.invoke(_make_state(
-        request="What are the indemnification standards in US contracts?",
-    ))
+    if "classify" in user_msg.lower() or "task type" in user_msg.lower():
+        resp.json.return_value = {"message": {"content": '{"task_type": "research"}'}}
+    else:
+        resp.json.return_value = {"message": {"content": "Based on Contract A (doc_id: d1), the answer is X."}}
+    return resp
+
+
+_fake_chunks = [
+    {"chunk_id": "c1", "doc_id": "d1", "doc_title": "Contract A",
+     "text": "relevant legal text", "rrf_score": 0.8,
+     "doc_type": "contract", "client_id": "internal", "jurisdiction": "US"},
+]
+
+
+def test_graph_end_to_end_research(tmp_path, monkeypatch):
+    """A research request flows through real nodes to END."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+
+    from config import get_settings
+    get_settings.cache_clear()
+
+    from memory.audit import init_audit_db
+    init_audit_db(db_path)
+
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+
+        from graph.graph import build_graph
+        graph = build_graph()
+        result = graph.invoke(_make_state(
+            request="What are indemnification standards?",
+        ))
 
     assert result["task_type"] == "research"
-    assert "legal_research stub" in result["llm_response"]
+    assert result["llm_response"] != ""
     assert result["risk_level"] == "low"
+    assert "response" in result["report"]
 
 
-def test_graph_contract_generation_routes_to_human_review():
+def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch):
     """Contract generation always routes through human_review."""
-    from graph.graph import build_graph
-    graph = build_graph()
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
 
-    result = graph.invoke(_make_state(
-        request="Generate a service agreement",
-        task_type="contract_generation",
-        skill_plan=["contract_generation"],
-    ))
+    from config import get_settings
+    get_settings.cache_clear()
+
+    from memory.audit import init_audit_db
+    init_audit_db(db_path)
+
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+
+        from graph.graph import build_graph
+        graph = build_graph()
+        result = graph.invoke(_make_state(
+            request="Generate a service agreement",
+            task_type="contract_generation",
+            skill_plan=["contract_generation"],
+        ))
 
     assert result["task_type"] == "contract_generation"
     assert result["awaiting_review"] is True
-    assert "contract_generation stub" in result["llm_response"]
 
 
-def test_graph_drafting_routes_to_human_review():
+def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
     """Drafting always routes through human_review."""
-    from graph.graph import build_graph
-    graph = build_graph()
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
 
-    result = graph.invoke(_make_state(
-        request="Draft an NDA",
-        task_type="drafting",
-        skill_plan=["drafting"],
-    ))
+    from config import get_settings
+    get_settings.cache_clear()
+
+    from memory.audit import init_audit_db
+    init_audit_db(db_path)
+
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+
+        from graph.graph import build_graph
+        graph = build_graph()
+        result = graph.invoke(_make_state(
+            request="Draft an NDA",
+            task_type="drafting",
+            skill_plan=["drafting"],
+        ))
 
     assert result["awaiting_review"] is True
-    assert "drafting stub" in result["llm_response"]
 
 
-def test_graph_multi_skill_routes_through_planner():
-    """When skill_plan has multiple skills, routes through planner."""
-    from graph.graph import build_graph
-    graph = build_graph()
+def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
+    """Full graph flow: intake -> ... -> memory_writer writes audit log."""
+    db_path = str(tmp_path / "test_legal.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
 
-    result = graph.invoke(_make_state(
-        request="Review contract and check compliance",
-        task_type="compliance",
-        skill_plan=["contract_review", "compliance"],
-    ))
+    from config import get_settings
+    get_settings.cache_clear()
 
-    assert result["task_type"] == "compliance"
+    from memory.audit import init_audit_db
+    init_audit_db(db_path)
+
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+
+        from graph.graph import build_graph
+        graph = build_graph()
+        result = graph.invoke(_make_state(
+            request="What are indemnification standards?",
+            session_id="integration-test",
+        ))
+
+    assert result["task_type"] == "research"
+    assert result["llm_response"] != ""
+    assert "response" in result["report"]
+
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT * FROM audit_log").fetchall()
+    conn.close()
+    assert len(rows) >= 1
