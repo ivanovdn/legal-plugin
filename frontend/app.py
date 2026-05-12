@@ -1,6 +1,12 @@
 # frontend/app.py
 """Chainlit frontend — chat interface for the legal plugin."""
 
+import sys
+from pathlib import Path
+
+# Ensure project root is on path when Chainlit runs this file directly
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import chainlit as cl
 
 from frontend.api_client import submit_query, ingest_file, health_check
