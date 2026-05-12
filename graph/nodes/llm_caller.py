@@ -10,7 +10,7 @@ from graph.state import LegalAgentState
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are a legal assistant for an internal legal team. Answer the user's request using ONLY the provided context. For every claim, cite the source document (doc_title and doc_id). If the context is insufficient, say so explicitly — do not fabricate information."""
+_DEFAULT_SYSTEM_PROMPT = """You are a legal assistant for an internal legal team. Answer the user's request using ONLY the provided context. For every claim, cite the source document (doc_title and doc_id). If the context is insufficient, say so explicitly — do not fabricate information."""
 
 
 def _build_context(chunks: list[dict]) -> str:
@@ -32,17 +32,28 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     chunks = state.get("retrieved_chunks", [])
     context = _build_context(chunks)
 
-    user_message = f"Context:\n{context}\n\nRequest: {state['request']}"
+    # Use skill-provided messages if available, otherwise build default
+    skill_messages = state.get("messages", [])
+    if skill_messages:
+        messages = list(skill_messages)
+        # Inject context into the last user message
+        if messages and messages[-1]["role"] == "user":
+            messages[-1] = {
+                "role": "user",
+                "content": f"Context:\n{context}\n\n{messages[-1]['content']}",
+            }
+    else:
+        messages = [
+            {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Context:\n{context}\n\nRequest: {state['request']}"},
+        ]
 
     try:
         response = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
             json={
                 "model": settings.llm_model,
-                "messages": [
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
+                "messages": messages,
                 "stream": False,
                 "options": {"temperature": 0.0},
             },

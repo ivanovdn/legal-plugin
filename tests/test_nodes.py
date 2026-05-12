@@ -181,6 +181,78 @@ def test_llm_caller_handles_no_chunks(monkeypatch):
     assert result["llm_response"] != ""
 
 
+def test_llm_caller_uses_skill_messages(monkeypatch):
+    """llm_caller uses messages from state when set by a skill."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {
+        "message": {"content": "Clause analysis: The indemnification clause is standard."}
+    }
+
+    with patch("graph.nodes.llm_caller.httpx.post", return_value=fake_response) as mock_post:
+        from graph.nodes.llm_caller import llm_caller
+        state = _make_state(
+            request="Review clauses",
+            messages=[
+                {"role": "system", "content": "You are a contract review specialist."},
+                {"role": "user", "content": "Review clauses"},
+            ],
+            retrieved_chunks=[
+                {"chunk_id": "c1", "doc_id": "d1", "doc_title": "Contract A", "text": "Indemnity clause text"},
+            ],
+        )
+        result = llm_caller(state)
+
+    call_body = mock_post.call_args[1]["json"]
+    assert call_body["messages"][0]["content"] == "You are a contract review specialist."
+
+
+# --- planner ---
+
+def test_planner_decomposes_multi_skill(monkeypatch):
+    """planner calls LLM to break down multi-skill requests."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {
+        "message": {"content": '{"skill_plan": ["contract_review", "compliance"], "task_type": "contract_review"}'}
+    }
+
+    with patch("graph.nodes.planner.httpx.post", return_value=fake_response):
+        from graph.nodes.planner import planner
+        state = _make_state(
+            request="Review this contract and check compliance with GDPR",
+            skill_plan=["contract_review", "compliance"],
+            task_type="multi",
+        )
+        result = planner(state)
+
+    assert result["task_type"] in ("contract_review", "compliance")
+    assert len(result["skill_plan"]) >= 1
+
+
+def test_planner_keeps_single_skill():
+    """planner passes through when skill_plan has only one skill."""
+    from graph.nodes.planner import planner
+    state = _make_state(
+        request="Review this contract",
+        skill_plan=["contract_review"],
+        task_type="contract_review",
+    )
+    result = planner(state)
+    assert result["task_type"] == "contract_review"
+    assert result["skill_plan"] == ["contract_review"]
+
+
 # --- risk_assessor ---
 
 def test_risk_assessor_flags_no_citations():

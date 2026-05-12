@@ -99,3 +99,102 @@ def test_contract_generation_extracts_source_docs(monkeypatch):
 
     assert len(result["retrieved_chunks"]) > 0
     assert result["retrieved_chunks"][0]["doc_id"] == "abc12345-6789-0000-1111-222233334444"
+
+
+# --- contract_review ---
+
+def test_contract_review_sets_prompt_and_query():
+    """contract_review prepares state for rag_retriever + llm_caller."""
+    from skills.contract_review import contract_review
+    state = _make_state(
+        request="Review the indemnification clauses in our latest NDA",
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+
+    assert result["retrieval_query"] != ""
+    assert len(result["messages"]) > 0
+    assert result["messages"][0]["role"] == "system"
+    assert "clause" in result["messages"][0]["content"].lower()
+
+
+# --- compliance_check ---
+
+def test_compliance_check_sets_prompt_and_query():
+    """compliance_check prepares state for policy verification."""
+    from skills.compliance_check import compliance_check
+    state = _make_state(
+        request="Check if our data retention policy complies with GDPR",
+        task_type="compliance",
+    )
+    result = compliance_check(state)
+
+    assert result["retrieval_query"] != ""
+    assert len(result["messages"]) > 0
+    assert result["messages"][0]["role"] == "system"
+    assert "compliance" in result["messages"][0]["content"].lower()
+
+
+# --- drafting ---
+
+def test_drafting_sets_prompt_and_query():
+    """drafting prepares state for document generation."""
+    from skills.drafting import drafting
+    state = _make_state(
+        request="Draft an NDA for a consulting engagement with Acme Corp",
+        task_type="drafting",
+        filters={"client_id": "internal", "jurisdiction": "US-DE"},
+    )
+    result = drafting(state)
+
+    assert result["retrieval_query"] != ""
+    assert len(result["messages"]) > 0
+    assert result["messages"][0]["role"] == "system"
+    assert "draft" in result["messages"][0]["content"].lower()
+
+
+# --- legal_research ---
+
+def test_legal_research_calls_agent(monkeypatch):
+    """legal_research invokes the ReAct agent and sets llm_response."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+
+    fake_msg = MagicMock()
+    fake_msg.content = "Based on the analysis of Contract A (doc_id: d1), the indemnification standard requires..."
+
+    with patch("skills.legal_research._build_agent") as mock_build:
+        mock_agent = MagicMock()
+        mock_agent.invoke.return_value = {"messages": [fake_msg]}
+        mock_build.return_value = mock_agent
+
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="What are the indemnification standards in Delaware?",
+            task_type="research",
+        )
+        result = legal_research(state)
+
+    assert result["llm_response"] != ""
+    assert "legal_research stub" not in result["llm_response"]
+
+
+def test_legal_research_handles_error(monkeypatch):
+    """legal_research handles agent errors gracefully."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+
+    with patch("skills.legal_research._build_agent") as mock_build:
+        mock_agent = MagicMock()
+        mock_agent.invoke.side_effect = Exception("LLM down")
+        mock_build.return_value = mock_agent
+
+        from skills.legal_research import legal_research
+        state = _make_state(request="research question")
+        result = legal_research(state)
+
+    assert "Error" in result["llm_response"]

@@ -1,14 +1,38 @@
 # skills/compliance_check.py
-"""Compliance check — policy/regulation verification (stub)."""
+"""Compliance check — policy/regulation verification."""
 
 import logging
 from graph.state import LegalAgentState
 
 logger = logging.getLogger(__name__)
 
+_SYSTEM_PROMPT = """You are a compliance verification specialist. Check the provided documents against applicable policies, regulations, and jurisdiction rules.
+
+For each compliance check, provide:
+- rule_id: identifier for the rule or regulation being checked
+- rule_text: the text of the rule
+- source_chunk: the relevant document text being checked
+- status: "pass", "fail", "partial", or "n/a"
+- evidence: specific evidence from the document supporting the status
+- remediation: suggested fix if status is "fail" or "partial" (or null)
+
+Determine the overall compliance status (pass, fail, or partial).
+If any check has high severity or you are uncertain, set escalate to true.
+
+Cite every source document by doc_id and doc_title. If context is insufficient, say so.
+
+Respond with your analysis as structured text with clear sections for each check."""
+
 
 def compliance_check(state: LegalAgentState) -> LegalAgentState:
-    """Stub: will be replaced with real compliance checking."""
-    logger.info("[compliance_check] stub")
-    state["llm_response"] = "[compliance_check stub] No implementation yet."
+    """Prepare state for compliance verification via rag_retriever + llm_caller."""
+    request = state["request"]
+
+    state["retrieval_query"] = request
+    state["messages"] = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": request},
+    ]
+
+    logger.info("[compliance_check] prepared for compliance verification: %s", request[:80])
     return state
