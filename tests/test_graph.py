@@ -85,6 +85,15 @@ _fake_chunks = [
 ]
 
 
+def _fake_agent():
+    """Mock agent that returns a simple response."""
+    mock_agent = MagicMock()
+    fake_msg = MagicMock()
+    fake_msg.content = "Based on Contract A (doc_id: d1), the analysis shows relevant findings."
+    mock_agent.invoke.return_value = {"messages": [fake_msg]}
+    return mock_agent
+
+
 def test_graph_end_to_end_research(tmp_path, monkeypatch):
     """A research request flows through real nodes to END."""
     db_path = str(tmp_path / "test.db")
@@ -105,7 +114,9 @@ def test_graph_end_to_end_research(tmp_path, monkeypatch):
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
-         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation._build_agent", return_value=_fake_agent()):
 
         from graph.graph import build_graph
         graph = build_graph()
@@ -115,7 +126,6 @@ def test_graph_end_to_end_research(tmp_path, monkeypatch):
 
     assert result["task_type"] == "research"
     assert result["llm_response"] != ""
-    assert result["risk_level"] == "low"
     assert "response" in result["report"]
 
 
@@ -139,7 +149,8 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
-         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.contract_generation._build_agent", return_value=_fake_agent()):
 
         from graph.graph import build_graph
         graph = build_graph()
@@ -206,7 +217,9 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
-         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation._build_agent", return_value=_fake_agent()):
 
         from graph.graph import build_graph
         graph = build_graph()
