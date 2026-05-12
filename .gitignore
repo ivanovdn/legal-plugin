@@ -21,6 +21,6 @@ data/
 # OS
 .DS_Store
 
-# Chainlit
-.chainlit/
-chainlit.md
+# Chainlit session data
+.chainlit/translations/
+.chainlit/.langchain.db
