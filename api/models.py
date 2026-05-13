@@ -12,6 +12,7 @@ class QueryRequest(BaseModel):
     task_type: str = Field("", description="Optional: pre-set task type to skip intent classification")
     session_id: str = Field("", description="Optional: resume an existing session")
     filters: dict = Field(default_factory=dict, description="Optional: additional retrieval filters (jurisdiction, doc_type)")
+    uploaded_text: str = Field("", description="Optional: uploaded document text for review/analysis")
 
 
 class ResumeRequest(BaseModel):

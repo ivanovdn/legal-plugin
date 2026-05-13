@@ -17,17 +17,21 @@ async def submit_query(
     task_type: str = "",
     filters: dict | None = None,
     session_id: str = "",
+    uploaded_text: str = "",
 ) -> dict:
     """POST /api/query — submit a legal request."""
     async with httpx.AsyncClient(timeout=300.0) as client:
+        body = {
+            "request": request,
+            "task_type": task_type,
+            "session_id": session_id,
+            "filters": filters or {},
+        }
+        if uploaded_text:
+            body["uploaded_text"] = uploaded_text
         response = await client.post(
             f"{_base_url()}/api/query",
-            json={
-                "request": request,
-                "task_type": task_type,
-                "session_id": session_id,
-                "filters": filters or {},
-            },
+            json=body,
             headers={"X-User-ID": user_id},
         )
         response.raise_for_status()

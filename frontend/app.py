@@ -89,10 +89,19 @@ async def on_message(message: cl.Message):
     user = cl.user_session.get("user")
     user_id = user.identifier if user else "anonymous"
 
-    # Check for file uploads
+    # File upload: if user wrote a message with it, treat as review/analysis
+    # If no message text, treat as ingestion
+    uploaded_text = ""
     if message.elements:
-        await _handle_file_upload(message)
-        return
+        has_text = message.content and message.content.strip()
+        if not has_text:
+            await _handle_file_upload(message)
+            return
+        # Extract text from uploaded file for review
+        uploaded_text = await _extract_file_text(message.elements)
+        if not uploaded_text:
+            await cl.Message(content="Could not extract text from the uploaded file.").send()
+            return
 
     # Send query to backend
     thinking_msg = cl.Message(content="Processing your request...")
@@ -102,6 +111,7 @@ async def on_message(message: cl.Message):
         result = await submit_query(
             request=message.content,
             user_id=user_id,
+            uploaded_text=uploaded_text,
         )
 
         data = result.get("data", {})
@@ -226,8 +236,40 @@ async def _handle_contract_response(
             await cl.Message(content="Review timed out. Draft held for later review.").send()
 
 
+async def _extract_file_text(elements) -> str:
+    """Extract text from uploaded PDF/DOCX files for inline review."""
+    from ingest.parsers.pdf_parser import parse_pdf
+    from ingest.parsers.docx_parser import parse_docx
+
+    parts = []
+    for element in elements:
+        if not hasattr(element, "path") or not element.path:
+            continue
+        filepath = Path(element.path)
+        ext = filepath.suffix.lower()
+        try:
+            if ext == ".pdf":
+                chunks = parse_pdf(
+                    filepath=filepath,
+                    client_id="internal", jurisdiction="", doc_type="contract",
+                    sensitivity="internal",
+                )
+            elif ext == ".docx":
+                chunks = parse_docx(
+                    filepath=filepath,
+                    client_id="internal", jurisdiction="", doc_type="contract",
+                    sensitivity="internal",
+                )
+            else:
+                continue
+            parts.extend(c.text for c in chunks)
+        except Exception as e:
+            parts.append(f"[Error extracting {element.name}: {e}]")
+    return "\n\n".join(parts)
+
+
 async def _handle_file_upload(message: cl.Message):
-    """Process uploaded files — send to ingest endpoint."""
+    """Process uploaded files — send to ingest endpoint (no message text = ingest)."""
     for element in message.elements:
         if not hasattr(element, "path") or not element.path:
             continue
