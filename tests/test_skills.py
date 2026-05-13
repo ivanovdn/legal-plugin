@@ -40,7 +40,7 @@ def test_contract_generation_calls_agent(monkeypatch):
     fake_msg.content = "Here is the generated contract:\n\n**SERVICE AGREEMENT**\n\nThis Agreement is entered into..."
     fake_agent_result = {"messages": [fake_msg]}
 
-    with patch("skills.contract_generation._build_agent") as mock_build:
+    with patch("skills.contract_generation.contract_generation._build_agent") as mock_build:
         mock_agent = MagicMock()
         mock_agent.invoke.return_value = fake_agent_result
         mock_build.return_value = mock_agent
@@ -63,7 +63,7 @@ def test_contract_generation_handles_agent_error(monkeypatch):
     from config import get_settings
     get_settings.cache_clear()
 
-    with patch("skills.contract_generation._build_agent") as mock_build:
+    with patch("skills.contract_generation.contract_generation._build_agent") as mock_build:
         mock_agent = MagicMock()
         mock_agent.invoke.side_effect = Exception("LLM unavailable")
         mock_build.return_value = mock_agent
@@ -88,7 +88,7 @@ def test_contract_generation_extracts_source_docs(monkeypatch):
     final_msg.content = "Generated contract based on doc_id: abc12345-6789-0000-1111-222233334444"
     fake_agent_result = {"messages": [tool_msg, final_msg]}
 
-    with patch("skills.contract_generation._build_agent") as mock_build:
+    with patch("skills.contract_generation.contract_generation._build_agent") as mock_build:
         mock_agent = MagicMock()
         mock_agent.invoke.return_value = fake_agent_result
         mock_build.return_value = mock_agent

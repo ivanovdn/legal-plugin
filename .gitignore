@@ -24,6 +24,7 @@ data/
 # Claude Code
 .claude/
 
-# Chainlit session data
+# Chainlit runtime data
 .chainlit/translations/
 .chainlit/.langchain.db
+.files/

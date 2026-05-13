@@ -1,8 +1,10 @@
-# skills/contract_generation.py
-"""Contract generation — ReAct agent that searches case history and generates contracts."""
+# skills/contract_generation/contract_generation.py
+"""Contract generation — ReAct agent that searches case history and generates contracts.
+Prompt loaded from SKILL.md (editable by legal team)."""
 
 import logging
 import re
+from pathlib import Path
 
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
@@ -16,26 +18,18 @@ from rag.tools.escalate import escalate
 
 logger = logging.getLogger(__name__)
 
-CONTRACT_GEN_SYSTEM_PROMPT = """You are a contract generation agent for an internal legal team. Your job is to generate a new contract based on historical signed contracts and templates.
+_SKILL_DIR = Path(__file__).parent
+_SKILL_MD = _SKILL_DIR / "SKILL.md"
 
-PROCESS:
-1. Search for relevant existing contracts using search_legal (collection="legal_docs", doc_type="contract")
-2. If case history is available, extract clause patterns using extract_clauses for key clause types (indemnification, termination, payment, liability, confidentiality)
-3. Use get_document to retrieve full text of the most relevant source contracts
-4. Generate the new contract incorporating patterns from historical contracts
-5. Flag any deviations — clause types that appear in the request but have no historical pattern
 
-RULES:
-- Always filter by client_id — never use another client's contracts
-- Cite every source contract by doc_id
-- If you cannot find enough source material, use escalate to flag for attorney review
-- The generated contract must be complete and ready for attorney review
-- Use formal legal language appropriate to the jurisdiction
-
-OUTPUT FORMAT:
-After gathering all information, produce the complete contract text. Start with the contract title, then parties, recitals, and all clauses. End with signature blocks.
-
-IMPORTANT: You are generating a DRAFT for attorney review. This will always go through human review before delivery."""
+def _load_prompt() -> str:
+    """Load system prompt from SKILL.md. Strips YAML frontmatter."""
+    text = _SKILL_MD.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        end = text.find("---", 3)
+        if end != -1:
+            text = text[end + 3:].strip()
+    return text
 
 
 _agent_cache = {}
@@ -55,11 +49,12 @@ def _build_agent():
     )
 
     tools = [search_legal, get_document, extract_clauses, escalate]
+    prompt = _load_prompt()
 
     agent = create_react_agent(
         model=llm,
         tools=tools,
-        prompt=CONTRACT_GEN_SYSTEM_PROMPT,
+        prompt=prompt,
         name="contract_generation_agent",
     )
 
