@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 
 def rag_retriever(state: LegalAgentState) -> LegalAgentState:
     """Search for relevant chunks using hybrid search."""
+    # Agent skills (contract_generation, legal_research) handle their own retrieval
+    if state.get("llm_response"):
+        logger.info("[rag_retriever] llm_response already set — skipping (agent skill)")
+        return state
+
     query = state.get("retrieval_query", "")
     if not query:
         logger.info("[rag_retriever] no query — skipping retrieval")

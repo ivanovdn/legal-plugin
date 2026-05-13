@@ -28,6 +28,11 @@ def _build_context(chunks: list[dict]) -> str:
 
 def llm_caller(state: LegalAgentState) -> LegalAgentState:
     """Call Ollama with context + request. temperature=0.0 always."""
+    # Agent skills (contract_generation, legal_research) already called the LLM
+    if state.get("llm_response") and not state.get("messages"):
+        logger.info("[llm_caller] llm_response already set by agent — skipping")
+        return state
+
     settings = get_settings()
     chunks = state.get("retrieved_chunks", [])
     context = _build_context(chunks)
