@@ -9,7 +9,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import chainlit as cl
 
+import tempfile
+
+from fpdf import FPDF
+
 from frontend.api_client import submit_query, ingest_file, health_check
+
+
+def _generate_pdf(text: str) -> str:
+    """Generate a PDF from contract text. Returns path to temp file."""
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_left_margin(15)
+    pdf.set_right_margin(15)
+
+    def _clean(s: str) -> str:
+        """Replace Unicode chars that Helvetica can't render."""
+        return (s
+            .replace("\u2014", "--")   # em dash
+            .replace("\u2013", "-")    # en dash
+            .replace("\u2018", "'")    # left single quote
+            .replace("\u2019", "'")    # right single quote
+            .replace("\u201c", '"')    # left double quote
+            .replace("\u201d", '"')    # right double quote
+            .replace("\u2026", "...")   # ellipsis
+            .replace("\u26a0", "[!]")  # warning sign
+            .replace("\u2022", "-")    # bullet
+            .replace("**", "")
+        )
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        if stripped.startswith("**") and stripped.endswith("**"):
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.multi_cell(0, 7, _clean(stripped), new_x="LMARGIN", new_y="NEXT")
+        elif stripped.startswith("DRAFT") or stripped.startswith("SERVICE AGREEMENT") or stripped.startswith("DEVIATION"):
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.multi_cell(0, 8, _clean(stripped), new_x="LMARGIN", new_y="NEXT")
+        elif stripped.startswith("===") or stripped.startswith("---"):
+            pdf.ln(3)
+        elif not stripped:
+            pdf.ln(4)
+        else:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5, _clean(stripped), new_x="LMARGIN", new_y="NEXT")
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    pdf.output(tmp.name)
+    return tmp.name
 
 
 @cl.on_chat_start
@@ -63,9 +112,15 @@ async def on_message(message: cl.Message):
         awaiting_review = data.get("awaiting_review", False)
         sources = report.get("sources", [])
 
-        # Build response message
-        content_parts = []
-        content_parts.append(response_text)
+        # Contract generation / drafting — show draft in side panel
+        if task_type in ("contract_generation", "drafting") and len(response_text) > 500:
+            await _handle_contract_response(
+                thinking_msg, response_text, task_type, risk_level, sources, awaiting_review,
+            )
+            return
+
+        # Regular response — show inline
+        content_parts = [response_text]
         content_parts.append(f"\n\n---\n**Task:** {task_type} | **Risk:** {risk_level}")
 
         if sources:
@@ -75,13 +130,100 @@ async def on_message(message: cl.Message):
         thinking_msg.content = "\n".join(content_parts)
         await thinking_msg.update()
 
-        # Human-in-the-loop for flagged responses
         if awaiting_review:
-            await _handle_review(data)
+            await _handle_review(report)
 
     except Exception as e:
         thinking_msg.content = f"Error: {e}"
         await thinking_msg.update()
+
+
+async def _handle_contract_response(
+    thinking_msg: cl.Message,
+    response_text: str,
+    task_type: str,
+    risk_level: str,
+    sources: list,
+    awaiting_review: bool,
+):
+    """Handle contract generation / drafting — summary in chat, full draft as text element."""
+
+    # Extract deviation report if present
+    summary = ""
+    draft = response_text
+    if "DEVIATION REPORT" in response_text:
+        parts = response_text.split("DEVIATION REPORT", 1)
+        draft = parts[0].strip()
+        deviation_report = "DEVIATION REPORT" + parts[1]
+        summary = deviation_report
+    else:
+        summary = f"Generated {task_type.replace('_', ' ')} draft ({len(response_text)} chars)"
+
+    # Summary message in chat with deviation report
+    chat_content = f"**Contract draft generated** — click the attachment to review the full text.\n\n"
+    chat_content += f"**Task:** {task_type} | **Risk:** {risk_level}\n\n"
+    if summary:
+        chat_content += f"```\n{summary}\n```"
+
+    # Full contract as a text element (shows in side panel on click)
+    text_element = cl.Text(
+        name="contract_draft.md",
+        content=draft,
+        display="side",
+    )
+
+    thinking_msg.content = chat_content
+    thinking_msg.elements = [text_element]
+    await thinking_msg.update()
+
+    # Human review
+    if awaiting_review:
+        actions = [
+            cl.Action(
+                name="approve",
+                label="Approve Draft",
+                description="Approve this contract draft for delivery",
+                payload={"action": "approve"},
+            ),
+            cl.Action(
+                name="request_changes",
+                label="Request Changes",
+                description="Send back with feedback",
+                payload={"action": "request_changes"},
+            ),
+            cl.Action(
+                name="reject",
+                label="Reject",
+                description="Reject this draft entirely",
+                payload={"action": "reject"},
+            ),
+        ]
+
+        review_msg = await cl.AskActionMessage(
+            content="This draft requires your review before delivery. Please review the contract in the side panel.",
+            actions=actions,
+            timeout=86400,
+        ).send()
+
+        if review_msg:
+            action = review_msg.get("payload", {}).get("action", "")
+            if action == "approve":
+                pdf_path = _generate_pdf(draft)
+                pdf_element = cl.File(
+                    name="contract_draft.pdf",
+                    path=pdf_path,
+                    display="inline",
+                )
+                await cl.Message(
+                    content="Draft approved. Download the PDF below.",
+                    elements=[pdf_element],
+                ).send()
+            elif action == "request_changes":
+                await cl.Message(content="Please describe the changes you'd like made to this draft.").send()
+            elif action == "reject":
+                await cl.Message(content="Draft rejected.").send()
+        else:
+            await cl.Message(content="Review timed out. Draft held for later review.").send()
 
 
 async def _handle_file_upload(message: cl.Message):
@@ -114,9 +256,9 @@ async def _handle_file_upload(message: cl.Message):
             await status_msg.update()
 
 
-async def _handle_review(data: dict):
-    """Show review prompt for flagged responses."""
-    risk_flags = data.get("report", {}).get("risk_flags", [])
+async def _handle_review(report: dict):
+    """Show review prompt for non-contract flagged responses."""
+    risk_flags = report.get("risk_flags", [])
 
     flag_text = ""
     if risk_flags:
@@ -127,25 +269,26 @@ async def _handle_review(data: dict):
         cl.Action(
             name="approve",
             label="Approve",
-            description="Approve this response for delivery",
+            description="Approve this response",
             payload={"action": "approve"},
         ),
         cl.Action(
             name="reject",
-            label="Reject & Edit",
-            description="Reject and provide feedback",
+            label="Reject",
+            description="Reject this response",
             payload={"action": "reject"},
         ),
     ]
 
     review_msg = await cl.AskActionMessage(
-        content=f"This response requires attorney review.{flag_text}\n\nPlease review the response above and approve or reject.",
+        content=f"This response requires attorney review.{flag_text}",
         actions=actions,
+        timeout=86400,
     ).send()
 
     if review_msg and review_msg.get("payload", {}).get("action") == "approve":
         await cl.Message(content="Response approved.").send()
     elif review_msg:
-        await cl.Message(content="Response rejected. Please provide your revised response or feedback.").send()
+        await cl.Message(content="Response rejected.").send()
     else:
-        await cl.Message(content="Review timed out. Response held for later review.").send()
+        await cl.Message(content="Review timed out.").send()

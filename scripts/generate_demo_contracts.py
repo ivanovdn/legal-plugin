@@ -297,7 +297,7 @@ def _make_chunk(contract: dict, clause_type: str, text: str) -> dict:
         "doc_type":       "contract",
         "contract_type":  contract["contract_type"],
         "clause_type":    clause_type,
-        "client_id":      "demo",
+        "client_id":      "internal",
         "jurisdiction":   contract["jurisdiction"],
         "sensitivity":    "internal",
         "section":        clause_type,

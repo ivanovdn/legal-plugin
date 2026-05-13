@@ -1,6 +1,6 @@
 ---
 name: contract-generation-demo
-description: Generate a new service agreement draft from 5 historical LegalCo service agreements. Demo dataset only — client_id="demo", collection="case_history".
+description: Generate a new service agreement draft from 5 historical LegalCo service agreements. Demo dataset only — client_id="internal", collection="case_history".
 metadata:
   version: demo-1.0
   dataset: 5 synthetic LegalCo service agreements
@@ -60,7 +60,7 @@ You will find these patterns in the dataset. Use them to inform generation and t
 Call `search_legal` once per clause type with:
 ```
 collection = "case_history"
-client_id  = "demo"
+client_id  = "internal"
 doc_type   = "contract"
 clause_type = <one of the 7 above>
 ```
