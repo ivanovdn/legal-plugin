@@ -21,6 +21,9 @@ data/
 # OS
 .DS_Store
 
+# Claude Code
+.claude/
+
 # Chainlit session data
 .chainlit/translations/
 .chainlit/.langchain.db
