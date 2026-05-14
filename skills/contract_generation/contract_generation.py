@@ -15,21 +15,11 @@ from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.extract_clauses import extract_clauses
 from rag.tools.escalate import escalate
+from skills.base import load_skill_prompt
 
 logger = logging.getLogger(__name__)
 
 _SKILL_DIR = Path(__file__).parent
-_SKILL_MD = _SKILL_DIR / "SKILL.md"
-
-
-def _load_prompt() -> str:
-    """Load system prompt from SKILL.md. Strips YAML frontmatter."""
-    text = _SKILL_MD.read_text(encoding="utf-8")
-    if text.startswith("---"):
-        end = text.find("---", 3)
-        if end != -1:
-            text = text[end + 3:].strip()
-    return text
 
 
 _agent_cache = {}
@@ -49,7 +39,7 @@ def _build_agent():
     )
 
     tools = [search_legal, get_document, extract_clauses, escalate]
-    prompt = _load_prompt()
+    prompt = load_skill_prompt(_SKILL_DIR)
 
     agent = create_react_agent(
         model=llm,

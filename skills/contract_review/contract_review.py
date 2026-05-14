@@ -6,21 +6,11 @@ import logging
 from pathlib import Path
 
 from graph.state import LegalAgentState
+from skills.base import load_skill_prompt
 
 logger = logging.getLogger(__name__)
 
 _SKILL_DIR = Path(__file__).parent
-_SKILL_MD = _SKILL_DIR / "SKILL.md"
-
-
-def _load_prompt() -> str:
-    """Load system prompt from SKILL.md. Strips YAML frontmatter."""
-    text = _SKILL_MD.read_text(encoding="utf-8")
-    if text.startswith("---"):
-        end = text.find("---", 3)
-        if end != -1:
-            text = text[end + 3:].strip()
-    return text
 
 
 def _extract_uploaded_text(state: LegalAgentState) -> str:
@@ -46,7 +36,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
     will search for relevant contract text.
     """
     request = state["request"]
-    playbook = _load_prompt()
+    playbook = load_skill_prompt(_SKILL_DIR)
     uploaded_text = _extract_uploaded_text(state)
 
     # Build user message with contract text if available
