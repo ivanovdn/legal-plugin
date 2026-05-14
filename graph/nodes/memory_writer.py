@@ -4,6 +4,8 @@
 import logging
 
 from config import get_settings
+from langfuse.decorators import observe
+
 from graph.state import LegalAgentState
 from memory.audit import init_audit_db, write_audit_log
 
@@ -12,6 +14,7 @@ logger = logging.getLogger(__name__)
 _db_initialized = False
 
 
+@observe(name="memory_writer")
 def memory_writer(state: LegalAgentState) -> LegalAgentState:
     """Write skill invocation to SQLite audit log."""
     global _db_initialized

@@ -5,6 +5,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Header
+from langfuse.decorators import observe, langfuse_context
 
 from api.models import ApiResponse, QueryRequest, ResumeRequest
 from graph.graph import build_graph
@@ -25,12 +26,20 @@ def _get_graph():
 
 
 @router.post("/query", response_model=ApiResponse)
+@observe(name="query")
 def submit_query(
     body: QueryRequest,
     x_user_id: str = Header("anonymous", alias="X-User-ID"),
 ):
     """Submit a legal request for graph execution."""
     session_id = body.session_id or str(uuid.uuid4())
+
+    langfuse_context.update_current_trace(
+        name=f"query:{body.task_type or 'auto'}",
+        user_id=x_user_id,
+        session_id=session_id,
+        input=body.request,
+    )
 
     initial_state = {
         "request": body.request,

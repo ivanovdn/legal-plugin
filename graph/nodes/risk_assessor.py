@@ -2,6 +2,8 @@
 """Risk assessor — checks citations and evaluates risk level."""
 
 import logging
+from langfuse.decorators import observe
+
 from graph.state import LegalAgentState
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ def _check_citations(llm_response: str, chunks: list[dict]) -> list[dict]:
     return flags
 
 
+@observe(name="risk_assessor")
 def risk_assessor(state: LegalAgentState) -> LegalAgentState:
     """Evaluate risk based on citations, task type, and content."""
     llm_response = state.get("llm_response", "")

@@ -2,11 +2,14 @@
 """Human review — pauses graph for attorney approval using LangGraph interrupt."""
 
 import logging
+from langfuse.decorators import observe
+
 from graph.state import LegalAgentState
 
 logger = logging.getLogger(__name__)
 
 
+@observe(name="human_review")
 def human_review(state: LegalAgentState) -> LegalAgentState:
     """Pause for human review. Uses interrupt() when checkpointer is available."""
     state["awaiting_review"] = True

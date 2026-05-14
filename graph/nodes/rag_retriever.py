@@ -2,12 +2,15 @@
 """RAG retriever — runs hybrid search for the current request."""
 
 import logging
+from langfuse.decorators import observe
+
 from graph.state import LegalAgentState
 from rag.hybrid_search import hybrid_search
 
 logger = logging.getLogger(__name__)
 
 
+@observe(name="rag_retriever")
 def rag_retriever(state: LegalAgentState) -> LegalAgentState:
     """Search for relevant chunks using hybrid search."""
     # Agent skills (contract_generation, legal_research) handle their own retrieval
