@@ -176,8 +176,8 @@ async def on_message(message: cl.Message):
         awaiting_review = data.get("awaiting_review", False)
         sources = report.get("sources", [])
 
-        # Long responses — show in side panel with clickable attachment
-        if task_type in ("contract_generation", "drafting", "contract_review") and len(response_text) > 300:
+        # Contract skills — always show in side panel
+        if task_type in ("contract_generation", "drafting", "contract_review"):
             await _show_in_side_panel(
                 thinking_msg, response_text, task_type, risk_level, sources, awaiting_review,
             )
