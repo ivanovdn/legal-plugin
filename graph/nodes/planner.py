@@ -7,6 +7,8 @@ import logging
 import httpx
 
 from config import get_settings
+from langfuse.decorators import observe
+
 from graph.state import LegalAgentState
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ Determine which skill should execute FIRST (the most important one for this requ
 Respond with JSON: {{"task_type": "<first_skill_to_execute>", "skill_plan": ["<ordered_list>"]}}"""
 
 
+@observe(name="planner")
 def planner(state: LegalAgentState) -> LegalAgentState:
     """Decompose multi-skill requests. Sets task_type to first skill to execute."""
     skill_plan = state.get("skill_plan", [])

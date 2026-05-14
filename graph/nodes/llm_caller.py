@@ -4,6 +4,7 @@
 import logging
 
 import httpx
+from langfuse.decorators import observe, langfuse_context
 
 from config import get_settings
 from graph.state import LegalAgentState
@@ -26,9 +27,9 @@ def _build_context(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+@observe(name="llm_caller")
 def llm_caller(state: LegalAgentState) -> LegalAgentState:
     """Call Ollama with context + request. temperature=0.0 always."""
-    # Agent skills (contract_generation, legal_research) already called the LLM
     if state.get("llm_response") and not state.get("messages"):
         logger.info("[llm_caller] llm_response already set by agent — skipping")
         return state
@@ -37,11 +38,9 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     chunks = state.get("retrieved_chunks", [])
     context = _build_context(chunks)
 
-    # Use skill-provided messages if available, otherwise build default
     skill_messages = state.get("messages", [])
     if skill_messages:
         messages = list(skill_messages)
-        # Inject context into the last user message
         if messages and messages[-1]["role"] == "user":
             messages[-1] = {
                 "role": "user",
@@ -67,6 +66,17 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         response.raise_for_status()
         content = response.json()["message"]["content"]
         state["llm_response"] = content
+
+        langfuse_context.update_current_observation(
+            input=messages,
+            output=content,
+            model=settings.llm_model,
+            metadata={
+                "task_type": state.get("task_type", ""),
+                "chunks_count": len(chunks),
+                "temperature": 0.0,
+            },
+        )
         logger.info("[llm_caller] got %d char response", len(content))
     except Exception as e:
         logger.error("[llm_caller] LLM call failed: %s", e)

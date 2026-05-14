@@ -5,6 +5,7 @@ import json
 import logging
 
 import httpx
+from langfuse.decorators import observe, langfuse_context
 
 from config import get_settings
 from graph.state import LegalAgentState
@@ -30,6 +31,7 @@ Respond with JSON only: {{"task_type": "<type>"}}
 User request: {request}"""
 
 
+@observe(name="intent_router")
 def intent_router(state: LegalAgentState) -> LegalAgentState:
     """Classify task_type from request. Preserves existing task_type if valid."""
     if state.get("task_type") and state["task_type"] in VALID_TASK_TYPES:
@@ -40,15 +42,14 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
 
     settings = get_settings()
     task_type = "research"
+    prompt = _CLASSIFICATION_PROMPT.format(request=state["request"])
 
     try:
         response = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
             json={
                 "model": settings.llm_model,
-                "messages": [
-                    {"role": "user", "content": _CLASSIFICATION_PROMPT.format(request=state["request"])}
-                ],
+                "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "format": "json",
                 "options": {"temperature": 0.0},
@@ -61,10 +62,21 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
         classified = parsed.get("task_type", "research")
         if classified in VALID_TASK_TYPES:
             task_type = classified
+
+        langfuse_context.update_current_observation(
+            input=prompt,
+            output=content,
+            model=settings.llm_model,
+            metadata={"classified_as": task_type},
+        )
         logger.info("[intent_router] LLM classified: %s", task_type)
     except Exception as e:
         logger.warning("[intent_router] LLM classification failed: %s — defaulting to research", e)
 
     state["task_type"] = task_type
     state["skill_plan"] = [task_type]
+
+    langfuse_context.update_current_trace(
+        tags=[task_type],
+    )
     return state
