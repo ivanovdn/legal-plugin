@@ -35,7 +35,7 @@ def submit_query(
     initial_state = {
         "request": body.request,
         "user_id": x_user_id,
-        "uploaded_docs": [],
+        "uploaded_docs": [{"text": body.uploaded_text}] if body.uploaded_text else [],
         "task_type": body.task_type,
         "skill_plan": [body.task_type] if body.task_type else [],
         "retrieval_query": "",

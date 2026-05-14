@@ -62,7 +62,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
                 "stream": False,
                 "options": {"temperature": 0.0},
             },
-            timeout=120.0,
+            timeout=600.0,
         )
         response.raise_for_status()
         content = response.json()["message"]["content"]
