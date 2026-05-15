@@ -1,6 +1,6 @@
 # Legal Plugin — Project Wiki
 
-> Last updated: 2026-05-13 | 64 tests passing | ~3,300 lines production code | Python 3.12
+> Last updated: 2026-05-15 | 64 tests passing | ~3,600 lines production code | Python 3.12
 
 ## What Is This
 
@@ -19,6 +19,10 @@ docker compose up -d
 # 2. Start both backend + frontend
 bash scripts/start.sh
 
+# Or start individually with auto-reload for development:
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+chainlit run frontend/app.py --port 8080 --host 0.0.0.0 -w
+
 # Access points:
 #   Frontend:  http://localhost:8080  (Chainlit chat UI)
 #   Backend:   http://localhost:8000  (FastAPI API)
@@ -28,10 +32,20 @@ bash scripts/start.sh
 
 ### Prerequisites
 
-- Python 3.12 (venv managed via `uv`)
+- Python 3.12 (venv managed via `uv venv .venv --python 3.12`)
 - Docker + Docker Compose
 - Ollama running natively with models: `qwen3.6:latest`, `embeddinggemma:latest`
 - llama-cpp reranker (optional, graceful fallback when unavailable)
+
+### Demo Data
+
+5 synthetic service agreements with clause-level variation are available:
+
+```bash
+python scripts/generate_demo_contracts.py   # saves to data/demo_contracts/ + ingests to case_history
+```
+
+CUAD dataset (510 real contracts) also available at `data/cuad/`.
 
 ---
 
@@ -67,28 +81,33 @@ legal-plugin/
 │       └── health.py           # GET /health
 │
 ├── frontend/                   # Chainlit frontend
-│   ├── app.py                  # Chat handlers, file upload, human review
+│   ├── app.py                  # Chat, file upload, side panel, human review, PDF export
 │   └── api_client.py           # Async HTTP client to backend
 │
 ├── graph/                      # LangGraph supervisor graph
 │   ├── state.py                # LegalAgentState TypedDict
 │   ├── graph.py                # StateGraph wiring — all nodes + edges
-│   └── nodes/                  # Shared processing nodes
-│       ├── intake.py           # Resolve client_id, set filters
-│       ├── intent_router.py    # LLM classifies task_type
+│   └── nodes/                  # Shared processing nodes (all @observe traced)
+│       ├── intake.py           # Resolve client_id, set filters, set Langfuse trace metadata
+│       ├── intent_router.py    # LLM classifies task_type, logs prompt to Langfuse
 │       ├── planner.py          # LLM decomposes multi-skill requests
 │       ├── skill_dispatcher.py # Routes to correct skill node
-│       ├── rag_retriever.py    # Calls hybrid_search
-│       ├── llm_caller.py       # Calls Ollama with context
+│       ├── rag_retriever.py    # Calls hybrid_search (skips if agent skill already ran)
+│       ├── llm_caller.py       # Calls Ollama with context, logs prompt+response to Langfuse
 │       ├── risk_assessor.py    # Citation check + risk level
 │       ├── human_review.py     # LangGraph interrupt() for blocking review
 │       ├── output_formatter.py # Builds structured report dict
 │       └── memory_writer.py    # Writes SQLite audit log
 │
-├── skills/                     # Legal capabilities
+├── skills/                     # Legal capabilities — each in its own folder
+│   ├── base.py                 # load_skill_prompt() with ceiling constraint
 │   ├── schemas.py              # Output schemas (GeneratedContract, etc.)
-│   ├── contract_generation.py  # ReAct agent — searches + generates contracts
-│   ├── contract_review.py      # Clause analysis prompt → shared nodes
+│   ├── contract_generation/    # ReAct agent — searches + generates contracts
+│   │   ├── contract_generation.py
+│   │   └── SKILL.md            # Playbook — editable by legal team
+│   ├── contract_review/        # Clause analysis with uploaded contract support
+│   │   ├── contract_review.py
+│   │   └── SKILL.md            # Playbook — editable by legal team
 │   ├── compliance_check.py     # Policy verification prompt → shared nodes
 │   ├── legal_research.py       # ReAct agent — multi-hop research
 │   └── drafting.py             # Document generation prompt → shared nodes
@@ -117,10 +136,11 @@ legal-plugin/
 │   └── audit.py                # SQLite audit log (create table + write)
 │
 ├── observability/              # Tracing
-│   └── langfuse.py             # init_observability()
+│   └── langfuse.py             # init_observability() — sets env vars for @observe
 │
 ├── scripts/                    # Utility scripts
 │   ├── create_collections.py   # Create 3 Qdrant collections
+│   ├── generate_demo_contracts.py  # Generate + ingest 5 synthetic contracts
 │   ├── ingest_all.py           # Batch ingest from directory
 │   ├── start.sh                # Start backend + frontend
 │   ├── test_api.sh             # Curl-based API verification
@@ -135,6 +155,43 @@ legal-plugin/
 
 ---
 
+## Skills Architecture
+
+### SKILL.md Pattern
+
+Each skill lives in its own folder with two files:
+- `skill_name.py` — the Python function
+- `SKILL.md` — the playbook, editable by the legal team
+
+The playbook is loaded via `load_skill_prompt()` from `skills/base.py`, which wraps it with a **ceiling constraint**: the LLM will ONLY follow the playbook instructions, never improvise from its pretraining knowledge. If the playbook doesn't cover something, the LLM says "Not covered by current playbook" and stops.
+
+This means: **the legal team controls exactly what the LLM outputs by editing SKILL.md**. No code changes needed.
+
+### Skill Types
+
+**Agent Subgraphs** — have their own tools, handle retrieval and LLM calls internally:
+
+| Skill | Tools | What it does |
+|---|---|---|
+| **contract_generation** | search_legal, get_document, extract_clauses, escalate | Searches case history for clause patterns, generates contracts with deviation report. Always → human_review. |
+| **legal_research** | search_legal, get_document, escalate | Multi-hop retrieval to answer legal questions. Cites sources, flags conflicts. |
+
+**Plain Skills** — set a system prompt, then the shared `rag_retriever` + `llm_caller` nodes handle retrieval and generation:
+
+| Skill | What it does |
+|---|---|
+| **contract_review** | Clause-by-clause analysis with GREEN/YELLOW/RED severity. Supports uploaded contract files (PDF/DOCX/TXT). |
+| **compliance_check** | Policy verification prompt → shared nodes. |
+| **drafting** | Document generation prompt → shared nodes. Always → human_review. |
+
+### Agent vs Plain Skill — Graph Behavior
+
+For **agent skills** (contract_generation, legal_research): the skill function calls the LLM and tools itself, sets `llm_response`. The shared `rag_retriever` and `llm_caller` nodes detect this and skip.
+
+For **plain skills** (contract_review, compliance_check, drafting): the skill function sets `messages` (system prompt from SKILL.md + user request). The shared nodes then do retrieval and call the LLM with those messages.
+
+---
+
 ## Graph Flow
 
 ```
@@ -145,13 +202,14 @@ Attorney sends request
     │  INTAKE   │  Resolves client_id from user_id
     │           │  Sets filters (client_id always present)
     └────┬─────┘  Sets retrieval_query = request
-         │
+         │        Sets Langfuse trace metadata (user_id, session_id)
          ▼
   ┌──────────────┐
   │ INTENT_ROUTER│  Calls Ollama to classify task_type:
   │              │  contract_generation | contract_review | compliance
   └──────┬───────┘  research | drafting
          │          Falls back to "research" if LLM unavailable
+         │          Logs prompt + classification to Langfuse
          │
     ┌────┴────┐
     │         │
@@ -165,25 +223,21 @@ Attorney sends request
     └───────┬───────┘
             ▼
    ┌────────────────┐
-   │  SKILL NODE    │  One of 5:
-   │                │  • contract_generation — ReAct agent (own tools)
-   │                │  • contract_review — sets clause analysis prompt
-   │                │  • compliance_check — sets policy verification prompt
-   │                │  • legal_research — ReAct agent (own tools)
-   │                │  • drafting — sets document generation prompt
+   │  SKILL NODE    │  One of 5 (see Skills Architecture above)
    └───────┬────────┘
            │
            ▼
     ┌──────────────┐
     │ RAG_RETRIEVER│  hybrid_search() with client_id filter
-    └──────┬───────┘  Vector + BM25 (if enabled) + RRF + reranker
+    │              │  Skips if agent skill already set llm_response
+    └──────┬───────┘
            │
            ▼
      ┌───────────┐
      │ LLM_CALLER│  Ollama /api/chat, temperature=0.0
-     │           │  Uses skill-provided system prompt if available
-     └─────┬─────┘  Otherwise uses default legal assistant prompt
-           │
+     │           │  Uses skill-provided messages or default prompt
+     └─────┬─────┘  Skips if agent skill already set llm_response
+           │        Logs full prompt + response to Langfuse
            ▼
     ┌──────────────┐
     │RISK_ASSESSOR │  Checks if LLM response cites sources
@@ -199,9 +253,9 @@ Attorney sends request
       ▼         ▼
 ┌────────────┐ ┌─────────────────┐
 │HUMAN_REVIEW│ │OUTPUT_FORMATTER │
-│            │ │                 │  Builds report dict:
-└─────┬──────┘ └────────┬────────┘  {task_type, response, risk_level,
-      │                 │            risk_flags, sources, awaiting_review}
+│            │ │                 │
+└─────┬──────┘ └────────┬────────┘
+      │                 │
       └────────┬────────┘
                ▼
         ┌──────────────┐
@@ -224,22 +278,50 @@ Attorney sends request
 
 ---
 
-## Skills
+## Chainlit Frontend
 
-### Agent Subgraphs (have their own tools)
+### Chat Features
+- Send legal queries, get responses with task type and risk level
+- **File upload with message** → review/analyze the uploaded contract (PDF/DOCX/TXT)
+- **File upload without message** → ingest into Qdrant knowledge base
+- Contract generation/review results shown in **side panel** (click attachment to view)
+- Each result gets a unique filename — all previous results remain clickable
+- **PDF export** — approve a contract draft and download as PDF
 
-| Skill | Tools | What it does |
-|---|---|---|
-| **contract_generation** | search_legal, get_document, extract_clauses, escalate | Searches case history for clause patterns, generates new contracts. Always → human_review. |
-| **legal_research** | search_legal, get_document, escalate | Multi-hop retrieval to answer legal questions. Cites sources, flags conflicts. |
+### Human-in-the-Loop
+- Contract generation and drafting always show review buttons
+- Three actions: **Approve Draft** (generates PDF), **Request Changes**, **Reject**
+- Buttons persist until clicked (24h timeout)
+- Uses `cl.action_callback` decorators for reliable button handling
 
-### Plain Skills (use shared rag_retriever + llm_caller)
+### Development Mode
+- Frontend: `chainlit run frontend/app.py -w` (auto-reload on file changes)
+- Backend: `uvicorn api.main:app --reload` (auto-reload on file changes)
 
-| Skill | What it does |
-|---|---|
-| **contract_review** | Sets clause analysis system prompt. LLM identifies clauses, risk levels, suggested edits. |
-| **compliance_check** | Sets policy verification system prompt. LLM checks documents against regulations. |
-| **drafting** | Sets document generation system prompt. Always → human_review. |
+---
+
+## Observability
+
+### Langfuse Tracing (http://localhost:3000)
+
+All graph nodes are instrumented with `@observe` from the Langfuse SDK. Every request creates a trace with:
+- **Nested spans** for each graph node (intake → intent_router → skill → rag_retriever → llm_caller → ...)
+- **Prompt + response logging** on LLM calls (intent_router, llm_caller)
+- **User and session tracking** (user_id, session_id from the request)
+- **Task type tags** for filtering in the Langfuse UI
+- **Model metadata** (model name, temperature, chunk count)
+
+No LangChain dependency — uses Langfuse native Python SDK (`@observe` decorator + `langfuse_context`).
+
+### SQLite Audit Log (data/legal.db)
+
+Every skill invocation writes to `audit_log` table: timestamp, session_id, user_id, skill_name, task_type, request_summary, risk_level, review_status, duration_ms.
+
+### Phoenix (http://localhost:6006)
+
+RAG evals — shared with compliance-bot. Already running, no setup needed.
+
+**Rule: Langfuse = agent traces. Phoenix = RAG evals. Don't mix.**
 
 ---
 
@@ -258,7 +340,7 @@ Query → embed_query() → Qdrant vector search
 | Collection | Content | Chunking |
 |---|---|---|
 | `legal_docs` | Contracts, legislation, templates, policies | Varies by doc_type |
-| `case_history` | Past signed contracts | Clause-level (one chunk per clause) |
+| `case_history` | Past signed contracts (5 demo + CUAD) | Clause-level (one chunk per clause) |
 | `memory` | Attorney preferences (stub — future) | Small entries |
 
 ### Ingest Pipeline
@@ -278,7 +360,7 @@ Document (PDF/DOCX) → Parser → Chunks (LegalChunk) → Embed (Ollama) → Up
 | Method | Path | Status | Purpose |
 |---|---|---|---|
 | GET | `/health` | **Working** | Health check |
-| POST | `/api/query` | **Working** | Submit legal request → graph execution |
+| POST | `/api/query` | **Working** | Submit legal request → graph execution (supports `uploaded_text` for review) |
 | POST | `/api/query/{session_id}/resume` | Placeholder | Resume after human review |
 | GET | `/api/query/{session_id}/status` | Placeholder | Check execution status |
 | POST | `/api/ingest` | **Working** | Upload PDF/DOCX for ingestion |
@@ -345,32 +427,19 @@ Key settings:
 - `RERANKER_ENABLED` — toggle reranker on/off
 - `BM25_ENABLED` — toggle BM25 keyword search
 - `SQLITE_PATH` — audit log location (default: `data/legal.db`)
+- `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` — pre-seeded: `pk-lf-local` / `sk-lf-local`
 
 ---
 
 ## Constraints (Never Violate)
 
 1. **temperature=0.0** on all LLM calls
-2. **Every claim must cite a source** — no citation = high risk → escalate
-3. **contract_generation and drafting always → human_review** — no exceptions
-4. **client_id filter always applied** on retrieval — no cross-client data leakage
-5. **Every skill invocation → SQLite audit log** before returning
-6. **No external network calls** — fully air-gapped
-
----
-
-## Test Data
-
-**CUAD dataset** (510 commercial contracts, CC BY 4.0) cloned at `data/cuad/`. PDFs organized by contract type:
-```
-data/cuad/CUAD_v1/full_contract_pdf/Part_I/
-├── Affiliate_Agreements/
-├── License_Agreements/
-├── Service/
-├── ... (22 contract types)
-```
-
-Ingest with: `python scripts/ingest_all.py data/cuad/CUAD_v1/full_contract_pdf/Part_I/Service/ --client-id test-client --doc-type contract`
+2. **SKILL.md is the ceiling** — LLM strictly follows the playbook, no improvising from pretraining
+3. **Every claim must cite a source** — no citation = high risk → escalate
+4. **contract_generation and drafting always → human_review** — no exceptions
+5. **client_id filter always applied** on retrieval — no cross-client data leakage
+6. **Every skill invocation → SQLite audit log** before returning
+7. **No external network calls** — fully air-gapped
 
 ---
 
@@ -407,11 +476,12 @@ source .venv/bin/activate && python -m pytest tests/ -v
 |---|---|---|
 | Redis checkpointer wired to graph | Not done | `build_graph(checkpointer=...)` ready, needs Redis integration |
 | Resume after interrupt (`POST /api/query/{id}/resume`) | Placeholder | Needs checkpointer |
-| WebSocket streaming | Not done | Deferred — polling via status endpoint for now |
+| WebSocket / SSE streaming | Not done | LLM responses arrive all at once |
 | Admin API endpoints (sessions, skills, reviews, audit) | Not done | Deferred to when Chainlit needs them |
 | Long-term memory (Qdrant `memory` collection) | Stub | Implement when usage patterns emerge |
-| Langfuse trace wrapping per node | Not done | `init_observability()` ready, trace decorators not wired |
 | Real authentication | Not done | Simple `X-User-ID` header for now |
 | MCP tools integration | Not done | Architecture supports it — tools plug into agent registries |
-| DOCX output generation (docx_path in schemas) | Not done | Skills return text, no file generation yet |
+| DOCX output generation | Not done | PDF export works, DOCX not yet |
+| Remaining skills as folders | Not done | compliance_check, legal_research, drafting still flat files |
+| Langfuse prompt versioning | Not done | Prompts logged per-call, formal versioning not set up |
 | Policy chunking strategy verification | Not done | TBD — test clause-based vs section-based |
