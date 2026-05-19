@@ -6,6 +6,7 @@ import httpx
 
 from config import get_settings
 from graph.nodes.history_appender import history_appender
+from graph.nodes.llm_caller import llm_caller
 
 
 def _make_state(**overrides):
@@ -414,3 +415,100 @@ def test_history_appender_does_not_trim_user_request(monkeypatch):
 
     assert result["chat_history"][0]["content"] == long_request
     assert "[...]" not in result["chat_history"][0]["content"]
+
+
+# --- llm_caller chat_history injection ---
+
+def test_llm_caller_prepends_chat_history_default_path(monkeypatch):
+    """When no skill_messages and chat_history present, history sits between system and user."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    history = [
+        {"role": "user", "content": "prior Q"},
+        {"role": "assistant", "content": "prior A"},
+    ]
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(request="new Q", chat_history=history)
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    # Expect: [system, prior_user, prior_assistant, current_user]
+    assert sent[0]["role"] == "system"
+    assert sent[1] == history[0]
+    assert sent[2] == history[1]
+    assert sent[-1]["role"] == "user"
+    assert "new Q" in sent[-1]["content"]
+
+
+def test_llm_caller_prepends_chat_history_skill_path(monkeypatch):
+    """When skill provides system + user messages, history sits between system and user."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    history = [
+        {"role": "user", "content": "prior Q"},
+        {"role": "assistant", "content": "prior A"},
+    ]
+    skill_messages = [
+        {"role": "system", "content": "Skill system prompt"},
+        {"role": "user", "content": "Review my doc"},
+    ]
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(messages=skill_messages, chat_history=history)
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    assert sent[0]["role"] == "system"
+    assert sent[0]["content"] == "Skill system prompt"
+    assert sent[1] == history[0]
+    assert sent[2] == history[1]
+    assert sent[-1]["role"] == "user"
+    assert "Review my doc" in sent[-1]["content"]
+
+
+def test_llm_caller_works_when_chat_history_empty(monkeypatch):
+    """Empty chat_history: prompt looks exactly like before this feature."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(request="just one Q", chat_history=[])
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    assert len(sent) == 2  # system + user, no history
+    assert sent[0]["role"] == "system"
+    assert sent[1]["role"] == "user"

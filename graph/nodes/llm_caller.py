@@ -39,18 +39,26 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     context = _build_context(chunks)
 
     skill_messages = state.get("messages", [])
+    chat_history = state.get("chat_history", []) or []
+
     if skill_messages:
-        messages = list(skill_messages)
-        if messages and messages[-1]["role"] == "user":
-            messages[-1] = {
+        base = list(skill_messages)
+        if base and base[-1]["role"] == "user":
+            base[-1] = {
                 "role": "user",
-                "content": f"Context:\n{context}\n\n{messages[-1]['content']}",
+                "content": f"Context:\n{context}\n\n{base[-1]['content']}",
             }
     else:
-        messages = [
+        base = [
             {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT},
             {"role": "user", "content": f"Context:\n{context}\n\nRequest: {state['request']}"},
         ]
+
+    # Inject chat_history between the system message (if any) and the rest.
+    if base and base[0].get("role") == "system":
+        messages = [base[0], *chat_history, *base[1:]]
+    else:
+        messages = [*chat_history, *base]
 
     try:
         response = httpx.post(
