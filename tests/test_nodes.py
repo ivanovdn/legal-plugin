@@ -4,6 +4,9 @@
 from unittest.mock import patch, MagicMock
 import httpx
 
+from config import get_settings
+from graph.nodes.history_appender import history_appender
+
 
 def _make_state(**overrides):
     base = {
@@ -353,3 +356,61 @@ def test_human_review_sets_awaiting_review():
     state = _make_state(task_type="contract_generation")
     result = human_review(state)
     assert result["awaiting_review"] is True
+
+
+# --- history_appender ---
+
+def test_history_appender_appends_user_and_assistant_pair(monkeypatch):
+    """history_appender returns a chat_history list with one user + one assistant message."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "300")
+    get_settings.cache_clear()
+
+    state = _make_state(request="What's the term?", llm_response="The term is 2 years.")
+    result = history_appender(state)
+
+    assert "chat_history" in result
+    assert len(result["chat_history"]) == 2
+    assert result["chat_history"][0] == {"role": "user", "content": "What's the term?"}
+    assert result["chat_history"][1] == {"role": "assistant", "content": "The term is 2 years."}
+
+
+def test_history_appender_trims_long_assistant_response(monkeypatch):
+    """Assistant content longer than trim_chars is truncated and gets '[...]' marker."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "10")
+    get_settings.cache_clear()
+
+    state = _make_state(request="Generate NDA", llm_response="A" * 100)
+    result = history_appender(state)
+
+    asst = result["chat_history"][1]
+    assert asst["content"] == "AAAAAAAAAA[...]"
+    assert len(asst["content"]) == 15  # 10 chars + 5-char marker
+
+
+def test_history_appender_does_not_trim_short_response(monkeypatch):
+    """Short responses are kept verbatim, no marker appended."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "300")
+    get_settings.cache_clear()
+
+    state = _make_state(request="Q", llm_response="Short answer.")
+    result = history_appender(state)
+
+    assert result["chat_history"][1]["content"] == "Short answer."
+    assert "[...]" not in result["chat_history"][1]["content"]
+
+
+def test_history_appender_does_not_trim_user_request(monkeypatch):
+    """User request is stored verbatim even if very long."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "10")
+    get_settings.cache_clear()
+
+    long_request = "B" * 500
+    state = _make_state(request=long_request, llm_response="ok")
+    result = history_appender(state)
+
+    assert result["chat_history"][0]["content"] == long_request
+    assert "[...]" not in result["chat_history"][0]["content"]
