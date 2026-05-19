@@ -278,3 +278,4 @@ def test_graph_history_appender_runs_before_memory_writer(tmp_path, monkeypatch)
     assert result["chat_history"][0]["role"] == "user"
     assert result["chat_history"][0]["content"] == "What are indemnification standards?"
     assert result["chat_history"][1]["role"] == "assistant"
+    assert result["chat_history"][1]["content"] != ""
