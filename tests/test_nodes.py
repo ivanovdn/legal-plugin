@@ -25,6 +25,7 @@ def _make_state(**overrides):
         "session_id": "test-sess",
         "checkpoint_ref": "",
         "trace_id": "",
+        "chat_history": [],
     }
     base.update(overrides)
     return base
