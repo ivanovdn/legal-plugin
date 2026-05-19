@@ -6,6 +6,7 @@ import httpx
 
 from config import get_settings
 from graph.nodes.history_appender import history_appender
+from graph.nodes.human_review import human_review
 from graph.nodes.llm_caller import llm_caller
 
 
@@ -353,10 +354,37 @@ def test_memory_writer_writes_audit(tmp_path, monkeypatch):
 
 def test_human_review_sets_awaiting_review():
     """human_review marks state as awaiting review."""
-    from graph.nodes.human_review import human_review
     state = _make_state(task_type="contract_generation")
     result = human_review(state)
     assert result["awaiting_review"] is True
+
+
+def test_human_review_skips_interrupt_when_disabled(monkeypatch):
+    """When interrupt_enabled is False, human_review flags awaiting_review but does NOT call interrupt()."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt") as mock_interrupt:
+        state = _make_state(task_type="contract_generation", risk_level="high")
+        result = human_review(state)
+
+    assert mock_interrupt.call_count == 0
+    assert result["awaiting_review"] is True
+
+
+def test_human_review_calls_interrupt_when_enabled(monkeypatch):
+    """When interrupt_enabled is True, human_review calls interrupt()."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={"approved": True, "notes": "ok"}) as mock_interrupt:
+        state = _make_state(task_type="contract_generation", risk_level="high")
+        result = human_review(state)
+
+    assert mock_interrupt.call_count == 1
+    assert result["awaiting_review"] is False
 
 
 # --- history_appender ---
