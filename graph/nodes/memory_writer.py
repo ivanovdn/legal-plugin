@@ -40,4 +40,4 @@ def memory_writer(state: LegalAgentState) -> LegalAgentState:
     )
 
     logger.info("[memory_writer] audit log written for session=%s", state.get("session_id"))
-    return state
+    return {}

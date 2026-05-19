@@ -1,6 +1,10 @@
 # tests/test_graph.py
 from unittest.mock import patch, MagicMock
+
+from config import get_settings
+from graph.graph import build_graph
 from graph.state import LegalAgentState
+from memory.audit import init_audit_db
 
 
 def test_legal_agent_state_can_be_created():
@@ -239,3 +243,38 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     rows = conn.execute("SELECT * FROM audit_log").fetchall()
     conn.close()
     assert len(rows) >= 1
+
+
+def test_graph_includes_history_appender_node():
+    """history_appender is registered as a graph node."""
+    compiled = build_graph()
+    assert "history_appender" in compiled.nodes
+
+
+def test_graph_history_appender_runs_before_memory_writer(tmp_path, monkeypatch):
+    """In a full graph invocation, history_appender produces chat_history before memory_writer."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph()
+        result = compiled.invoke(_make_state(request="What are indemnification standards?"))
+
+    assert len(result["chat_history"]) == 2
+    assert result["chat_history"][0]["role"] == "user"
+    assert result["chat_history"][0]["content"] == "What are indemnification standards?"
+    assert result["chat_history"][1]["role"] == "assistant"
