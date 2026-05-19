@@ -83,7 +83,9 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
 
     try:
         agent = _build_agent()
-        result = agent.invoke({"messages": [{"role": "user", "content": user_message}]})
+        chat_history = state.get("chat_history", []) or []
+        agent_messages = [*chat_history, {"role": "user", "content": user_message}]
+        result = agent.invoke({"messages": agent_messages})
 
         messages = result.get("messages", [])
         if messages:
