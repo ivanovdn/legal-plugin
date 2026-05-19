@@ -79,3 +79,39 @@ def test_config_singleton_returns_same_instance(monkeypatch):
     s1 = get_settings()
     s2 = get_settings()
     assert s1 is s2
+
+
+def test_settings_default_chat_history_n_turns(monkeypatch):
+    """Default chat_history_n_turns is 5."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.chat_history_n_turns == 5
+
+
+def test_settings_default_chat_history_trim_chars(monkeypatch):
+    """Default chat_history_trim_chars is 300."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.chat_history_trim_chars == 300
+
+
+def test_settings_default_checkpointer_enabled_true(monkeypatch):
+    """Default checkpointer_enabled is True."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.checkpointer_enabled is True
+
+
+def test_settings_default_interrupt_enabled_false(monkeypatch):
+    """Default interrupt_enabled is False (resume not yet wired)."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    from config import get_settings
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.interrupt_enabled is False
