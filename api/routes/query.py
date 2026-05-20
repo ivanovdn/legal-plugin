@@ -31,8 +31,33 @@ def _get_graph():
 
 
 def _payload_from_result(result: dict, session_id: str) -> dict:
-    """Shape the response payload for both submit and resume."""
+    """Shape the response payload for both submit and resume.
+
+    LangGraph 0.6 surfaces an active interrupt via the `__interrupt__` key
+    on the result dict. State mutations made before interrupt() raises are
+    NOT persisted, so we read the interrupt's `.value` (the dict passed to
+    interrupt()) for the payload. The legacy `awaiting_review` flag is also
+    honored so unit tests that mock graph.invoke continue to work.
+    """
+    interrupts = result.get("__interrupt__") or []
+    if interrupts:
+        # interrupts[0] is a langgraph Interrupt with .value (the dict passed to interrupt())
+        first = interrupts[0]
+        value = getattr(first, "value", first) if not isinstance(first, dict) else first
+        return {
+            "session_id": session_id,
+            "awaiting_review": True,
+            "interrupt_payload": {
+                "task_type": value.get("task_type", ""),
+                "risk_level": value.get("risk_level", ""),
+                "llm_response": value.get("llm_response", ""),
+                "risk_flags": value.get("risk_flags", []),
+                "review_iterations": value.get("review_iterations", 0),
+            },
+            "report": {},
+        }
     if result.get("awaiting_review"):
+        # Legacy / test-mocked shape — keep working for unit tests that don't use real interrupts.
         return {
             "session_id": session_id,
             "awaiting_review": True,

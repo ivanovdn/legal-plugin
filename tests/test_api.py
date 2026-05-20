@@ -365,3 +365,45 @@ def test_resume_query_returns_error_when_session_unknown(monkeypatch):
     data = response.json()
     assert data["status"] == "error"
     assert any("session expired" in e.lower() or "not found" in e.lower() for e in data["errors"])
+
+
+def test_submit_query_returns_interrupt_payload_from_dunder_interrupt_key(monkeypatch):
+    """When graph result has __interrupt__ key (real LangGraph 0.6 behavior), API extracts payload from it."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    from unittest.mock import MagicMock as _MM
+    fake_interrupt = _MM()
+    fake_interrupt.value = {
+        "type": "human_review",
+        "task_type": "contract_generation",
+        "risk_level": "medium",
+        "llm_response": "DRAFT FROM INTERRUPT",
+        "risk_flags": [],
+        "review_iterations": 2,
+    }
+
+    def _invoke_with_interrupt(state, config=None):
+        # Simulate LangGraph 0.6: __interrupt__ surfaced; awaiting_review NOT persisted.
+        return {"__interrupt__": (fake_interrupt,)}
+
+    with patch("api.routes.query._get_graph") as mock_get_graph, \
+         patch("api.routes.query.refresh_ttl"):
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = _invoke_with_interrupt
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        response = client.post(
+            "/api/query",
+            json={"request": "Generate", "task_type": "contract_generation"},
+            headers={"X-User-ID": "attorney-1"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["awaiting_review"] is True
+    assert data["interrupt_payload"]["llm_response"] == "DRAFT FROM INTERRUPT"
+    assert data["interrupt_payload"]["review_iterations"] == 2
