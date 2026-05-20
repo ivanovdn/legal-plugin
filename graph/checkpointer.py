@@ -5,8 +5,10 @@ Returns None on failure so the app can still boot and run without memory.
 """
 
 import logging
+from urllib.parse import urlparse
 
 from langgraph.checkpoint.redis import RedisSaver
+from redis import Redis
 
 from config import get_settings
 
@@ -32,3 +34,23 @@ def build_checkpointer():
     except Exception as e:
         logger.warning("Checkpointer unavailable (%s) — running without memory", e)
         return None
+
+
+def refresh_ttl(session_id: str) -> None:
+    """Refresh Redis TTL on all checkpoint keys for this session.
+
+    Fire-and-forget: any failure is logged at WARN and swallowed so the
+    request response is not affected by Redis hiccups.
+    """
+    settings = get_settings()
+    if not settings.checkpointer_enabled:
+        return
+    try:
+        url = urlparse(settings.redis_url)
+        r = Redis(host=url.hostname, port=url.port or 6379, password=url.password)
+        for key in r.scan_iter(match=f"checkpoint:{session_id}:*"):
+            r.expire(key, settings.checkpoint_ttl_seconds)
+        for key in r.scan_iter(match=f"checkpoint_write:{session_id}:*"):
+            r.expire(key, settings.checkpoint_ttl_seconds)
+    except Exception as e:
+        logger.warning("refresh_ttl failed for %s: %s", session_id, e)
