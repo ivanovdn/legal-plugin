@@ -33,6 +33,18 @@ def route_intent(state: LegalAgentState) -> str:
     return "skill_dispatcher"
 
 
+def route_review(state: LegalAgentState) -> str:
+    """Decide where to go from human_review after the resume completes.
+
+    Empty llm_response is the signal that human_review chose to loop back
+    (it clears llm_response on the loop-back path). Any other state means
+    a terminal verdict (approve, revise, cap-hit, pure-reject).
+    """
+    if state.get("llm_response", ""):
+        return "output_formatter"
+    return "skill_dispatcher"
+
+
 def build_graph(checkpointer=None) -> StateGraph:
     """Build and compile the supervisor graph. Returns compiled graph."""
     graph = StateGraph(LegalAgentState)
@@ -95,8 +107,11 @@ def build_graph(checkpointer=None) -> StateGraph:
         "output_formatter": "output_formatter",
     })
 
-    # human_review -> output_formatter
-    graph.add_edge("human_review", "output_formatter")
+    # Conditional: human_review -> output_formatter OR skill_dispatcher
+    graph.add_conditional_edges("human_review", route_review, {
+        "output_formatter": "output_formatter",
+        "skill_dispatcher": "skill_dispatcher",
+    })
 
     # output_formatter -> history_appender -> memory_writer -> END
     graph.add_edge("output_formatter", "history_appender")

@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 from langgraph.checkpoint.memory import MemorySaver
 
 from config import get_settings
-from graph.graph import build_graph
+from graph.graph import build_graph, route_review
 from graph.state import LegalAgentState
 from memory.audit import init_audit_db
 
@@ -384,3 +384,15 @@ def test_graph_without_checkpointer_still_works(tmp_path, monkeypatch):
 
     # History was still appended (just not persisted across invocations)
     assert len(result["chat_history"]) == 2
+
+
+def test_route_review_returns_skill_dispatcher_when_llm_response_empty():
+    """Empty llm_response is the loop-back signal."""
+    state = _make_state(llm_response="", awaiting_review=False)
+    assert route_review(state) == "skill_dispatcher"
+
+
+def test_route_review_returns_output_formatter_when_llm_response_set():
+    """Non-empty llm_response means terminal exit (approve/revise/cap)."""
+    state = _make_state(llm_response="DRAFT", awaiting_review=False)
+    assert route_review(state) == "output_formatter"
