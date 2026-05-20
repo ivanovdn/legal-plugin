@@ -38,6 +38,26 @@ async def submit_query(
         return response.json()
 
 
+async def resume_query(
+    session_id: str,
+    approved: bool,
+    notes: str = "",
+    revised_response: str = "",
+) -> dict:
+    """POST /api/query/{session_id}/resume — submit attorney verdict."""
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        response = await client.post(
+            f"{_base_url()}/api/query/{session_id}/resume",
+            json={
+                "approved": approved,
+                "notes": notes,
+                "revised_response": revised_response,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def ingest_file(
     file_path: str,
     filename: str,
