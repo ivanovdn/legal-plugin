@@ -8,6 +8,8 @@ from fastapi import APIRouter, Header
 from langfuse.decorators import observe, langfuse_context
 
 from api.models import ApiResponse, QueryRequest, ResumeRequest
+from config import get_settings
+from graph.checkpointer import build_checkpointer
 from graph.graph import build_graph
 
 logger = logging.getLogger(__name__)
@@ -18,10 +20,12 @@ _graph = None
 
 
 def _get_graph():
-    """Lazy-init compiled graph."""
+    """Lazy-init compiled graph with optional Redis checkpointer."""
     global _graph
     if _graph is None:
-        _graph = build_graph()
+        settings = get_settings()
+        cp = build_checkpointer() if settings.checkpointer_enabled else None
+        _graph = build_graph(checkpointer=cp)
     return _graph
 
 
@@ -60,12 +64,14 @@ def submit_query(
         "session_id": session_id,
         "checkpoint_ref": "",
         "trace_id": session_id,
+        "chat_history": [],
     }
 
     graph = _get_graph()
+    config = {"configurable": {"thread_id": session_id}}
 
     try:
-        result = graph.invoke(initial_state)
+        result = graph.invoke(initial_state, config=config)
         return ApiResponse(
             status="ok",
             data={
@@ -86,7 +92,7 @@ def resume_query(session_id: str, body: ResumeRequest):
     """Resume graph execution after human review interrupt."""
     return ApiResponse(
         status="error",
-        errors=["Resume requires Redis checkpointer — not yet wired"],
+        errors=["Resume not yet implemented — interrupt_enabled=False"],
     )
 
 
