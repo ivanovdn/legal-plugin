@@ -53,6 +53,13 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
         user_content = request
         state["retrieval_query"] = request
 
+    attorney_notes = (state.get("attorney_notes") or "").strip()
+    if attorney_notes:
+        user_content += (
+            f"\n\n--- ATTORNEY REVIEW NOTES (incorporate these changes) ---\n"
+            f"{attorney_notes}"
+        )
+
     state["messages"] = [
         {"role": "system", "content": playbook},
         {"role": "user", "content": user_content},

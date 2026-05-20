@@ -4,7 +4,10 @@
 from unittest.mock import patch, MagicMock
 
 from config import get_settings
+from skills.compliance_check import compliance_check
 from skills.contract_generation import contract_generation
+from skills.contract_review.contract_review import contract_review
+from skills.drafting import drafting
 from skills.legal_research import legal_research
 
 
@@ -332,3 +335,50 @@ def test_legal_research_injects_attorney_notes(monkeypatch):
     last_user = sent[-1]["content"]
     assert "ATTORNEY REVIEW NOTES" in last_user
     assert "EU jurisdiction" in last_user
+
+
+# --- attorney_notes injection into plain skills ---
+
+def test_contract_review_injects_attorney_notes(monkeypatch):
+    """contract_review's user message includes the attorney_notes block."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(
+        request="Review this NDA",
+        attorney_notes="Pay special attention to clauses 3 and 7.",
+    )
+    result = contract_review(state)
+    last_user = result["messages"][-1]["content"]
+    assert "ATTORNEY REVIEW NOTES" in last_user
+    assert "clauses 3 and 7" in last_user
+
+
+def test_compliance_check_injects_attorney_notes(monkeypatch):
+    """compliance_check user message includes the attorney_notes block."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(
+        request="Check GDPR compliance",
+        attorney_notes="Focus on data-subject rights specifically.",
+    )
+    result = compliance_check(state)
+    last_user = result["messages"][-1]["content"]
+    assert "ATTORNEY REVIEW NOTES" in last_user
+    assert "data-subject rights" in last_user
+
+
+def test_drafting_injects_attorney_notes(monkeypatch):
+    """drafting user message includes the attorney_notes block."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(
+        request="Draft an NDA template",
+        attorney_notes="Use the mutual-NDA format.",
+    )
+    result = drafting(state)
+    last_user = result["messages"][-1]["content"]
+    assert "ATTORNEY REVIEW NOTES" in last_user
+    assert "mutual-NDA" in last_user

@@ -30,15 +30,23 @@ def drafting(state: LegalAgentState) -> LegalAgentState:
     """Prepare state for document drafting via rag_retriever + llm_caller."""
     request = state["request"]
     filters = state.get("filters", {})
+    attorney_notes = (state.get("attorney_notes") or "").strip()
 
     query_parts = [request]
     if filters.get("jurisdiction"):
         query_parts.append(f"jurisdiction: {filters['jurisdiction']}")
     state["retrieval_query"] = " ".join(query_parts)
 
+    user_content = request
+    if attorney_notes:
+        user_content += (
+            f"\n\n--- ATTORNEY REVIEW NOTES (incorporate these changes) ---\n"
+            f"{attorney_notes}"
+        )
+
     state["messages"] = [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": request},
+        {"role": "user", "content": user_content},
     ]
 
     logger.info("[drafting] prepared for document drafting: %s", request[:80])
