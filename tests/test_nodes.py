@@ -8,6 +8,7 @@ from config import get_settings
 from graph.nodes.history_appender import history_appender
 from graph.nodes.human_review import human_review
 from graph.nodes.llm_caller import llm_caller
+from graph.nodes.output_formatter import output_formatter
 
 
 def _make_state(**overrides):
@@ -648,3 +649,27 @@ def test_human_review_pure_reject_no_notes(monkeypatch):
     assert result["awaiting_review"] is False
     assert result["llm_response"] == "DRAFT"
     assert result["report_notes_unincorporated"] == ""
+
+
+def test_output_formatter_includes_unincorporated_notes(monkeypatch):
+    """When report_notes_unincorporated is set, it appears in the final report."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(
+        task_type="contract_generation",
+        llm_response="FINAL DRAFT",
+        report_notes_unincorporated="Attorney wanted X, hit iteration cap.",
+    )
+    result = output_formatter(state)
+    assert result["report"]["notes_unincorporated"] == "Attorney wanted X, hit iteration cap."
+
+
+def test_output_formatter_omits_unincorporated_when_empty(monkeypatch):
+    """When the field is empty, the report omits the key (or has empty string)."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(task_type="contract_review", llm_response="OK")
+    result = output_formatter(state)
+    assert result["report"].get("notes_unincorporated", "") == ""
