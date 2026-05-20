@@ -66,6 +66,13 @@ def contract_generation(state: LegalAgentState) -> LegalAgentState:
 
     user_message = "\n".join(context_parts)
 
+    attorney_notes = (state.get("attorney_notes") or "").strip()
+    if attorney_notes:
+        user_message += (
+            f"\n\n--- ATTORNEY REVIEW NOTES (incorporate these changes) ---\n"
+            f"{attorney_notes}"
+        )
+
     try:
         agent = _build_agent()
         chat_history = state.get("chat_history", []) or []

@@ -272,3 +272,63 @@ def test_legal_research_injects_chat_history_into_agent(monkeypatch):
     assert sent[1] == history[1]
     assert sent[-1]["role"] == "user"
     assert "ACME" in sent[-1]["content"]
+
+
+# --- attorney_notes injection into agent skills ---
+
+def test_contract_generation_injects_attorney_notes(monkeypatch):
+    """When attorney_notes is set, the agent's user message includes the notes block."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    captured = {}
+    fake_agent = MagicMock()
+    fake_agent.invoke.side_effect = lambda payload: (
+        captured.setdefault("payload", payload) or
+        {"messages": [MagicMock(content="DRAFT v2")]}
+    )
+
+    state = _make_state(
+        request="Generate a service agreement for Vertex",
+        filters={"client_id": "internal"},
+        attorney_notes="Add a confidentiality clause; reduce cap to 1.5x.",
+    )
+
+    with patch("skills.contract_generation.contract_generation._build_agent", return_value=fake_agent):
+        contract_generation(state)
+
+    sent = captured["payload"]["messages"]
+    # Final user message must contain both the request and the attorney notes block
+    last_user = sent[-1]["content"]
+    assert "Vertex" in last_user
+    assert "ATTORNEY REVIEW NOTES" in last_user
+    assert "confidentiality clause" in last_user
+
+
+def test_legal_research_injects_attorney_notes(monkeypatch):
+    """Same contract for the research agent."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    captured = {}
+    fake_agent = MagicMock()
+    fake_agent.invoke.side_effect = lambda payload: (
+        captured.setdefault("payload", payload) or
+        {"messages": [MagicMock(content="Per case A (doc_id: d1)...")]}
+    )
+
+    state = _make_state(
+        request="What's the standard cap for SaaS?",
+        filters={"client_id": "internal"},
+        attorney_notes="Focus on EU jurisdiction precedents only.",
+    )
+
+    with patch("skills.legal_research._build_agent", return_value=fake_agent):
+        legal_research(state)
+
+    sent = captured["payload"]["messages"]
+    last_user = sent[-1]["content"]
+    assert "ATTORNEY REVIEW NOTES" in last_user
+    assert "EU jurisdiction" in last_user
