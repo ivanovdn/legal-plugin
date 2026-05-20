@@ -29,6 +29,8 @@ def _make_state(**overrides):
         "session_id": "test-sess",
         "checkpoint_ref": "",
         "trace_id": "",
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     base.update(overrides)
     return base

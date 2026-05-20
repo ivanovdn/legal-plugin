@@ -49,3 +49,5 @@ class LegalAgentState(TypedDict):
     checkpoint_ref: str
     trace_id: str
     chat_history: Annotated[list[dict], _history_reducer]
+    review_iterations: int                 # NEW — counts loop-backs; capped at max_review_iterations
+    report_notes_unincorporated: str       # NEW — attorney notes the loop couldn't incorporate (set on cap)

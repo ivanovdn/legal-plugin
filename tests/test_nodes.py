@@ -31,6 +31,8 @@ def _make_state(**overrides):
         "checkpoint_ref": "",
         "trace_id": "",
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     base.update(overrides)
     return base

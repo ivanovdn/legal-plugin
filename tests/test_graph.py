@@ -31,6 +31,8 @@ def test_legal_agent_state_can_be_created():
         "checkpoint_ref": "",
         "trace_id": "",
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     assert state["request"] == "Review this contract"
     assert state["risk_level"] == "low"
@@ -59,6 +61,8 @@ def _make_state(**overrides) -> LegalAgentState:
         "checkpoint_ref": "",
         "trace_id": "",
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     base.update(overrides)
     return base
