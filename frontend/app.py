@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import chainlit as cl
 from fpdf import FPDF
 
-from frontend.api_client import submit_query, ingest_file, health_check
+from frontend.api_client import submit_query, ingest_file, health_check, resume_query
 from ingest.parsers.pdf_parser import parse_pdf
 from ingest.parsers.docx_parser import parse_docx
 
@@ -88,30 +88,107 @@ async def _extract_file_text(elements) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Resume rendering helper
+# ---------------------------------------------------------------------------
+
+async def _render_resume_result(result: dict):
+    """Render a /api/resume response. Handles loop-back (new interrupt) and final result."""
+    if result.get("status") == "error":
+        errs = result.get("errors") or ["unknown error"]
+        msg = errs[0] if errs else "unknown error"
+        await cl.Message(content=f"Resume failed: {msg}").send()
+        cl.user_session.set("pending_review_text", "")
+        return
+
+    data = result.get("data", {})
+    if data.get("awaiting_review"):
+        payload = data.get("interrupt_payload", {})
+        new_text = payload.get("llm_response", "")
+        task_type = payload.get("task_type", "unknown")
+        risk_level = payload.get("risk_level", "unknown")
+        cl.user_session.set("pending_review_text", new_text)
+        await _show_in_side_panel(
+            cl.Message(content=""),
+            response_text=new_text,
+            task_type=task_type,
+            risk_level=risk_level,
+            sources=[],
+            awaiting_review=True,
+        )
+    else:
+        report = data.get("report", {})
+        response_text = report.get("response", "(no response)")
+        notes_unincorp = report.get("notes_unincorporated", "")
+        content = response_text
+        if notes_unincorp:
+            content += (
+                f"\n\n---\n**Notes not incorporated** "
+                f"(iteration cap reached):\n{notes_unincorp}"
+            )
+        await cl.Message(content=content).send()
+        cl.user_session.set("pending_review_text", "")
+
+
+# ---------------------------------------------------------------------------
 # Action callbacks (buttons)
 # ---------------------------------------------------------------------------
 
 @cl.action_callback("approve")
 async def on_approve(action: cl.Action):
-    full_text = cl.user_session.get("pending_review_text", "")
-    if full_text:
-        pdf_path = _generate_pdf(full_text)
-        pdf_element = cl.File(name="approved_contract.pdf", path=pdf_path, display="inline")
-        await cl.Message(content="Draft approved. Download the PDF below.", elements=[pdf_element]).send()
-    else:
-        await cl.Message(content="Draft approved.").send()
-    cl.user_session.set("pending_review_text", "")
+    session_id = cl.user_session.get("session_id", "")
+    if not session_id:
+        await cl.Message(content="Session expired. Please start a new request.").send()
+        return
+    try:
+        result = await resume_query(session_id=session_id, approved=True)
+    except Exception as e:
+        await cl.Message(content=f"Resume failed: {e}").send()
+        return
+    await _render_resume_result(result)
 
 
 @cl.action_callback("request_changes")
 async def on_request_changes(action: cl.Action):
-    await cl.Message(content="Please describe the changes you'd like made to this draft.").send()
+    session_id = cl.user_session.get("session_id", "")
+    if not session_id:
+        await cl.Message(content="Session expired. Please start a new request.").send()
+        return
+    notes_msg = await cl.AskUserMessage(
+        content="Describe the changes you'd like made to this draft.",
+        timeout=600,
+    ).send()
+    if not notes_msg:
+        await cl.Message(content="No notes provided — cancelling.").send()
+        return
+    # AskUserMessage returns dict with "output" or "content" depending on Chainlit version
+    notes_text = (notes_msg.get("output") or notes_msg.get("content") or "").strip()
+    if not notes_text:
+        await cl.Message(content="Empty notes — cancelling.").send()
+        return
+    try:
+        result = await resume_query(
+            session_id=session_id,
+            approved=False,
+            notes=notes_text,
+        )
+    except Exception as e:
+        await cl.Message(content=f"Resume failed: {e}").send()
+        return
+    await _render_resume_result(result)
 
 
 @cl.action_callback("reject")
 async def on_reject(action: cl.Action):
-    await cl.Message(content="Draft rejected.").send()
-    cl.user_session.set("pending_review_text", "")
+    session_id = cl.user_session.get("session_id", "")
+    if not session_id:
+        await cl.Message(content="Session expired. Please start a new request.").send()
+        return
+    try:
+        result = await resume_query(session_id=session_id, approved=False)
+    except Exception as e:
+        await cl.Message(content=f"Resume failed: {e}").send()
+        return
+    await _render_resume_result(result)
 
 
 # ---------------------------------------------------------------------------
