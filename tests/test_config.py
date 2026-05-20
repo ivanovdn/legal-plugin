@@ -105,9 +105,25 @@ def test_settings_default_checkpointer_enabled_true(monkeypatch):
     assert settings.checkpointer_enabled is True
 
 
-def test_settings_default_interrupt_enabled_false(monkeypatch):
-    """Default interrupt_enabled is False (resume not yet wired)."""
+def test_settings_default_interrupt_enabled_true(monkeypatch):
+    """Default interrupt_enabled is True (resume is now wired)."""
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     get_settings.cache_clear()
     settings = get_settings()
-    assert settings.interrupt_enabled is False
+    assert settings.interrupt_enabled is True
+
+
+def test_settings_default_max_review_iterations(monkeypatch):
+    """Default max_review_iterations is 3."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.max_review_iterations == 3
+
+
+def test_settings_default_checkpoint_ttl_seconds(monkeypatch):
+    """Default checkpoint_ttl_seconds is 86400 (24 hours)."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.checkpoint_ttl_seconds == 86400

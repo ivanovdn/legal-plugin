@@ -51,9 +51,11 @@ class Settings(BaseSettings):
 
     # Memory / checkpointer
     checkpointer_enabled: bool = True
-    interrupt_enabled: bool = False
+    interrupt_enabled: bool = True
     chat_history_n_turns: int = 5
     chat_history_trim_chars: int = 300
+    max_review_iterations: int = 3
+    checkpoint_ttl_seconds: int = 86400
 
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
