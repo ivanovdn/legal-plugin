@@ -333,21 +333,14 @@ def test_graph_with_checkpointer_persists_chat_history_across_invocations(tmp_pa
         )
         result_2 = compiled.invoke(state_2, config=config)
 
-    # After turn 2, chat_history must include both turns. Upstream shared nodes
-    # currently return the full state dict, so the chat_history reducer fires once
-    # per node and concatenates the loaded turn-1 history onto itself. The cap in
-    # _history_reducer (2 * chat_history_n_turns) prevents unbounded growth, so the
-    # final length is bounded but greater than the "ideal" 4. We assert the key
-    # behaviour: both turns' content is present and the cap held.
-    settings = get_settings()
-    cap = 2 * settings.chat_history_n_turns
-    assert len(result_2["chat_history"]) <= cap, \
-        f"chat_history exceeded the reducer cap of {cap}"
-    history_contents = [m.get("content", "") for m in result_2["chat_history"]]
-    assert any("indemnification standards" in c for c in history_contents), \
-        "Turn 1's user message should be retained in chat_history after turn 2"
-    assert any("software vendors specifically" in c for c in history_contents), \
-        "Turn 2's user message should be appended to chat_history"
+    # After turn 2, chat_history should be exactly 4 entries: 2 from turn 1 + 2 from
+    # turn 2. The reducer's idempotency guard (in graph/state.py) means upstream
+    # nodes forwarding state unchanged don't trigger doubling.
+    assert len(result_2["chat_history"]) == 4
+    assert result_2["chat_history"][0]["content"] == "What are indemnification standards?"
+    assert result_2["chat_history"][1]["role"] == "assistant"
+    assert result_2["chat_history"][2]["content"] == "And for software vendors specifically?"
+    assert result_2["chat_history"][3]["role"] == "assistant"
 
     # Turn 2's llm_caller invocation (the last LLM call) should have included
     # turn 1's user message in its prompt via the chat_history injection.

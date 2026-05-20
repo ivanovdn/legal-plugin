@@ -13,14 +13,19 @@ def _history_reducer(old: list[dict] | None, new: list[dict]) -> list[dict]:
     N = chat_history_n_turns from settings. Each turn contributes 2 entries
     (one user message, one assistant message), so 2*N is the message cap.
 
-    IMPORTANT: nodes downstream of history_appender MUST return a partial state
-    dict that omits `chat_history` (or return `{}` if they have no state writes).
-    Returning the full state from a downstream node will cause this reducer to
-    concatenate `chat_history` with itself, silently doubling the history until
-    the cap is hit. See memory_writer for the canonical pattern.
+    Idempotent for "node forwarding state unchanged": when `new == old`, return
+    `old` without concatenating. Most graph nodes return the FULL state dict,
+    which makes LangGraph fire this reducer with `old == new` once per node per
+    turn — without the idempotency guard, chat_history would double on every
+    node and explode to the cap. history_appender is the one node that returns
+    a partial dict with genuinely-new messages; its append goes through the
+    normal concatenate-and-cap path.
     """
     n = get_settings().chat_history_n_turns
     old = old or []
+    new = new or []
+    if new == old:
+        return old
     return (old + new)[-(2 * n):]
 
 
