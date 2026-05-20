@@ -264,3 +264,104 @@ def test_get_graph_builds_without_checkpointer_when_disabled(monkeypatch):
 
     mock_factory.assert_not_called()
     mock_build_graph.assert_called_once_with(checkpointer=None)
+
+
+def test_submit_query_returns_interrupt_payload_when_awaiting_review(monkeypatch):
+    """When graph result has awaiting_review=True, API returns interrupt_payload."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    def _interrupt_invoke(state, config=None):
+        state["awaiting_review"] = True
+        state["task_type"] = "contract_generation"
+        state["llm_response"] = "DRAFT"
+        state["risk_level"] = "medium"
+        state["risk_flags"] = []
+        state["review_iterations"] = 0
+        return state
+
+    with patch("api.routes.query._get_graph") as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = _interrupt_invoke
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        response = client.post(
+            "/api/query",
+            json={"request": "Generate", "task_type": "contract_generation"},
+            headers={"X-User-ID": "attorney-1"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["awaiting_review"] is True
+    assert "interrupt_payload" in data
+    assert data["interrupt_payload"]["llm_response"] == "DRAFT"
+    assert data["interrupt_payload"]["review_iterations"] == 0
+
+
+def test_resume_query_calls_graph_with_command_resume(monkeypatch):
+    """POST /api/query/{sid}/resume invokes graph with Command(resume=...) and matching thread_id."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_state = MagicMock()
+    fake_state.values = {"awaiting_review": False}
+
+    with patch("api.routes.query._get_graph") as mock_get_graph, \
+         patch("api.routes.query.refresh_ttl"):
+        mock_graph = MagicMock()
+        mock_graph.get_state.return_value = fake_state
+        mock_graph.invoke.return_value = {
+            "task_type": "contract_generation",
+            "report": {"response": "FINAL"},
+            "risk_level": "low",
+            "awaiting_review": False,
+        }
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        response = client.post(
+            "/api/query/sess-X/resume",
+            json={"approved": True, "notes": "", "revised_response": ""},
+        )
+
+    assert response.status_code == 200
+    # First positional arg to invoke is the Command; assert thread_id propagated
+    call = mock_graph.invoke.call_args
+    config = call.kwargs.get("config") or call.args[1]
+    assert config["configurable"]["thread_id"] == "sess-X"
+    # And the resume value passed:
+    cmd = call.args[0]
+    assert hasattr(cmd, "resume") or isinstance(cmd, dict)  # langgraph Command object or dict-like
+
+
+def test_resume_query_returns_error_when_session_unknown(monkeypatch):
+    """If get_state returns no values, API returns session-expired error envelope."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_state = MagicMock()
+    fake_state.values = {}  # no checkpoint values = unknown session
+
+    with patch("api.routes.query._get_graph") as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.get_state.return_value = fake_state
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        response = client.post(
+            "/api/query/sess-missing/resume",
+            json={"approved": True, "notes": "", "revised_response": ""},
+        )
+
+    assert response.status_code == 200  # API uses envelope, not HTTP status
+    data = response.json()
+    assert data["status"] == "error"
+    assert any("session expired" in e.lower() or "not found" in e.lower() for e in data["errors"])

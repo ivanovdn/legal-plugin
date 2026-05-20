@@ -6,10 +6,11 @@ import uuid
 
 from fastapi import APIRouter, Header
 from langfuse.decorators import observe, langfuse_context
+from langgraph.types import Command
 
 from api.models import ApiResponse, QueryRequest, ResumeRequest
 from config import get_settings
-from graph.checkpointer import build_checkpointer
+from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,30 @@ def _get_graph():
         cp = build_checkpointer() if settings.checkpointer_enabled else None
         _graph = build_graph(checkpointer=cp)
     return _graph
+
+
+def _payload_from_result(result: dict, session_id: str) -> dict:
+    """Shape the response payload for both submit and resume."""
+    if result.get("awaiting_review"):
+        return {
+            "session_id": session_id,
+            "awaiting_review": True,
+            "interrupt_payload": {
+                "task_type": result.get("task_type", ""),
+                "risk_level": result.get("risk_level", ""),
+                "llm_response": result.get("llm_response", ""),
+                "risk_flags": result.get("risk_flags", []),
+                "review_iterations": result.get("review_iterations", 0),
+            },
+            "report": {},
+        }
+    return {
+        "session_id": session_id,
+        "task_type": result.get("task_type", ""),
+        "report": result.get("report", {}),
+        "risk_level": result.get("risk_level", ""),
+        "awaiting_review": False,
+    }
 
 
 @router.post("/query", response_model=ApiResponse)
@@ -65,6 +90,8 @@ def submit_query(
         "checkpoint_ref": "",
         "trace_id": session_id,
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
 
     graph = _get_graph()
@@ -72,16 +99,8 @@ def submit_query(
 
     try:
         result = graph.invoke(initial_state, config=config)
-        return ApiResponse(
-            status="ok",
-            data={
-                "session_id": session_id,
-                "task_type": result.get("task_type", ""),
-                "report": result.get("report", {}),
-                "risk_level": result.get("risk_level", ""),
-                "awaiting_review": result.get("awaiting_review", False),
-            },
-        )
+        refresh_ttl(session_id)
+        return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
     except Exception as e:
         logger.exception("Graph execution failed")
         return ApiResponse(status="error", errors=[str(e)])
@@ -90,10 +109,31 @@ def submit_query(
 @router.post("/query/{session_id}/resume", response_model=ApiResponse)
 def resume_query(session_id: str, body: ResumeRequest):
     """Resume graph execution after human review interrupt."""
-    return ApiResponse(
-        status="error",
-        errors=["Resume not yet implemented — interrupt_enabled=False"],
-    )
+    graph = _get_graph()
+    config = {"configurable": {"thread_id": session_id}}
+
+    try:
+        prior = graph.get_state(config)
+    except Exception as e:
+        logger.warning("resume: get_state failed for %s: %s", session_id, e)
+        return ApiResponse(status="error", errors=["session expired or not found"])
+    if not prior or not prior.values:
+        return ApiResponse(status="error", errors=["session expired or not found"])
+
+    try:
+        result = graph.invoke(
+            Command(resume={
+                "approved": body.approved,
+                "notes": body.notes,
+                "revised_response": body.revised_response,
+            }),
+            config=config,
+        )
+        refresh_ttl(session_id)
+        return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
+    except Exception as e:
+        logger.exception("resume: graph invoke failed for %s", session_id)
+        return ApiResponse(status="error", errors=[str(e)])
 
 
 @router.get("/query/{session_id}/status", response_model=ApiResponse)
