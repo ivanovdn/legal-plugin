@@ -107,8 +107,10 @@ async def _render_resume_result(result: dict):
         task_type = payload.get("task_type", "unknown")
         risk_level = payload.get("risk_level", "unknown")
         cl.user_session.set("pending_review_text", new_text)
+        placeholder = cl.Message(content="Loading revised draft...")
+        await placeholder.send()
         await _show_in_side_panel(
-            cl.Message(content=""),
+            placeholder,
             response_text=new_text,
             task_type=task_type,
             risk_level=risk_level,
