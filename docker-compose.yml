@@ -10,13 +10,16 @@ services:
       - ./data/qdrant:/qdrant/storage
     restart: unless-stopped
 
-  # Shared Redis — used by both LangGraph checkpointer and Langfuse
+  # Shared Redis — used by both LangGraph checkpointer and Langfuse.
+  # Uses Redis Stack (Redis 7 superset) because langgraph-checkpoint-redis
+  # requires the RediSearch module (FT.* commands). The image's entrypoint
+  # auto-loads RediSearch + RedisJSON; REDIS_ARGS appends to the default
+  # redis-server invocation so we keep modules AND apply auth/policy.
   redis:
-    image: redis:7
+    image: redis/redis-stack-server:latest
     restart: unless-stopped
-    command: >
-      --requirepass myredissecret
-      --maxmemory-policy noeviction
+    environment:
+      REDIS_ARGS: "--requirepass myredissecret --maxmemory-policy noeviction"
     ports:
       - "6379:6379"
     volumes:

@@ -3,6 +3,10 @@
 
 from unittest.mock import patch, MagicMock
 
+from config import get_settings
+from skills.contract_generation import contract_generation
+from skills.legal_research import legal_research
+
 
 def _make_state(**overrides):
     base = {
@@ -15,6 +19,7 @@ def _make_state(**overrides):
         "retrieved_chunks": [],
         "filters": {"client_id": "internal"},
         "messages": [],
+        "chat_history": [],
         "llm_response": "",
         "risk_level": "",
         "risk_flags": [],
@@ -198,3 +203,70 @@ def test_legal_research_handles_error(monkeypatch):
         result = legal_research(state)
 
     assert "Error" in result["llm_response"]
+
+
+# --- chat_history injection into agent skills ---
+
+def test_contract_generation_injects_chat_history_into_agent(monkeypatch):
+    """Agent.invoke receives chat_history prepended to the new user message."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    captured = {}
+    fake_agent = MagicMock()
+    fake_agent.invoke.side_effect = lambda payload: captured.setdefault("payload", payload) or {
+        "messages": [MagicMock(content="DRAFT NDA ...")]
+    }
+
+    history = [
+        {"role": "user", "content": "Generate NDA for ACME"},
+        {"role": "assistant", "content": "DRAFT NDA [...]"},
+    ]
+    state = _make_state(
+        request="Make the term 3 years",
+        filters={"client_id": "internal"},
+        chat_history=history,
+    )
+
+    with patch("skills.contract_generation.contract_generation._build_agent", return_value=fake_agent):
+        contract_generation(state)
+
+    sent = captured["payload"]["messages"]
+    # Expect history first, then the current user request
+    assert sent[0] == history[0]
+    assert sent[1] == history[1]
+    assert sent[-1]["role"] == "user"
+    assert "Make the term 3 years" in sent[-1]["content"]
+
+
+def test_legal_research_injects_chat_history_into_agent(monkeypatch):
+    """Same contract, on the research agent."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    captured = {}
+    fake_agent = MagicMock()
+    fake_agent.invoke.side_effect = lambda payload: captured.setdefault("payload", payload) or {
+        "messages": [MagicMock(content="Per case A (doc_id: d1)...")]
+    }
+
+    history = [
+        {"role": "user", "content": "What's the standard cap?"},
+        {"role": "assistant", "content": "2x fees in most cases."},
+    ]
+    state = _make_state(
+        request="And for ACME specifically?",
+        filters={"client_id": "internal"},
+        chat_history=history,
+    )
+
+    with patch("skills.legal_research._build_agent", return_value=fake_agent):
+        legal_research(state)
+
+    sent = captured["payload"]["messages"]
+    assert sent[0] == history[0]
+    assert sent[1] == history[1]
+    assert sent[-1]["role"] == "user"
+    assert "ACME" in sent[-1]["content"]

@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # BM25
     bm25_enabled: bool = False
 
+    # Memory / checkpointer
+    checkpointer_enabled: bool = True
+    interrupt_enabled: bool = False
+    chat_history_n_turns: int = 5
+    chat_history_trim_chars: int = 300
+
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
     langfuse_public_key: str = "pk-lf-local"

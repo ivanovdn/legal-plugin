@@ -1,9 +1,32 @@
 # graph/state.py
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
+from config import get_settings
 from ingest.chunk_models import LegalChunk
+
+
+def _history_reducer(old: list[dict] | None, new: list[dict]) -> list[dict]:
+    """Concatenate old + new, then cap to the last 2*N entries (FIFO eviction).
+
+    N = chat_history_n_turns from settings. Each turn contributes 2 entries
+    (one user message, one assistant message), so 2*N is the message cap.
+
+    Idempotent for "node forwarding state unchanged": when `new == old`, return
+    `old` without concatenating. Most graph nodes return the FULL state dict,
+    which makes LangGraph fire this reducer with `old == new` once per node per
+    turn — without the idempotency guard, chat_history would double on every
+    node and explode to the cap. history_appender is the one node that returns
+    a partial dict with genuinely-new messages; its append goes through the
+    normal concatenate-and-cap path.
+    """
+    n = get_settings().chat_history_n_turns
+    old = old or []
+    new = new or []
+    if new == old:
+        return old
+    return (old + new)[-(2 * n):]
 
 
 class LegalAgentState(TypedDict):
@@ -25,3 +48,4 @@ class LegalAgentState(TypedDict):
     session_id: str
     checkpoint_ref: str
     trace_id: str
+    chat_history: Annotated[list[dict], _history_reducer]

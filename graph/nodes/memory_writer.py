@@ -15,8 +15,8 @@ _db_initialized = False
 
 
 @observe(name="memory_writer")
-def memory_writer(state: LegalAgentState) -> LegalAgentState:
-    """Write skill invocation to SQLite audit log."""
+def memory_writer(state: LegalAgentState) -> dict:
+    """Write skill invocation to SQLite audit log. Returns {} (side-effect only)."""
     global _db_initialized
     settings = get_settings()
 
@@ -40,4 +40,4 @@ def memory_writer(state: LegalAgentState) -> LegalAgentState:
     )
 
     logger.info("[memory_writer] audit log written for session=%s", state.get("session_id"))
-    return state
+    return {}

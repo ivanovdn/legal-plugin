@@ -4,6 +4,11 @@
 from unittest.mock import patch, MagicMock
 import httpx
 
+from config import get_settings
+from graph.nodes.history_appender import history_appender
+from graph.nodes.human_review import human_review
+from graph.nodes.llm_caller import llm_caller
+
 
 def _make_state(**overrides):
     base = {
@@ -25,6 +30,7 @@ def _make_state(**overrides):
         "session_id": "test-sess",
         "checkpoint_ref": "",
         "trace_id": "",
+        "chat_history": [],
     }
     base.update(overrides)
     return base
@@ -348,7 +354,189 @@ def test_memory_writer_writes_audit(tmp_path, monkeypatch):
 
 def test_human_review_sets_awaiting_review():
     """human_review marks state as awaiting review."""
-    from graph.nodes.human_review import human_review
     state = _make_state(task_type="contract_generation")
     result = human_review(state)
     assert result["awaiting_review"] is True
+
+
+def test_human_review_skips_interrupt_when_disabled(monkeypatch):
+    """When interrupt_enabled is False, human_review flags awaiting_review but does NOT call interrupt()."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt") as mock_interrupt:
+        state = _make_state(task_type="contract_generation", risk_level="high")
+        result = human_review(state)
+
+    assert mock_interrupt.call_count == 0
+    assert result["awaiting_review"] is True
+
+
+def test_human_review_calls_interrupt_when_enabled(monkeypatch):
+    """When interrupt_enabled is True, human_review calls interrupt()."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={"approved": True, "notes": "ok"}) as mock_interrupt:
+        state = _make_state(task_type="contract_generation", risk_level="high")
+        result = human_review(state)
+
+    assert mock_interrupt.call_count == 1
+    assert result["awaiting_review"] is False
+
+
+# --- history_appender ---
+
+def test_history_appender_appends_user_and_assistant_pair(monkeypatch):
+    """history_appender returns a chat_history list with one user + one assistant message."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "300")
+    get_settings.cache_clear()
+
+    state = _make_state(request="What's the term?", llm_response="The term is 2 years.")
+    result = history_appender(state)
+
+    assert "chat_history" in result
+    assert len(result["chat_history"]) == 2
+    assert result["chat_history"][0] == {"role": "user", "content": "What's the term?"}
+    assert result["chat_history"][1] == {"role": "assistant", "content": "The term is 2 years."}
+
+
+def test_history_appender_trims_long_assistant_response(monkeypatch):
+    """Assistant content longer than trim_chars is truncated and gets '[...]' marker."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "10")
+    get_settings.cache_clear()
+
+    state = _make_state(request="Generate NDA", llm_response="A" * 100)
+    result = history_appender(state)
+
+    asst = result["chat_history"][1]
+    assert asst["content"] == "AAAAAAAAAA[...]"
+    assert len(asst["content"]) == 15  # 10 chars + 5-char marker
+
+
+def test_history_appender_does_not_trim_short_response(monkeypatch):
+    """Short responses are kept verbatim, no marker appended."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "300")
+    get_settings.cache_clear()
+
+    state = _make_state(request="Q", llm_response="Short answer.")
+    result = history_appender(state)
+
+    assert result["chat_history"][1]["content"] == "Short answer."
+    assert "[...]" not in result["chat_history"][1]["content"]
+
+
+def test_history_appender_does_not_trim_user_request(monkeypatch):
+    """User request is stored verbatim even if very long."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("CHAT_HISTORY_TRIM_CHARS", "10")
+    get_settings.cache_clear()
+
+    long_request = "B" * 500
+    state = _make_state(request=long_request, llm_response="ok")
+    result = history_appender(state)
+
+    assert result["chat_history"][0]["content"] == long_request
+    assert "[...]" not in result["chat_history"][0]["content"]
+
+
+# --- llm_caller chat_history injection ---
+
+def test_llm_caller_prepends_chat_history_default_path(monkeypatch):
+    """When no skill_messages and chat_history present, history sits between system and user."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    history = [
+        {"role": "user", "content": "prior Q"},
+        {"role": "assistant", "content": "prior A"},
+    ]
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(request="new Q", chat_history=history)
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    # Expect: [system, prior_user, prior_assistant, current_user]
+    assert sent[0]["role"] == "system"
+    assert sent[1] == history[0]
+    assert sent[2] == history[1]
+    assert sent[-1]["role"] == "user"
+    assert "new Q" in sent[-1]["content"]
+
+
+def test_llm_caller_prepends_chat_history_skill_path(monkeypatch):
+    """When skill provides system + user messages, history sits between system and user."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    history = [
+        {"role": "user", "content": "prior Q"},
+        {"role": "assistant", "content": "prior A"},
+    ]
+    skill_messages = [
+        {"role": "system", "content": "Skill system prompt"},
+        {"role": "user", "content": "Review my doc"},
+    ]
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(messages=skill_messages, chat_history=history)
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    assert sent[0]["role"] == "system"
+    assert sent[0]["content"] == "Skill system prompt"
+    assert sent[1] == history[0]
+    assert sent[2] == history[1]
+    assert sent[-1]["role"] == "user"
+    assert "Review my doc" in sent[-1]["content"]
+
+
+def test_llm_caller_works_when_chat_history_empty(monkeypatch):
+    """Empty chat_history: prompt looks exactly like before this feature."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(request="just one Q", chat_history=[])
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    assert len(sent) == 2  # system + user, no history
+    assert sent[0]["role"] == "system"
+    assert sent[1]["role"] == "user"

@@ -4,6 +4,7 @@
 import datetime
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 # Ensure project root is on path when Chainlit runs this file directly
@@ -119,6 +120,7 @@ async def on_reject(action: cl.Action):
 
 @cl.on_chat_start
 async def on_chat_start():
+    cl.user_session.set("session_id", str(uuid.uuid4()))
     try:
         result = await health_check()
         if result.get("status") == "ok":
@@ -166,6 +168,7 @@ async def on_message(message: cl.Message):
             request=message.content,
             user_id=user_id,
             uploaded_text=uploaded_text,
+            session_id=cl.user_session.get("session_id", ""),
         )
 
         data = result.get("data", {})

@@ -16,6 +16,7 @@ from graph.nodes.risk_assessor import risk_assessor, route_risk
 from graph.nodes.human_review import human_review
 from graph.nodes.output_formatter import output_formatter
 from graph.nodes.memory_writer import memory_writer
+from graph.nodes.history_appender import history_appender
 
 # Skills
 from skills.contract_generation import contract_generation
@@ -47,6 +48,7 @@ def build_graph(checkpointer=None) -> StateGraph:
     graph.add_node("human_review", human_review)
     graph.add_node("output_formatter", output_formatter)
     graph.add_node("memory_writer", memory_writer)
+    graph.add_node("history_appender", history_appender)
 
     # Add skill nodes
     graph.add_node("contract_generation", contract_generation)
@@ -96,8 +98,9 @@ def build_graph(checkpointer=None) -> StateGraph:
     # human_review -> output_formatter
     graph.add_edge("human_review", "output_formatter")
 
-    # output_formatter -> memory_writer -> END
-    graph.add_edge("output_formatter", "memory_writer")
+    # output_formatter -> history_appender -> memory_writer -> END
+    graph.add_edge("output_formatter", "history_appender")
+    graph.add_edge("history_appender", "memory_writer")
     graph.add_edge("memory_writer", END)
 
     return graph.compile(checkpointer=checkpointer)

@@ -1,6 +1,12 @@
 # tests/test_graph.py
 from unittest.mock import patch, MagicMock
+
+from langgraph.checkpoint.memory import MemorySaver
+
+from config import get_settings
+from graph.graph import build_graph
 from graph.state import LegalAgentState
+from memory.audit import init_audit_db
 
 
 def test_legal_agent_state_can_be_created():
@@ -24,6 +30,7 @@ def test_legal_agent_state_can_be_created():
         "session_id": "sess-001",
         "checkpoint_ref": "",
         "trace_id": "",
+        "chat_history": [],
     }
     assert state["request"] == "Review this contract"
     assert state["risk_level"] == "low"
@@ -51,6 +58,7 @@ def _make_state(**overrides) -> LegalAgentState:
         "session_id": "test-sess",
         "checkpoint_ref": "",
         "trace_id": "",
+        "chat_history": [],
     }
     base.update(overrides)
     return base
@@ -237,3 +245,133 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     rows = conn.execute("SELECT * FROM audit_log").fetchall()
     conn.close()
     assert len(rows) >= 1
+
+
+def test_graph_includes_history_appender_node():
+    """history_appender is registered as a graph node."""
+    compiled = build_graph()
+    assert "history_appender" in compiled.nodes
+
+
+def test_graph_history_appender_runs_before_memory_writer(tmp_path, monkeypatch):
+    """In a full graph invocation, history_appender produces chat_history before memory_writer."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph()
+        result = compiled.invoke(_make_state(request="What are indemnification standards?"))
+
+    assert len(result["chat_history"]) == 2
+    assert result["chat_history"][0]["role"] == "user"
+    assert result["chat_history"][0]["content"] == "What are indemnification standards?"
+    assert result["chat_history"][1]["role"] == "assistant"
+    assert result["chat_history"][1]["content"] != ""
+
+
+def test_graph_with_checkpointer_persists_chat_history_across_invocations(tmp_path, monkeypatch):
+    """Two invocations with the same thread_id: turn 2's LLM prompt contains turn 1's messages."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    captured_llm_inputs = []
+
+    def _capture_aware_ollama(url, **kwargs):
+        """Same as _fake_ollama_post but also records each request's messages."""
+        body = kwargs.get("json", {})
+        captured_llm_inputs.append(body.get("messages", []))
+        return _fake_ollama_post(url, **kwargs)
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_capture_aware_ollama), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture_aware_ollama), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "test-thread-xyz"}}
+
+        # Turn 1 — force compliance routing so the deterministic llm_caller runs
+        # (research routes to the legal_research ReAct agent which skips llm_caller).
+        state_1 = _make_state(
+            request="What are indemnification standards?",
+            task_type="compliance",
+            skill_plan=["compliance"],
+        )
+        result_1 = compiled.invoke(state_1, config=config)
+        assert len(result_1["chat_history"]) == 2
+
+        # Turn 2 — same thread, fresh request, empty chat_history in initial state
+        state_2 = _make_state(
+            request="And for software vendors specifically?",
+            task_type="compliance",
+            skill_plan=["compliance"],
+            chat_history=[],
+        )
+        result_2 = compiled.invoke(state_2, config=config)
+
+    # After turn 2, chat_history should be exactly 4 entries: 2 from turn 1 + 2 from
+    # turn 2. The reducer's idempotency guard (in graph/state.py) means upstream
+    # nodes forwarding state unchanged don't trigger doubling.
+    assert len(result_2["chat_history"]) == 4
+    assert result_2["chat_history"][0]["content"] == "What are indemnification standards?"
+    assert result_2["chat_history"][1]["role"] == "assistant"
+    assert result_2["chat_history"][2]["content"] == "And for software vendors specifically?"
+    assert result_2["chat_history"][3]["role"] == "assistant"
+
+    # Turn 2's llm_caller invocation (the last LLM call) should have included
+    # turn 1's user message in its prompt via the chat_history injection.
+    turn_2_llm_messages = captured_llm_inputs[-1]
+    contents = [m.get("content", "") for m in turn_2_llm_messages]
+    assert any("indemnification standards" in c for c in contents), \
+        f"Turn 2 LLM prompt should reference turn 1's user message. Got contents: {contents}"
+
+
+def test_graph_without_checkpointer_still_works(tmp_path, monkeypatch):
+    """Regression: graph compiled with checkpointer=None still runs end-to-end."""
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph(checkpointer=None)
+        result = compiled.invoke(_make_state(request="hello"))
+
+    # History was still appended (just not persisted across invocations)
+    assert len(result["chat_history"]) == 2
