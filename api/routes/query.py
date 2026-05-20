@@ -107,8 +107,19 @@ def submit_query(
 
 
 @router.post("/query/{session_id}/resume", response_model=ApiResponse)
+@observe(name="resume")
 def resume_query(session_id: str, body: ResumeRequest):
     """Resume graph execution after human review interrupt."""
+    langfuse_context.update_current_trace(
+        name=f"resume:{session_id}",
+        session_id=session_id,
+        input={
+            "approved": body.approved,
+            "notes": body.notes,
+            "has_revised": bool(body.revised_response),
+        },
+    )
+
     graph = _get_graph()
     config = {"configurable": {"thread_id": session_id}}
 
