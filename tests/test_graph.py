@@ -162,7 +162,8 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()), \
+         patch("graph.nodes.human_review.interrupt", return_value={"approved": True, "notes": "", "revised_response": ""}):
 
         from graph.graph import build_graph
         graph = build_graph()
@@ -173,7 +174,8 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
         ))
 
     assert result["task_type"] == "contract_generation"
-    assert result["awaiting_review"] is True
+    assert result["awaiting_review"] is False  # interrupt returned approval, exit cleanly
+    assert result.get("report", {}).get("response") != ""  # routed through output_formatter
 
 
 def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
@@ -196,7 +198,8 @@ def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
-         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("graph.nodes.human_review.interrupt", return_value={"approved": True, "notes": "", "revised_response": ""}):
 
         from graph.graph import build_graph
         graph = build_graph()
@@ -206,7 +209,9 @@ def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
             skill_plan=["drafting"],
         ))
 
-    assert result["awaiting_review"] is True
+    assert result["task_type"] == "drafting"
+    assert result["awaiting_review"] is False  # interrupt returned approval, exit cleanly
+    assert result.get("report", {}).get("response") != ""  # routed through output_formatter
 
 
 def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
