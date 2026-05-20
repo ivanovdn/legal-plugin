@@ -54,7 +54,7 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
                 "format": "json",
                 "options": {"temperature": 0.0},
             },
-            timeout=30.0,
+            timeout=120.0,
         )
         response.raise_for_status()
         content = response.json()["message"]["content"]
