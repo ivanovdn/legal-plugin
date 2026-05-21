@@ -1,6 +1,6 @@
 # Legal Plugin — Project Wiki
 
-> Last updated: 2026-05-15 | 64 tests passing | ~3,600 lines production code | Python 3.12
+> Last updated: 2026-05-21 | 121 tests passing | Python 3.12 | Redis checkpointer active
 
 ## What Is This
 
@@ -253,17 +253,24 @@ Attorney sends request
       ▼         ▼
 ┌────────────┐ ┌─────────────────┐
 │HUMAN_REVIEW│ │OUTPUT_FORMATTER │
-│            │ │                 │
+│ interrupt()│ │                 │
 └─────┬──────┘ └────────┬────────┘
       │                 │
-      └────────┬────────┘
-               ▼
-        ┌──────────────┐
-        │MEMORY_WRITER │  Writes to SQLite audit_log table
-        └──────┬───────┘  Every invocation, no exceptions
-               │
-               ▼
-              END → Response to attorney
+   route_review:        │
+   loop_back ─→ skill_dispatcher (revise with previous_draft + notes)
+   terminal  ─→ output_formatter
+                        │
+                        ▼
+              ┌─────────────────┐
+              │ HISTORY_APPENDER│  Appends turn to chat_history (capped)
+              └────────┬────────┘
+                       ▼
+                ┌──────────────┐
+                │MEMORY_WRITER │  Writes to SQLite audit_log table
+                └──────┬───────┘  Every invocation, no exceptions
+                       │
+                       ▼
+                      END → Response to attorney (or interrupt_payload if paused)
 ```
 
 ### Routing Rules
@@ -275,6 +282,20 @@ Attorney sends request
 | `risk_level` = high or medium | → human_review |
 | `risk_level` = low | → output_formatter (skip review) |
 | `skill_plan` has multiple skills | → planner first |
+
+### human_review verdicts (after resume)
+
+`route_review` reads state after `human_review` returns and decides whether to exit or loop:
+
+| Resume payload | What `human_review` does | Where `route_review` routes |
+|---|---|---|
+| `approved=True` | Saves notes, clears `awaiting_review` | → output_formatter (terminal approve) |
+| `revised_response` non-empty | Replaces `llm_response` with revised text | → output_formatter (terminal revise) |
+| `notes` only + `iter < MAX_REVIEW_ITERATIONS` | Stashes `llm_response` into `previous_draft`, clears `llm_response`/chunks/messages, `iter += 1` | → skill_dispatcher (loop-back) |
+| `notes` only + `iter ≥ MAX_REVIEW_ITERATIONS` | Sets `report_notes_unincorporated = notes`; clears `awaiting_review` | → output_formatter (terminal cap-hit) |
+| `approved=False`, no notes (pure reject) | Clears `awaiting_review` | → output_formatter (terminal reject) |
+
+On loop-back, the contract skill detects `previous_draft + attorney_notes` and runs a single direct LLM call (`reasoning=False`) instead of the full ReAct agent — much faster.
 
 ---
 
@@ -291,8 +312,9 @@ Attorney sends request
 ### Human-in-the-Loop
 - Contract generation and drafting always show review buttons
 - Three actions: **Approve Draft** (generates PDF), **Request Changes**, **Reject**
-- Buttons persist until clicked (24h timeout)
-- Uses `cl.action_callback` decorators for reliable button handling
+- **Request Changes** loops back: skill revises previous draft using attorney notes (single-shot LLM call with `reasoning=False`, not the full ReAct agent — ~5x faster), then re-pauses for review. Capped at 3 iterations; unincorporated notes attached to final report on cap.
+- Uses `cl.AskActionMessage` for per-iteration review prompts so buttons stay live across loop-backs (Chainlit disables same-named `cl.Action` after click — `AskActionMessage` blocks inline with fresh buttons each round).
+- Session state persisted via RedisSaver checkpointer with 24h TTL refresh on every interaction.
 
 ### Development Mode
 - Frontend: `chainlit run frontend/app.py -w` (auto-reload on file changes)
@@ -360,8 +382,8 @@ Document (PDF/DOCX) → Parser → Chunks (LegalChunk) → Embed (Ollama) → Up
 | Method | Path | Status | Purpose |
 |---|---|---|---|
 | GET | `/health` | **Working** | Health check |
-| POST | `/api/query` | **Working** | Submit legal request → graph execution (supports `uploaded_text` for review) |
-| POST | `/api/query/{session_id}/resume` | Placeholder | Resume after human review |
+| POST | `/api/query` | **Working** | Submit legal request → graph execution (supports `uploaded_text` for review). Returns `interrupt_payload` if graph pauses at `human_review`. |
+| POST | `/api/query/{session_id}/resume` | **Working** | Resume after human review with `{approved, notes, revised_response}`. Iterates loop-back (request changes) until approve/reject/cap. |
 | GET | `/api/query/{session_id}/status` | Placeholder | Check execution status |
 | POST | `/api/ingest` | **Working** | Upload PDF/DOCX for ingestion |
 | GET | `/api/documents` | Not built | List ingested documents |
@@ -395,7 +417,11 @@ chunk_index, chunk_strategy, last_updated
 request, user_id, uploaded_docs, task_type, skill_plan,
 retrieval_query, retrieved_chunks, filters, messages,
 llm_response, risk_level, risk_flags, awaiting_review,
-attorney_notes, report, session_id, checkpoint_ref, trace_id
+attorney_notes, report, session_id, checkpoint_ref, trace_id,
+chat_history,                  # within-session memory (capped at 2N entries via idempotent reducer)
+review_iterations,             # number of loop-backs from human_review (capped by MAX_REVIEW_ITERATIONS)
+report_notes_unincorporated,   # attorney notes that couldn't be applied (set on iteration cap)
+previous_draft                 # llm_response from prior iteration, preserved across loop-back for revise-not-regenerate
 ```
 
 ---
@@ -445,43 +471,41 @@ Key settings:
 
 ## Tests
 
-64 tests across 13 files, run in ~1 second:
+121 tests across 17 files, run in ~2 seconds:
 
 ```bash
 source .venv/bin/activate && python -m pytest tests/ -v
 ```
 
-| File | Tests | What |
-|---|---|---|
-| test_config.py | 2 | Config loading from env |
-| test_chunk_models.py | 3 | LegalChunk model |
-| test_embeddings.py | 2 | Ollama embedding calls |
-| test_vector_store.py | 3 | Qdrant operations |
-| test_bm25.py | 3 | BM25 index add/search/persist |
-| test_hybrid_search.py | 2 | RRF fusion |
-| test_reranker.py | 3 | Reranker with fallback |
-| test_parsers.py | 3 | DOCX + PDF parsers |
-| test_pipeline.py | 1 | Ingest pipeline |
-| test_nodes.py | 18 | All shared node implementations |
-| test_graph.py | 6 | Graph compilation + flow + audit |
-| test_skills.py | 8 | All 5 skills (mocked agents) |
-| test_api.py | 7 | FastAPI endpoints |
-| **Total** | **64** | |
+Coverage includes: graph compilation + routing + audit, end-to-end interrupt/resume/loop/cap with `MemorySaver`, Redis checkpointer factory, FastAPI endpoints (submit + resume + interrupt detection via `__interrupt__` key), all five skills with mocked agents, RAG layer (embeddings, vector store, BM25, hybrid search, reranker), DOCX/PDF parsers, ingest pipeline, and config loading.
 
 ---
 
-## What's Not Built Yet
+## Shipped Since Last Update (2026-05-15)
 
-| Feature | Status | Notes |
+| Feature | Commit / Branch | Notes |
 |---|---|---|
-| Redis checkpointer wired to graph | Not done | `build_graph(checkpointer=...)` ready, needs Redis integration |
-| Resume after interrupt (`POST /api/query/{id}/resume`) | Placeholder | Needs checkpointer |
-| WebSocket / SSE streaming | Not done | LLM responses arrive all at once |
-| Admin API endpoints (sessions, skills, reviews, audit) | Not done | Deferred to when Chainlit needs them |
-| Long-term memory (Qdrant `memory` collection) | Stub | Implement when usage patterns emerge |
-| Real authentication | Not done | Simple `X-User-ID` header for now |
-| MCP tools integration | Not done | Architecture supports it — tools plug into agent registries |
-| DOCX output generation | Not done | PDF export works, DOCX not yet |
-| Remaining skills as folders | Not done | compliance_check, legal_research, drafting still flat files |
-| Langfuse prompt versioning | Not done | Prompts logged per-call, formal versioning not set up |
-| Policy chunking strategy verification | Not done | TBD — test clause-based vs section-based |
+| Within-session conversation memory | `feat/within-session-memory` merged 2026-05-20 | `chat_history` field with idempotent reducer; N=5 turns / trim=300 chars; RedisSaver-backed |
+| Redis checkpointer wired to graph | shipped with memory feature | `redis/redis-stack-server` (RediSearch + ReJSON) with auth |
+| Resume after interrupt | `feat/resume-after-interrupt` merged 2026-05-21 | 4-way verdict (approve/revise/loop/cap), `Command(resume=...)`, 24h TTL refresh |
+| Iterative review loop | shipped with resume | Up to 3 attorney-notes iterations; revise-not-regenerate via `previous_draft`; cap surfaces unincorporated notes |
+| Revision speedup | shipped with resume | Loop-back uses direct ChatOllama call with `reasoning=False` instead of full ReAct agent |
+| PDF download on approve | shipped with resume | `cl.File` element attached to final report |
+| Chainlit review buttons | shipped with resume | Migrated `cl.action_callback` → `cl.AskActionMessage` to dodge Chainlit's same-name disable on loop-back |
+
+---
+
+## Follow-ups / Roadmap
+
+| Feature | Priority | Notes |
+|---|---|---|
+| **Microsoft Word add-in** | **High** | Embed the resume/interrupt review flow as a Word task pane. Attorneys see drafts inline in Word with Approve / Request Changes / Reject inside the document. This is the strategic next surface — Chainlit is for demos. Needs: Office.js add-in scaffold, OAuth handshake, render draft into Word body via OOXML, surface `/api/query/{id}/resume` from the task pane. Resume-after-interrupt was prioritized precisely because it is the load-bearing piece for this. |
+| WebSocket / SSE streaming | Medium | LLM responses arrive all at once; would improve perceived latency on long generations |
+| Admin API endpoints (sessions, skills, reviews, audit) | Medium | Deferred until a UI consumes them |
+| Long-term memory (Qdrant `memory` collection) | Medium | Cross-session attorney preferences; implement when usage patterns emerge |
+| DOCX output generation | Medium | PDF works; DOCX needed for Word add-in round-tripping |
+| Real authentication | Medium | Simple `X-User-ID` header today; needed before multi-user Linux VM |
+| Remaining skills as folders | Low | `compliance_check`, `legal_research`, `drafting` still flat files |
+| MCP tools integration | Low | Architecture supports it — tools plug into agent registries |
+| Langfuse prompt versioning | Low | Prompts logged per-call; formal versioning not set up |
+| Policy chunking strategy verification | Low | TBD — test clause-based vs section-based |
