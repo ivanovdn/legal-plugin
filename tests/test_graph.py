@@ -494,21 +494,33 @@ def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatc
     import graph.nodes.memory_writer as mw
     mw._db_initialized = True
 
-    # Track what the skill agent saw on each invocation
-    invocations = []
+    # Track agent (first gen) and direct LLM (revision) invocations separately.
+    # On loop-back, contract_generation bypasses the ReAct agent and does a
+    # single ChatOllama.invoke for speed.
+    agent_invocations = []
+    revise_invocations = []
 
     def _capture_agent():
         agent = MagicMock()
         def _invoke(payload):
-            invocations.append(payload)
-            return {"messages": [MagicMock(content=f"DRAFT v{len(invocations)} (doc_id: d1)")]}
+            agent_invocations.append(payload)
+            return {"messages": [MagicMock(content=f"DRAFT v{len(agent_invocations)} (doc_id: d1)")]}
         agent.invoke.side_effect = _invoke
         return agent
+
+    def _capture_llm(*_args, **_kwargs):
+        llm = MagicMock()
+        def _invoke(messages):
+            revise_invocations.append(messages)
+            return MagicMock(content=f"REVISED v{len(revise_invocations)}")
+        llm.invoke.side_effect = _invoke
+        return llm
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.contract_generation.contract_generation._build_agent", return_value=_capture_agent()):
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_capture_agent()), \
+         patch("skills.contract_generation.contract_generation.ChatOllama", side_effect=_capture_llm):
 
         compiled = build_graph(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "thread-loop-1"}}
@@ -520,7 +532,7 @@ def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatc
             skill_plan=["contract_generation"],
         ), config=config)
 
-        # Resume with notes only → graph loops back, regenerates, pauses again
+        # Resume with notes only → graph loops back, regenerates via direct LLM, pauses again
         result_2 = compiled.invoke(
             Command(resume={
                 "approved": False,
@@ -537,12 +549,13 @@ def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatc
     assert result_2["__interrupt__"][0].value.get("type") == "human_review"
     assert result_2["__interrupt__"][0].value.get("review_iterations") == 1
     assert result_2.get("review_iterations") == 1
-    assert len(invocations) == 2  # agent was called twice — original + regeneration
-    # Second invocation's user message included the attorney notes
-    second_msgs = invocations[1]["messages"]
-    last_user = second_msgs[-1]["content"]
-    assert "ATTORNEY REVIEW NOTES" in last_user
-    assert "confidentiality clause" in last_user
+    # Agent ran once for initial generation; revision used direct LLM
+    assert len(agent_invocations) == 1
+    assert len(revise_invocations) == 1
+    revise_user_msg = revise_invocations[0][-1]["content"]
+    assert "PREVIOUS DRAFT" in revise_user_msg
+    assert "ATTORNEY REVISION NOTES" in revise_user_msg
+    assert "confidentiality clause" in revise_user_msg
 
 
 def test_graph_resume_iteration_cap_terminates(tmp_path, monkeypatch):
@@ -561,10 +574,16 @@ def test_graph_resume_iteration_cap_terminates(tmp_path, monkeypatch):
     import graph.nodes.memory_writer as mw
     mw._db_initialized = True
 
+    def _fake_revise_llm(*_args, **_kwargs):
+        llm = MagicMock()
+        llm.invoke.return_value = MagicMock(content="REVISED draft")
+        return llm
+
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation.ChatOllama", side_effect=_fake_revise_llm):
 
         compiled = build_graph(checkpointer=MemorySaver())
         config = {"configurable": {"thread_id": "thread-cap-1"}}

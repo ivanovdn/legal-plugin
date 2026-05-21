@@ -45,7 +45,7 @@ async def resume_query(
     revised_response: str = "",
 ) -> dict:
     """POST /api/query/{session_id}/resume — submit attorney verdict."""
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=900.0) as client:
         response = await client.post(
             f"{_base_url()}/api/query/{session_id}/resume",
             json={

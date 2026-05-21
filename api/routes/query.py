@@ -117,6 +117,7 @@ def submit_query(
         "chat_history": [],
         "review_iterations": 0,
         "report_notes_unincorporated": "",
+        "previous_draft": "",
     }
 
     graph = _get_graph()

@@ -37,8 +37,16 @@ def drafting(state: LegalAgentState) -> LegalAgentState:
         query_parts.append(f"jurisdiction: {filters['jurisdiction']}")
     state["retrieval_query"] = " ".join(query_parts)
 
+    previous_draft = (state.get("previous_draft") or "").strip()
     user_content = request
-    if attorney_notes:
+    if attorney_notes and previous_draft:
+        user_content += (
+            f"\n\n--- PREVIOUS DRAFT (revise this — do NOT start over) ---\n"
+            f"{previous_draft}\n\n"
+            f"--- ATTORNEY REVIEW NOTES (incorporate these changes; preserve overall structure and formatting) ---\n"
+            f"{attorney_notes}"
+        )
+    elif attorney_notes:
         user_content += (
             f"\n\n--- ATTORNEY REVIEW NOTES (incorporate these changes) ---\n"
             f"{attorney_notes}"

@@ -38,7 +38,7 @@ def human_review(state: LegalAgentState) -> LegalAgentState:
         "type": "human_review",
         "task_type": state.get("task_type"),
         "risk_level": state.get("risk_level"),
-        "llm_response": state.get("llm_response", "")[:500],
+        "llm_response": state.get("llm_response", ""),
         "risk_flags": state.get("risk_flags", []),
         "review_iterations": state.get("review_iterations", 0),
     })
@@ -70,6 +70,7 @@ def human_review(state: LegalAgentState) -> LegalAgentState:
     if notes and iterations < max_iter:
         state["attorney_notes"] = notes
         state["review_iterations"] = iterations + 1
+        state["previous_draft"] = state.get("llm_response", "")
         state["llm_response"] = ""
         state["retrieved_chunks"] = []
         state["messages"] = []
