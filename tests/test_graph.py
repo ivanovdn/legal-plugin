@@ -2,9 +2,10 @@
 from unittest.mock import patch, MagicMock
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
 
 from config import get_settings
-from graph.graph import build_graph
+from graph.graph import build_graph, route_review
 from graph.state import LegalAgentState
 from memory.audit import init_audit_db
 
@@ -31,6 +32,8 @@ def test_legal_agent_state_can_be_created():
         "checkpoint_ref": "",
         "trace_id": "",
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     assert state["request"] == "Review this contract"
     assert state["risk_level"] == "low"
@@ -59,6 +62,8 @@ def _make_state(**overrides) -> LegalAgentState:
         "checkpoint_ref": "",
         "trace_id": "",
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     base.update(overrides)
     return base
@@ -158,7 +163,8 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()), \
+         patch("graph.nodes.human_review.interrupt", return_value={"approved": True, "notes": "", "revised_response": ""}):
 
         from graph.graph import build_graph
         graph = build_graph()
@@ -169,7 +175,8 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
         ))
 
     assert result["task_type"] == "contract_generation"
-    assert result["awaiting_review"] is True
+    assert result["awaiting_review"] is False  # interrupt returned approval, exit cleanly
+    assert result.get("report", {}).get("response") != ""  # routed through output_formatter
 
 
 def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
@@ -192,7 +199,8 @@ def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
-         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks):
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("graph.nodes.human_review.interrupt", return_value={"approved": True, "notes": "", "revised_response": ""}):
 
         from graph.graph import build_graph
         graph = build_graph()
@@ -202,7 +210,9 @@ def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
             skill_plan=["drafting"],
         ))
 
-    assert result["awaiting_review"] is True
+    assert result["task_type"] == "drafting"
+    assert result["awaiting_review"] is False  # interrupt returned approval, exit cleanly
+    assert result.get("report", {}).get("response") != ""  # routed through output_formatter
 
 
 def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
@@ -375,3 +385,267 @@ def test_graph_without_checkpointer_still_works(tmp_path, monkeypatch):
 
     # History was still appended (just not persisted across invocations)
     assert len(result["chat_history"]) == 2
+
+
+def test_route_review_returns_skill_dispatcher_when_llm_response_empty():
+    """Empty llm_response is the loop-back signal."""
+    state = _make_state(llm_response="", awaiting_review=False)
+    assert route_review(state) == "skill_dispatcher"
+
+
+def test_route_review_returns_output_formatter_when_llm_response_set():
+    """Non-empty llm_response means terminal exit (approve/revise/cap)."""
+    state = _make_state(llm_response="DRAFT", awaiting_review=False)
+    assert route_review(state) == "output_formatter"
+
+
+def test_graph_interrupts_and_returns_partial_state_with_memory_saver(tmp_path, monkeypatch):
+    """First invoke pauses at human_review; result has awaiting_review=True."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "thread-pause-1"}}
+
+        state = _make_state(
+            request="Generate a service agreement for Vertex",
+            task_type="contract_generation",
+            skill_plan=["contract_generation"],
+        )
+        result = compiled.invoke(state, config=config)
+
+    # The graph paused — LangGraph signals pause via __interrupt__ on the
+    # returned partial state (in-flight node mutations are not committed
+    # to the checkpoint when interrupt() raises).
+    assert "__interrupt__" in result
+    interrupts = result["__interrupt__"]
+    assert len(interrupts) == 1
+    assert interrupts[0].value.get("type") == "human_review"
+    assert result.get("task_type") == "contract_generation"
+    assert result.get("llm_response", "") != ""
+
+
+def test_graph_resume_with_approved_completes(tmp_path, monkeypatch):
+    """After pause, resume with approved=True → final result, awaiting_review=False."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "thread-approve-1"}}
+
+        compiled.invoke(_make_state(
+            request="Generate a service agreement for Vertex",
+            task_type="contract_generation",
+            skill_plan=["contract_generation"],
+        ), config=config)
+
+        final = compiled.invoke(
+            Command(resume={"approved": True, "notes": "", "revised_response": ""}),
+            config=config,
+        )
+
+    assert final.get("awaiting_review") is False
+    assert final.get("report", {}).get("response", "") != ""
+
+
+def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatch):
+    """Resume with notes-only → graph loops back, regenerates, pauses again at higher iter."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    monkeypatch.setenv("MAX_REVIEW_ITERATIONS", "3")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    # Track agent (first gen) and direct LLM (revision) invocations separately.
+    # On loop-back, contract_generation bypasses the ReAct agent and does a
+    # single ChatOllama.invoke for speed.
+    agent_invocations = []
+    revise_invocations = []
+
+    def _capture_agent():
+        agent = MagicMock()
+        def _invoke(payload):
+            agent_invocations.append(payload)
+            return {"messages": [MagicMock(content=f"DRAFT v{len(agent_invocations)} (doc_id: d1)")]}
+        agent.invoke.side_effect = _invoke
+        return agent
+
+    def _capture_llm(*_args, **_kwargs):
+        llm = MagicMock()
+        def _invoke(messages):
+            revise_invocations.append(messages)
+            return MagicMock(content=f"REVISED v{len(revise_invocations)}")
+        llm.invoke.side_effect = _invoke
+        return llm
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_capture_agent()), \
+         patch("skills.contract_generation.contract_generation.ChatOllama", side_effect=_capture_llm):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "thread-loop-1"}}
+
+        # Turn 1: invoke → pause
+        compiled.invoke(_make_state(
+            request="Generate a service agreement for Vertex",
+            task_type="contract_generation",
+            skill_plan=["contract_generation"],
+        ), config=config)
+
+        # Resume with notes only → graph loops back, regenerates via direct LLM, pauses again
+        result_2 = compiled.invoke(
+            Command(resume={
+                "approved": False,
+                "notes": "Add a confidentiality clause",
+                "revised_response": "",
+            }),
+            config=config,
+        )
+
+    # Loop-back regenerated and paused again at human_review.
+    # LangGraph signals the second pause via __interrupt__; in-flight mutations
+    # (like awaiting_review=True) aren't committed to checkpoint state.
+    assert "__interrupt__" in result_2
+    assert result_2["__interrupt__"][0].value.get("type") == "human_review"
+    assert result_2["__interrupt__"][0].value.get("review_iterations") == 1
+    assert result_2.get("review_iterations") == 1
+    # Agent ran once for initial generation; revision used direct LLM
+    assert len(agent_invocations) == 1
+    assert len(revise_invocations) == 1
+    revise_user_msg = revise_invocations[0][-1]["content"]
+    assert "PREVIOUS DRAFT" in revise_user_msg
+    assert "ATTORNEY REVISION NOTES" in revise_user_msg
+    assert "confidentiality clause" in revise_user_msg
+
+
+def test_graph_resume_iteration_cap_terminates(tmp_path, monkeypatch):
+    """3 successive notes-only resumes → 4th resume terminates with unincorporated notes in report."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    monkeypatch.setenv("MAX_REVIEW_ITERATIONS", "3")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    def _fake_revise_llm(*_args, **_kwargs):
+        llm = MagicMock()
+        llm.invoke.return_value = MagicMock(content="REVISED draft")
+        return llm
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation.ChatOllama", side_effect=_fake_revise_llm):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "thread-cap-1"}}
+
+        # Initial invoke
+        compiled.invoke(_make_state(
+            request="Generate a service agreement for Vertex",
+            task_type="contract_generation",
+            skill_plan=["contract_generation"],
+        ), config=config)
+
+        # 3 loop-back resumes (iter 1, 2, 3)
+        for i in range(3):
+            compiled.invoke(
+                Command(resume={
+                    "approved": False,
+                    "notes": f"iteration {i + 1} change",
+                    "revised_response": "",
+                }),
+                config=config,
+            )
+
+        # 4th resume with notes — should hit the cap and terminate
+        final = compiled.invoke(
+            Command(resume={
+                "approved": False,
+                "notes": "this should not be incorporated",
+                "revised_response": "",
+            }),
+            config=config,
+        )
+
+    assert final.get("awaiting_review") is False
+    assert final.get("report", {}).get("notes_unincorporated") == "this should not be incorporated"
+
+
+def test_graph_without_checkpointer_still_completes_in_one_shot(tmp_path, monkeypatch):
+    """Regression: with no checkpointer + interrupt disabled, graph completes as before."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "false")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        compiled = build_graph(checkpointer=None)
+        result = compiled.invoke(_make_state(
+            request="Generate a service agreement for Vertex",
+            task_type="contract_generation",
+            skill_plan=["contract_generation"],
+        ))
+
+    # With interrupt disabled, graph completes through output_formatter
+    assert result.get("report", {}).get("response", "") != ""

@@ -22,6 +22,7 @@ def output_formatter(state: LegalAgentState) -> LegalAgentState:
             {"doc_id": c.get("doc_id"), "doc_title": c.get("doc_title")}
             for c in state.get("retrieved_chunks", [])
         ],
+        "notes_unincorporated": state.get("report_notes_unincorporated", ""),
     }
     logger.info("[output_formatter] report built, task_type=%s", state["task_type"])
     return state

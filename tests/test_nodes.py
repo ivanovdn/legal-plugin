@@ -8,6 +8,7 @@ from config import get_settings
 from graph.nodes.history_appender import history_appender
 from graph.nodes.human_review import human_review
 from graph.nodes.llm_caller import llm_caller
+from graph.nodes.output_formatter import output_formatter
 
 
 def _make_state(**overrides):
@@ -31,6 +32,8 @@ def _make_state(**overrides):
         "checkpoint_ref": "",
         "trace_id": "",
         "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
     }
     base.update(overrides)
     return base
@@ -352,8 +355,12 @@ def test_memory_writer_writes_audit(tmp_path, monkeypatch):
 
 # --- human_review ---
 
-def test_human_review_sets_awaiting_review():
+def test_human_review_sets_awaiting_review(monkeypatch):
     """human_review marks state as awaiting review."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "false")
+    get_settings.cache_clear()
+
     state = _make_state(task_type="contract_generation")
     result = human_review(state)
     assert result["awaiting_review"] is True
@@ -540,3 +547,129 @@ def test_llm_caller_works_when_chat_history_empty(monkeypatch):
     assert len(sent) == 2  # system + user, no history
     assert sent[0]["role"] == "system"
     assert sent[1]["role"] == "user"
+
+
+def test_human_review_approved_sets_awaiting_review_false(monkeypatch):
+    """Resume with approved=True clears awaiting_review and keeps llm_response."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={
+        "approved": True, "notes": "looks good", "revised_response": "",
+    }):
+        state = _make_state(task_type="contract_generation", llm_response="DRAFT")
+        result = human_review(state)
+
+    assert result["awaiting_review"] is False
+    assert result["attorney_notes"] == "looks good"
+    assert result["llm_response"] == "DRAFT"  # unchanged
+    assert result["review_iterations"] == 0  # unchanged
+
+
+def test_human_review_revised_replaces_llm_response(monkeypatch):
+    """Resume with revised_response set uses the revised text and exits."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={
+        "approved": False, "notes": "rewrote it", "revised_response": "ATTORNEY-EDITED DRAFT",
+    }):
+        state = _make_state(task_type="contract_generation", llm_response="LLM DRAFT")
+        result = human_review(state)
+
+    assert result["awaiting_review"] is False
+    assert result["llm_response"] == "ATTORNEY-EDITED DRAFT"
+    assert result["attorney_notes"] == "rewrote it"
+
+
+def test_human_review_notes_only_loops_back(monkeypatch):
+    """Resume with notes-only + iter<cap: increment iter, reset llm_response/chunks/messages."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    monkeypatch.setenv("MAX_REVIEW_ITERATIONS", "3")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={
+        "approved": False, "notes": "add confidentiality clause", "revised_response": "",
+    }):
+        state = _make_state(
+            task_type="contract_generation",
+            llm_response="DRAFT",
+            retrieved_chunks=[{"doc_id": "d1"}],
+            messages=[{"role": "system", "content": "x"}],
+            review_iterations=0,
+        )
+        result = human_review(state)
+
+    assert result["attorney_notes"] == "add confidentiality clause"
+    assert result["review_iterations"] == 1
+    assert result["llm_response"] == ""
+    assert result["retrieved_chunks"] == []
+    assert result["messages"] == []
+    assert result["awaiting_review"] is False  # cleared so route_review picks skill_dispatcher
+
+
+def test_human_review_iteration_cap_hit(monkeypatch):
+    """At cap: don't loop, attach notes to report_notes_unincorporated, exit normally."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    monkeypatch.setenv("MAX_REVIEW_ITERATIONS", "3")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={
+        "approved": False, "notes": "more changes", "revised_response": "",
+    }):
+        state = _make_state(
+            task_type="contract_generation",
+            llm_response="DRAFT v3",
+            review_iterations=3,
+        )
+        result = human_review(state)
+
+    assert result["report_notes_unincorporated"] == "more changes"
+    assert result["awaiting_review"] is False
+    assert result["llm_response"] == "DRAFT v3"  # kept
+    assert result["review_iterations"] == 3  # unchanged
+
+
+def test_human_review_pure_reject_no_notes(monkeypatch):
+    """Pure reject (approved=False, no notes, no revised): exit normally with empty notes."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.human_review.interrupt", return_value={
+        "approved": False, "notes": "", "revised_response": "",
+    }):
+        state = _make_state(task_type="contract_generation", llm_response="DRAFT")
+        result = human_review(state)
+
+    assert result["awaiting_review"] is False
+    assert result["llm_response"] == "DRAFT"
+    assert result["report_notes_unincorporated"] == ""
+
+
+def test_output_formatter_includes_unincorporated_notes(monkeypatch):
+    """When report_notes_unincorporated is set, it appears in the final report."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(
+        task_type="contract_generation",
+        llm_response="FINAL DRAFT",
+        report_notes_unincorporated="Attorney wanted X, hit iteration cap.",
+    )
+    result = output_formatter(state)
+    assert result["report"]["notes_unincorporated"] == "Attorney wanted X, hit iteration cap."
+
+
+def test_output_formatter_omits_unincorporated_when_empty(monkeypatch):
+    """When the field is empty, the report omits the key (or has empty string)."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    state = _make_state(task_type="contract_review", llm_response="OK")
+    result = output_formatter(state)
+    assert result["report"].get("notes_unincorporated", "") == ""

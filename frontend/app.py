@@ -2,10 +2,14 @@
 """Chainlit frontend — chat interface for the legal plugin."""
 
 import datetime
+import logging
 import sys
 import tempfile
+import traceback
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Ensure project root is on path when Chainlit runs this file directly
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -13,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import chainlit as cl
 from fpdf import FPDF
 
-from frontend.api_client import submit_query, ingest_file, health_check
+from frontend.api_client import submit_query, ingest_file, health_check, resume_query
 from ingest.parsers.pdf_parser import parse_pdf
 from ingest.parsers.docx_parser import parse_docx
 
@@ -88,30 +92,116 @@ async def _extract_file_text(elements) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Action callbacks (buttons)
+# Review loop — uses AskActionMessage so buttons stay live across iterations
 # ---------------------------------------------------------------------------
 
-@cl.action_callback("approve")
-async def on_approve(action: cl.Action):
-    full_text = cl.user_session.get("pending_review_text", "")
-    if full_text:
-        pdf_path = _generate_pdf(full_text)
-        pdf_element = cl.File(name="approved_contract.pdf", path=pdf_path, display="inline")
-        await cl.Message(content="Draft approved. Download the PDF below.", elements=[pdf_element]).send()
-    else:
-        await cl.Message(content="Draft approved.").send()
-    cl.user_session.set("pending_review_text", "")
+async def _ask_review_action(review_iter: int) -> str | None:
+    """Block until the attorney clicks an action button. Returns the action name or None on timeout."""
+    actions = [
+        cl.Action(name="approve", label="Approve Draft", payload={"action": "approve"}),
+        cl.Action(name="request_changes", label="Request Changes", payload={"action": "request_changes"}),
+        cl.Action(name="reject", label="Reject", payload={"action": "reject"}),
+    ]
+    res = await cl.AskActionMessage(
+        content=f"Review iteration {review_iter}: choose an action.",
+        actions=actions,
+        timeout=3600,
+    ).send()
+    if res is None:
+        return None
+    return res.get("name") or (res.get("payload") or {}).get("action")
 
 
-@cl.action_callback("request_changes")
-async def on_request_changes(action: cl.Action):
-    await cl.Message(content="Please describe the changes you'd like made to this draft.").send()
+async def _review_loop(session_id: str):
+    """Drive the review loop. Renders new drafts and asks for verdicts until terminal."""
+    review_iter = 0
+    while True:
+        chosen = await _ask_review_action(review_iter)
+        if chosen is None:
+            await cl.Message(content="Review timed out — no action taken.").send()
+            return
 
+        if chosen == "approve":
+            await cl.Message(content="Finalizing report...").send()
+            try:
+                result = await resume_query(session_id=session_id, approved=True)
+            except Exception as e:
+                logger.error("[review_loop] approve resume failed: %r", e)
+                traceback.print_exc()
+                await cl.Message(content=f"Resume failed: {type(e).__name__}: {e}").send()
+                return
+        elif chosen == "request_changes":
+            notes_msg = await cl.AskUserMessage(
+                content="Describe the changes you'd like made to this draft.",
+                timeout=600,
+            ).send()
+            if not notes_msg:
+                await cl.Message(content="No notes provided — cancelling.").send()
+                return
+            notes_text = (notes_msg.get("output") or notes_msg.get("content") or "").strip()
+            if not notes_text:
+                await cl.Message(content="Empty notes — cancelling.").send()
+                return
+            await cl.Message(content="Regenerating draft with your changes... (this may take a minute)").send()
+            try:
+                result = await resume_query(session_id=session_id, approved=False, notes=notes_text)
+            except Exception as e:
+                logger.error("[review_loop] request_changes resume failed: %r", e)
+                traceback.print_exc()
+                await cl.Message(content=f"Resume failed: {type(e).__name__}: {e}").send()
+                return
+        elif chosen == "reject":
+            await cl.Message(content="Closing without changes...").send()
+            try:
+                result = await resume_query(session_id=session_id, approved=False)
+            except Exception as e:
+                logger.error("[review_loop] reject resume failed: %r", e)
+                traceback.print_exc()
+                await cl.Message(content=f"Resume failed: {type(e).__name__}: {e}").send()
+                return
+        else:
+            await cl.Message(content=f"Unknown action: {chosen}").send()
+            return
 
-@cl.action_callback("reject")
-async def on_reject(action: cl.Action):
-    await cl.Message(content="Draft rejected.").send()
-    cl.user_session.set("pending_review_text", "")
+        if result.get("status") == "error":
+            errs = result.get("errors") or ["unknown error"]
+            await cl.Message(content=f"Resume failed: {errs[0]}").send()
+            return
+
+        data = result.get("data", {})
+        if data.get("awaiting_review"):
+            payload = data.get("interrupt_payload", {})
+            response_text = payload.get("llm_response", "")
+            task_type = payload.get("task_type", "unknown")
+            risk_level = payload.get("risk_level", "unknown")
+            review_iter = payload.get("review_iterations", review_iter + 1)
+            placeholder = cl.Message(content="")
+            await placeholder.send()
+            await _show_in_side_panel(placeholder, response_text, task_type, risk_level, [])
+            continue
+
+        report = data.get("report", {})
+        response_text = report.get("response", "(no response)")
+        notes_unincorp = report.get("notes_unincorporated", "")
+
+        chat_content = "**Final report — ready for download.**"
+        if notes_unincorp:
+            chat_content += (
+                f"\n\n---\n**Notes not incorporated** "
+                f"(iteration cap reached):\n{notes_unincorp}"
+            )
+
+        elements = []
+        try:
+            pdf_path = _generate_pdf(response_text)
+            ts = datetime.datetime.now().strftime("%H%M%S")
+            elements.append(cl.File(name=f"contract_{ts}.pdf", path=pdf_path, display="inline"))
+        except Exception as e:
+            logger.error("[review_loop] PDF generation failed: %r", e)
+            chat_content += f"\n\n_Note: PDF generation failed — {e}. Full text below._\n\n{response_text}"
+
+        await cl.Message(content=chat_content, elements=elements).send()
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +249,7 @@ async def on_message(message: cl.Message):
             await cl.Message(content="Could not extract text from the file. Supported: PDF, DOCX, TXT.").send()
             return
 
-    # Send query to backend
+    session_id = cl.user_session.get("session_id", "")
     thinking_msg = cl.Message(content="Processing your request...")
     await thinking_msg.send()
 
@@ -168,22 +258,31 @@ async def on_message(message: cl.Message):
             request=message.content,
             user_id=user_id,
             uploaded_text=uploaded_text,
-            session_id=cl.user_session.get("session_id", ""),
+            session_id=session_id,
         )
 
         data = result.get("data", {})
-        report = data.get("report", {})
-        response_text = report.get("response", "No response generated.")
-        task_type = data.get("task_type", "unknown")
-        risk_level = data.get("risk_level", "unknown")
         awaiting_review = data.get("awaiting_review", False)
-        sources = report.get("sources", [])
+        if awaiting_review:
+            payload = data.get("interrupt_payload", {})
+            response_text = payload.get("llm_response", "No response generated.")
+            task_type = payload.get("task_type", "unknown")
+            risk_level = payload.get("risk_level", "unknown")
+            sources = []
+        else:
+            report = data.get("report", {})
+            response_text = report.get("response", "No response generated.")
+            task_type = data.get("task_type", "unknown")
+            risk_level = data.get("risk_level", "unknown")
+            sources = report.get("sources", [])
 
         # Contract skills — always show in side panel
         if task_type in ("contract_generation", "drafting", "contract_review"):
             await _show_in_side_panel(
-                thinking_msg, response_text, task_type, risk_level, sources, awaiting_review,
+                thinking_msg, response_text, task_type, risk_level, sources,
             )
+            if awaiting_review:
+                await _review_loop(session_id)
             return
 
         # Short response — show inline
@@ -195,6 +294,9 @@ async def on_message(message: cl.Message):
 
         thinking_msg.content = "\n".join(content_parts)
         await thinking_msg.update()
+
+        if awaiting_review:
+            await _review_loop(session_id)
 
     except Exception as e:
         thinking_msg.content = f"Error: {e}"
@@ -211,7 +313,6 @@ async def _show_in_side_panel(
     task_type: str,
     risk_level: str,
     sources: list,
-    awaiting_review: bool,
 ):
     """Show response in side panel with unique clickable attachment."""
     ts = datetime.datetime.now().strftime("%H%M%S")
@@ -246,21 +347,6 @@ async def _show_in_side_panel(
     thinking_msg.content = chat_content
     thinking_msg.elements = [text_element]
     await thinking_msg.update()
-
-    # Human review with action buttons
-    if awaiting_review:
-        cl.user_session.set("pending_review_text", full_text)
-
-        actions = [
-            cl.Action(name="approve", label="Approve Draft", payload={"action": "approve"}),
-            cl.Action(name="request_changes", label="Request Changes", payload={"action": "request_changes"}),
-            cl.Action(name="reject", label="Reject", payload={"action": "reject"}),
-        ]
-
-        await cl.Message(
-            content="This requires your review. Please review in the side panel, then choose an action.",
-            actions=actions,
-        ).send()
 
 
 # ---------------------------------------------------------------------------

@@ -27,11 +27,19 @@ Respond with your analysis as structured text with clear sections for each check
 def compliance_check(state: LegalAgentState) -> LegalAgentState:
     """Prepare state for compliance verification via rag_retriever + llm_caller."""
     request = state["request"]
+    attorney_notes = (state.get("attorney_notes") or "").strip()
+
+    user_content = request
+    if attorney_notes:
+        user_content += (
+            f"\n\n--- ATTORNEY REVIEW NOTES (incorporate these changes) ---\n"
+            f"{attorney_notes}"
+        )
 
     state["retrieval_query"] = request
     state["messages"] = [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": request},
+        {"role": "user", "content": user_content},
     ]
 
     logger.info("[compliance_check] prepared for compliance verification: %s", request[:80])

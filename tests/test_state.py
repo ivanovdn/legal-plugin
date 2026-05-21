@@ -1,7 +1,7 @@
 """Unit tests for state reducer."""
 
 from config import get_settings
-from graph.state import _history_reducer
+from graph.state import LegalAgentState, _history_reducer
 
 
 def test_history_reducer_concatenates_empty_and_new(monkeypatch):
@@ -58,3 +58,34 @@ def test_history_reducer_handles_none_old(monkeypatch):
     new = [{"role": "user", "content": "hello"}]
     # The reducer should be defensive
     assert _history_reducer(None, new) == new
+
+
+def test_state_has_review_iterations_field(monkeypatch):
+    """LegalAgentState supports review_iterations and report_notes_unincorporated keys."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+    s: LegalAgentState = {
+        "request": "r",
+        "user_id": "u",
+        "uploaded_docs": [],
+        "task_type": "",
+        "skill_plan": [],
+        "retrieval_query": "",
+        "retrieved_chunks": [],
+        "filters": {},
+        "messages": [],
+        "llm_response": "",
+        "risk_level": "",
+        "risk_flags": [],
+        "awaiting_review": False,
+        "attorney_notes": "",
+        "report": {},
+        "session_id": "",
+        "checkpoint_ref": "",
+        "trace_id": "",
+        "chat_history": [],
+        "review_iterations": 0,
+        "report_notes_unincorporated": "",
+    }
+    assert s["review_iterations"] == 0
+    assert s["report_notes_unincorporated"] == ""
