@@ -1,0 +1,27 @@
+{
+  "name": "legal-plugin-addin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Word task-pane add-in for the legal-plugin contract triage",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "cert:install": "office-addin-dev-certs install",
+    "cert:verify": "office-addin-dev-certs verify"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/office-js": "^1.0.380",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "office-addin-dev-certs": "^1.13.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

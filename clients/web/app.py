@@ -1,5 +1,5 @@
-# frontend/app.py
-"""Chainlit frontend — chat interface for the legal plugin."""
+# clients/web/app.py
+"""Chainlit web client — chat interface for the legal plugin."""
 
 import datetime
 import logging
@@ -12,12 +12,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Ensure project root is on path when Chainlit runs this file directly
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import chainlit as cl
 from fpdf import FPDF
 
-from frontend.api_client import submit_query, ingest_file, health_check, resume_query
+from clients.web.api_client import submit_query, ingest_file, health_check, resume_query
 from ingest.parsers.pdf_parser import parse_pdf
 from ingest.parsers.docx_parser import parse_docx
 

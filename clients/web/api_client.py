@@ -1,4 +1,4 @@
-# frontend/api_client.py
+# clients/web/api_client.py
 """HTTP client for communicating with the FastAPI backend."""
 
 import httpx

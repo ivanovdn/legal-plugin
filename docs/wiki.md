@@ -21,7 +21,7 @@ bash scripts/start.sh
 
 # Or start individually with auto-reload for development:
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-chainlit run frontend/app.py --port 8080 --host 0.0.0.0 -w
+chainlit run clients/web/app.py --port 8080 --host 0.0.0.0 -w
 
 # Access points:
 #   Frontend:  http://localhost:8080  (Chainlit chat UI)
@@ -80,9 +80,12 @@ legal-plugin/
 │       ├── documents.py        # POST /api/ingest
 │       └── health.py           # GET /health
 │
-├── frontend/                   # Chainlit frontend
-│   ├── app.py                  # Chat, file upload, side panel, human review, PDF export
-│   └── api_client.py           # Async HTTP client to backend
+├── clients/                    # Client surfaces (one per delivery channel)
+│   ├── web/                    # Chainlit web client
+│   │   ├── app.py              # Chat, file upload, side panel, human review, PDF export
+│   │   └── api_client.py       # Async HTTP client to backend
+│   └── word/                   # Microsoft Word add-in (task pane, Office.js)
+│       └── ...                 # manifest.xml, Vite + React/TS, see clients/word/README.md
 │
 ├── graph/                      # LangGraph supervisor graph
 │   ├── state.py                # LegalAgentState TypedDict
@@ -317,7 +320,7 @@ On loop-back, the contract skill detects `previous_draft + attorney_notes` and r
 - Session state persisted via RedisSaver checkpointer with 24h TTL refresh on every interaction.
 
 ### Development Mode
-- Frontend: `chainlit run frontend/app.py -w` (auto-reload on file changes)
+- Web client: `chainlit run clients/web/app.py -w` (auto-reload on file changes)
 - Backend: `uvicorn api.main:app --reload` (auto-reload on file changes)
 
 ---
