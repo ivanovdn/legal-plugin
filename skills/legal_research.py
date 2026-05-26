@@ -69,8 +69,28 @@ def _build_agent():
     return agent
 
 
+def _extract_uploaded_text(state: LegalAgentState) -> str:
+    """Extract contract text from uploaded_docs in state."""
+    docs = state.get("uploaded_docs", [])
+    if not docs:
+        return ""
+    parts = []
+    for doc in docs:
+        if isinstance(doc, dict):
+            parts.append(doc.get("text", ""))
+        elif hasattr(doc, "text"):
+            parts.append(doc.text)
+    return "\n\n".join(parts)
+
+
 def legal_research(state: LegalAgentState) -> LegalAgentState:
-    """Run the legal research ReAct agent."""
+    """Run the legal research ReAct agent.
+
+    If an open document is attached via uploaded_docs (e.g. the Word add-in
+    chat tab sending the active document on every turn), embed it in the
+    user message so the agent answers from that context rather than relying
+    solely on RAG search.
+    """
     request = state["request"]
     filters = state.get("filters", {})
     client_id = filters.get("client_id", "internal")
@@ -80,6 +100,21 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
         context_parts.append(f"Jurisdiction: {filters['jurisdiction']}")
 
     user_message = "\n".join(context_parts)
+
+    uploaded_text = _extract_uploaded_text(state)
+    if uploaded_text:
+        user_message += (
+            f"\n\n--- ATTACHED DOCUMENT (the user is asking about THIS document; prefer it over RAG) ---\n"
+            f"{uploaded_text}\n"
+            f"--- END ATTACHED DOCUMENT ---\n\n"
+            f"--- RESPONSE STYLE ---\n"
+            f"This is an in-Word chat conversation. Answer conversationally in 2–5 sentences. "
+            f"Do NOT emit section headers like 'Direct Answer', 'Supporting Citations', "
+            f"'Open Gaps', or 'Confidence Assessment'. Cite specific section numbers or "
+            f"clause names inline when relevant (e.g., 'Per Section 4, ...'). Skip the "
+            f"structured research report format — that's reserved for explicit research "
+            f"requests without an attached document."
+        )
 
     attorney_notes = (state.get("attorney_notes") or "").strip()
     if attorney_notes:
