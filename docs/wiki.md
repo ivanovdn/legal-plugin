@@ -1,6 +1,6 @@
 # Legal Plugin — Project Wiki
 
-> Last updated: 2026-05-21 | 121 tests passing | Python 3.12 | Redis checkpointer active
+> Last updated: 2026-05-26 | 121 tests passing | Python 3.12 | Redis checkpointer active | Word add-in shipped
 
 ## What Is This
 
@@ -495,6 +495,9 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 | Revision speedup | shipped with resume | Loop-back uses direct ChatOllama call with `reasoning=False` instead of full ReAct agent |
 | PDF download on approve | shipped with resume | `cl.File` element attached to final report |
 | Chainlit review buttons | shipped with resume | Migrated `cl.action_callback` → `cl.AskActionMessage` to dodge Chainlit's same-name disable on loop-back |
+| `clients/` regrouping | shipped with Word add-in | `frontend/` → `clients/web/`; new client surfaces land as sibling dirs under `clients/` |
+| **Word add-in MVP (Iteration 1)** | `feat/word-addin-triage` | React + TS + Vite, sideloaded into Word for Mac via the `wef` folder. Reads doc body via Office.js → `POST /api/query` (`task_type=contract_review`, `uploaded_text=body`) → renders per-clause cards with severity badges, current text, suggested redline, rationale. Zero backend changes — parses the existing `contract_review` markdown via regex. |
+| **Word add-in interactive assistant (Iteration 2)** | shipped with add-in | Each card gets "Show in document" (scrolls + Word Comment) and "Accept redline" (Track Changes replace). Multi-paragraph clauses handled via head + tail snippet search and `range.expandTo()`. New Chat tab uses the same `session_id` so `chat_history` carries the prior `contract_review` forward into Q&A turns. `legal_research` patched to read `uploaded_docs` and respond conversationally (no structured headers) when a doc is attached. Tabs stay mounted with `display:none` toggling so state persists across switches. |
 
 ---
 
@@ -502,11 +505,13 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 
 | Feature | Priority | Notes |
 |---|---|---|
-| **Microsoft Word add-in** | **High** | Embed the resume/interrupt review flow as a Word task pane. Attorneys see drafts inline in Word with Approve / Request Changes / Reject inside the document. This is the strategic next surface — Chainlit is for demos. Needs: Office.js add-in scaffold, OAuth handshake, render draft into Word body via OOXML, surface `/api/query/{id}/resume` from the task pane. Resume-after-interrupt was prioritized precisely because it is the load-bearing piece for this. |
+| Word add-in: playbook-grounded findings (Phase 2) | High | Make `contract_review` emit structured per-finding JSON including the retrieved RAG chunks; pane shows "your firm's standard says X" next to "this contract says Y" with source citations. The real Spellbook differentiator. |
+| Word add-in: generate-clause tab (Phase 6) | Medium | Third tab — prompt for a clause description → `drafting` skill → insert at cursor with Track Changes on. |
+| Word add-in: AppSource publishing | Low | Sideload-only for now; publish to AppSource when ready for outside attorneys. Needs proper icons + manifest signing. |
 | WebSocket / SSE streaming | Medium | LLM responses arrive all at once; would improve perceived latency on long generations |
 | Admin API endpoints (sessions, skills, reviews, audit) | Medium | Deferred until a UI consumes them |
 | Long-term memory (Qdrant `memory` collection) | Medium | Cross-session attorney preferences; implement when usage patterns emerge |
-| DOCX output generation | Medium | PDF works; DOCX needed for Word add-in round-tripping |
+| DOCX output generation | Medium | PDF works; DOCX needed for Word add-in round-tripping (attorney edits doc in Word → exports back as DOCX) |
 | Real authentication | Medium | Simple `X-User-ID` header today; needed before multi-user Linux VM |
 | Remaining skills as folders | Low | `compliance_check`, `legal_research`, `drafting` still flat files |
 | MCP tools integration | Low | Architecture supports it — tools plug into agent registries |
