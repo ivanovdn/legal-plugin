@@ -52,3 +52,4 @@ class LegalAgentState(TypedDict):
     review_iterations: int                 # NEW — counts loop-backs; capped at max_review_iterations
     report_notes_unincorporated: str       # NEW — attorney notes the loop couldn't incorporate (set on cap)
     previous_draft: str                    # NEW — preserved across loop-back so skill revises rather than regenerates
+    proposed_edits: list[dict]             # NEW — structured edit proposals parsed from chat skill output

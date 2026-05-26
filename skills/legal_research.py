@@ -1,6 +1,7 @@
 # skills/legal_research.py
 """Legal research — multi-hop retrieval ReAct agent."""
 
+import json
 import logging
 import re
 
@@ -83,6 +84,30 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
     return "\n\n".join(parts)
 
 
+_JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_proposed_edits(prose: str) -> list[dict]:
+    """Pull fenced ```json``` blocks out of the agent's prose into structured edit proposals.
+
+    Tolerant of malformed JSON — any block that fails to parse is skipped with a warning.
+    The original prose is left untouched; the frontend strips blocks for display.
+    """
+    proposals: list[dict] = []
+    for match in _JSON_BLOCK_RE.finditer(prose or ""):
+        raw = match.group(1).strip()
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.warning("[legal_research] skipping malformed JSON block: %s", e)
+            continue
+        if isinstance(obj, dict) and obj.get("action") in {"replace", "insert", "delete"}:
+            proposals.append(obj)
+        else:
+            logger.warning("[legal_research] JSON block missing/invalid action: %r", obj)
+    return proposals
+
+
 def legal_research(state: LegalAgentState) -> LegalAgentState:
     """Run the legal research ReAct agent.
 
@@ -113,7 +138,23 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
             f"'Open Gaps', or 'Confidence Assessment'. Cite specific section numbers or "
             f"clause names inline when relevant (e.g., 'Per Section 4, ...'). Skip the "
             f"structured research report format — that's reserved for explicit research "
-            f"requests without an attached document."
+            f"requests without an attached document.\n\n"
+            f"--- PROPOSING EDITS ---\n"
+            f"If the user is asking for a CHANGE to the attached document (rewrite a clause, "
+            f"add a clause, delete language), include one or more fenced JSON blocks at the "
+            f"END of your answer, one per proposed edit. Format:\n"
+            f"```json\n"
+            f'{{"action": "replace", "target_text": "<exact phrase from doc>", '
+            f'"new_text": "<replacement>", "rationale": "<one sentence>"}}\n'
+            f"```\n"
+            f"Actions:\n"
+            f'- "replace": rewrite an existing phrase. Requires "target_text" + "new_text".\n'
+            f'- "insert":  add new text near an anchor. Requires "anchor_text" + "position" '
+            f'("after" | "before") + "new_text".\n'
+            f'- "delete":  remove text. Requires "target_text".\n'
+            f"Use the EXACT phrase from the document for target_text/anchor_text — the client "
+            f"searches for it literally. Do NOT emit blocks when the user is only asking a "
+            f"question."
         )
 
     attorney_notes = (state.get("attorney_notes") or "").strip()
@@ -134,8 +175,10 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
             last_msg = messages[-1]
             content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
             state["llm_response"] = content
+            state["proposed_edits"] = _extract_proposed_edits(content)
         else:
             state["llm_response"] = "Error: Agent returned no messages."
+            state["proposed_edits"] = []
 
         source_docs = set()
         for msg in messages:
@@ -149,12 +192,14 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
         ]
 
         logger.info(
-            "[legal_research] agent completed, response=%d chars, sources=%d",
+            "[legal_research] agent completed, response=%d chars, sources=%d, edits=%d",
             len(state["llm_response"]), len(source_docs),
+            len(state.get("proposed_edits", [])),
         )
 
     except Exception as e:
         logger.error("[legal_research] agent failed: %s", e)
         state["llm_response"] = f"Error: Legal research agent failed — {e}"
+        state["proposed_edits"] = []
 
     return state
