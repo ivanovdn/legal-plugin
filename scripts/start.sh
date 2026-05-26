@@ -26,7 +26,7 @@ echo "Backend ready."
 # Start Chainlit frontend
 echo ""
 echo "Starting Chainlit frontend on port 8080..."
-chainlit run frontend/app.py --port 8080 --host 0.0.0.0 &
+chainlit run clients/web/app.py --port 8080 --host 0.0.0.0 &
 FRONTEND_PID=$!
 echo "Frontend PID: $FRONTEND_PID"
 
