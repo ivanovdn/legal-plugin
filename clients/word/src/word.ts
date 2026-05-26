@@ -5,6 +5,7 @@
 // scoped correctly and context.sync() is awaited before returning data.
 
 import { normalizeForSearch } from "./normalize";
+import type { EditProposal } from "./parseEditBlocks";
 
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -223,4 +224,101 @@ export async function acceptRedline(currentText: string, newText: string): Promi
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * Insert `newText` immediately before or after the range matching `anchorText`,
+ * as a tracked change. Used for chat-driven additions like "add a force majeure
+ * clause after Section 7." The agent's `new_text` should include any leading
+ * newline or paragraph break it wants visible in the document.
+ */
+export async function insertNear(
+  anchorText: string,
+  position: "after" | "before",
+  newText: string,
+): Promise<Result<void>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  if (!anchorText.trim()) return fail("Empty anchor text — nothing to insert near.");
+  if (!newText.trim()) return fail("No insertion text provided.");
+  try {
+    return await Word.run(async (context) => {
+      const range = await findClauseRange(context, anchorText);
+      if (!range) return fail("Couldn't locate the anchor in the document.");
+
+      const doc = context.document;
+      doc.load("changeTrackingMode");
+      await context.sync();
+      const originalMode = doc.changeTrackingMode;
+
+      doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+      try {
+        const loc = position === "after" ? Word.InsertLocation.after : Word.InsertLocation.before;
+        range.insertText(newText, loc);
+        await context.sync();
+      } finally {
+        doc.changeTrackingMode = originalMode;
+        await context.sync();
+      }
+      return ok(undefined);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
+ * Delete the range matching `targetText` as a tracked change (strikethrough).
+ * Used for chat-driven removals like "delete the auto-renewal language."
+ */
+async function deleteClause(targetText: string): Promise<Result<void>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  if (!targetText.trim()) return fail("Empty target text — nothing to delete.");
+  try {
+    return await Word.run(async (context) => {
+      const range = await findClauseRange(context, targetText);
+      if (!range) return fail("Couldn't locate this text in the document.");
+
+      const doc = context.document;
+      doc.load("changeTrackingMode");
+      await context.sync();
+      const originalMode = doc.changeTrackingMode;
+
+      doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+      try {
+        range.delete();
+        await context.sync();
+      } finally {
+        doc.changeTrackingMode = originalMode;
+        await context.sync();
+      }
+      return ok(undefined);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
+ * Apply a chat-proposed edit by dispatching to the right Office.js helper
+ * based on `proposal.action`. All variants run inside Word.run and produce a
+ * tracked change the lawyer reviews via Word's Review ribbon.
+ */
+export async function applyEdit(proposal: EditProposal): Promise<Result<void>> {
+  if (proposal.action === "replace") {
+    if (!proposal.target_text || !proposal.new_text) {
+      return fail("Replace proposal missing target_text or new_text.");
+    }
+    return acceptRedline(proposal.target_text, proposal.new_text);
+  }
+  if (proposal.action === "insert") {
+    if (!proposal.anchor_text || !proposal.new_text || !proposal.position) {
+      return fail("Insert proposal missing anchor_text, position, or new_text.");
+    }
+    return insertNear(proposal.anchor_text, proposal.position, proposal.new_text);
+  }
+  if (proposal.action === "delete") {
+    if (!proposal.target_text) return fail("Delete proposal missing target_text.");
+    return deleteClause(proposal.target_text);
+  }
+  return fail(`Unknown action: ${String((proposal as { action: unknown }).action)}`);
 }
