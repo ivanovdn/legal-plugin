@@ -1,6 +1,8 @@
 // API client for the legal-plugin FastAPI backend.
 // All paths are relative — Vite's dev-server proxy rewrites /api/* to http://localhost:8000.
 
+import type { EditProposal } from "./parseEditBlocks";
+
 export interface QueryResponse {
   status: "ok" | "error";
   data?: {
@@ -8,7 +10,12 @@ export interface QueryResponse {
     task_type?: string;
     risk_level?: string;
     awaiting_review?: boolean;
-    report?: { response?: string; sources?: unknown[]; notes_unincorporated?: string };
+    report?: {
+      response?: string;
+      sources?: unknown[];
+      notes_unincorporated?: string;
+      proposed_edits?: EditProposal[];
+    };
     interrupt_payload?: {
       task_type?: string;
       risk_level?: string;

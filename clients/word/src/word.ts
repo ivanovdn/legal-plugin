@@ -5,6 +5,7 @@
 // scoped correctly and context.sync() is awaited before returning data.
 
 import { normalizeForSearch } from "./normalize";
+import type { EditProposal } from "./parseEditBlocks";
 
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -34,15 +35,36 @@ export async function readBody(): Promise<string> {
  * progressively shorter prefixes — first sentence, ~200-char head, ~100-char
  * head — to find at least the START of the clause.
  */
+// Characters Word's body.search treats as wildcard-special — even with
+// matchWildcards off on Word for Mac it won't match them literally, so a needle
+// containing them (e.g. a heading annotated "[Source: …]") silently returns no
+// match. We fall back to the leading run before the first such character.
+const SEARCH_SPECIAL = /[[\](){}<>?*@^~\\]/;
+
 function searchCandidates(needle: string): string[] {
   const normalized = normalizeForSearch(needle);
   const candidates: string[] = [];
-  const add = (s: string) => {
+  const push = (s: string) => {
     const t = s.trim();
     if (t && t.length >= 12 && !candidates.includes(t)) candidates.push(t);
   };
+  const add = (s: string) => {
+    push(s);
+    // Also try the clean leading run before the first wildcard-special char,
+    // so "7. GOVERNING LAW [Source: …]" still matches via "7. GOVERNING LAW".
+    const idx = s.search(SEARCH_SPECIAL);
+    if (idx > 0) push(s.slice(0, idx));
+  };
 
   if (normalized.length <= 200 && !/\n/.test(needle)) add(normalized);
+
+  // First non-empty line of the original needle. Paragraph breaks (\n) survive
+  // in the needle, so the first line is guaranteed to sit inside a single
+  // paragraph — body.search can't cross breaks, so for multi-paragraph anchors
+  // (e.g. a "Heading\nbody…" insert anchor) this matches the opening paragraph
+  // where the longer head snippets straddle the break and always miss.
+  const firstLine = needle.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+  if (firstLine) add(normalizeForSearch(firstLine));
 
   const sentenceMatch = normalized.match(/^.+?[.!?](?:\s|$)/);
   if (sentenceMatch) add(sentenceMatch[0]);
@@ -57,6 +79,16 @@ function searchCandidates(needle: string): string[] {
     const head = normalized.slice(0, 100);
     const lastSpace = head.lastIndexOf(" ");
     add(lastSpace > 50 ? head.slice(0, lastSpace) : head);
+  }
+
+  // Progressively shorter word-aligned prefixes. body.search runs against the
+  // RAW document while our needle is normalized; when they differ mid-phrase
+  // (a soft line break, an odd space) the full string silently fails to match
+  // even though the text is present. A shorter leading run is far likelier to
+  // land inside one clean run — findClauseRange then bridges to the tail.
+  const words = normalized.split(/\s+/).filter(Boolean);
+  for (const n of [12, 8, 5]) {
+    if (words.length > n) add(words.slice(0, n).join(" "));
   }
 
   if (candidates.length && /['"]/.test(candidates[candidates.length - 1])) {
@@ -108,29 +140,35 @@ async function searchFirst(
   context: Word.RequestContext,
   trial: string,
 ): Promise<Word.Range | null> {
-  const results = context.document.body.search(trial, { matchCase: false });
+  const results = context.document.body.search(trial, {
+    matchCase: false,
+    matchWildcards: false,
+  });
   results.load("items");
   await context.sync();
   return results.items.length > 0 ? results.items[0] : null;
 }
 
 /**
- * Locate the full range of the clause matching `currentText`.
+ * Locate the range of the text matching `currentText`.
  *
- * Office.js body.search() has a 255-char limit and cannot cross paragraph
- * boundaries, so we:
- *   1. find the START via a short head snippet
- *   2. find the END via a short tail snippet (if currentText is long enough)
- *   3. extend a range from the start-paragraph's start to the end-paragraph's end
+ * Office.js body.search() has a 255-char limit, can't cross paragraph breaks,
+ * and runs against the raw document — so the full quote often fails to match
+ * even when the text is present (soft breaks, normalization differences). So we:
+ *   1. find the START via the first head candidate that matches (the full
+ *      string, then progressively shorter word-aligned prefixes)
+ *   2. find the END via the first tail candidate that matches
+ *   3. return a range spanning the START match's start → END match's end
  *
- * Falls back to single-paragraph match if the tail can't be found.
- * Returns a Range covering the full clause (possibly spanning multiple paragraphs).
+ * Using the MATCH boundaries (not whole paragraphs) means a fragment quote
+ * replaces exactly the fragment, while a full-clause quote still spans the
+ * whole clause. If no tail is found, the head match alone is returned.
  */
 async function findClauseRange(
   context: Word.RequestContext,
   currentText: string,
 ): Promise<Word.Range | null> {
-  // Step 1: find first match via progressively shorter head candidates
+  // Step 1: find the start via the first matching head candidate.
   let startMatch: Word.Range | null = null;
   for (const trial of searchCandidates(currentText)) {
     startMatch = await searchFirst(context, trial);
@@ -138,33 +176,20 @@ async function findClauseRange(
   }
   if (!startMatch) return null;
 
-  startMatch.paragraphs.load("items");
-  await context.sync();
-  if (startMatch.paragraphs.items.length === 0) return startMatch;
-  const startParagraph = startMatch.paragraphs.items[0];
-  const startRange = startParagraph.getRange(Word.RangeLocation.start);
-
-  // Step 2: try to find the end via progressively shorter tail snippets.
-  // The shortest candidates (last 2–3 words) reliably fit in a single paragraph
-  // even when the doc has mid-clause hard breaks.
+  // Step 2: find the end via the first matching tail candidate.
   let endMatch: Word.Range | null = null;
   for (const trial of tailCandidates(currentText)) {
     endMatch = await searchFirst(context, trial);
     if (endMatch) break;
   }
-  if (!endMatch) {
-    return startParagraph.getRange(Word.RangeLocation.whole);
-  }
-  endMatch.paragraphs.load("items");
-  await context.sync();
-  if (endMatch.paragraphs.items.length === 0) {
-    return startParagraph.getRange(Word.RangeLocation.whole);
-  }
-  const endParagraph = endMatch.paragraphs.items[0];
-  const endRange = endParagraph.getRange(Word.RangeLocation.end);
+  // No tail (short quote, or only the full string matched) → the head match
+  // already covers the whole quote.
+  if (!endMatch) return startMatch;
 
-  // Step 3: build a range from start of first paragraph to end of last paragraph
-  return startRange.expandTo(endRange);
+  // Step 3: span from the start of the head match to the end of the tail match.
+  return startMatch
+    .getRange(Word.RangeLocation.start)
+    .expandTo(endMatch.getRange(Word.RangeLocation.end));
 }
 
 /**
@@ -223,4 +248,134 @@ export async function acceptRedline(currentText: string, newText: string): Promi
   } catch (e) {
     return fail(e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * Insert `newText` immediately before or after the range matching `anchorText`,
+ * as a tracked change. Used for chat-driven additions like "add a force majeure
+ * clause after Section 7." The agent's `new_text` should include any leading
+ * newline or paragraph break it wants visible in the document.
+ */
+export async function insertNear(
+  anchorText: string,
+  position: "after" | "before",
+  newText: string,
+): Promise<Result<void>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  if (!anchorText.trim()) return fail("Empty anchor text — nothing to insert near.");
+  if (!newText.trim()) return fail("No insertion text provided.");
+  try {
+    return await Word.run(async (context) => {
+      // Anchor on a SINGLE line/paragraph, not the whole multi-paragraph anchor:
+      // for "after" use the anchor's LAST line (end of the section), for
+      // "before" its FIRST line. Each line sits in one paragraph, so body.search
+      // matches reliably — and we insert a whole new paragraph relative to it,
+      // which keeps the new clause from splitting the section or gluing on.
+      const lines = anchorText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const targetLine = position === "after" ? lines[lines.length - 1] : lines[0];
+
+      let match: Word.Range | null = null;
+      for (const trial of searchCandidates(targetLine)) {
+        match = await searchFirst(context, trial);
+        if (match) break;
+      }
+      if (!match) return fail("Couldn't locate the anchor in the document.");
+      match.paragraphs.load("items");
+      await context.sync();
+      if (match.paragraphs.items.length === 0) {
+        return fail("Couldn't resolve the anchor paragraph.");
+      }
+      const anchorParagraph = match.paragraphs.items[0];
+
+      const doc = context.document;
+      doc.load("changeTrackingMode");
+      await context.sync();
+      const originalMode = doc.changeTrackingMode;
+
+      // Split the new clause into individual paragraphs so embedded newlines
+      // become real paragraph breaks (insertParagraph would otherwise render a
+      // raw "\n" as literal text). Insert each as its own paragraph, in order.
+      const newParas = newText.split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
+
+      doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+      try {
+        if (position === "after") {
+          // Chain after the anchor so paragraphs keep their order.
+          let ref = anchorParagraph;
+          for (const p of newParas) {
+            ref = ref.insertParagraph(p, Word.InsertLocation.after);
+          }
+        } else {
+          // Insert each before the anchor, in order.
+          for (const p of newParas) {
+            anchorParagraph.insertParagraph(p, Word.InsertLocation.before);
+          }
+        }
+        await context.sync();
+      } finally {
+        doc.changeTrackingMode = originalMode;
+        await context.sync();
+      }
+      return ok(undefined);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
+ * Delete the range matching `targetText` as a tracked change (strikethrough).
+ * Used for chat-driven removals like "delete the auto-renewal language."
+ */
+async function deleteClause(targetText: string): Promise<Result<void>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  if (!targetText.trim()) return fail("Empty target text — nothing to delete.");
+  try {
+    return await Word.run(async (context) => {
+      const range = await findClauseRange(context, targetText);
+      if (!range) return fail("Couldn't locate this text in the document.");
+
+      const doc = context.document;
+      doc.load("changeTrackingMode");
+      await context.sync();
+      const originalMode = doc.changeTrackingMode;
+
+      doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+      try {
+        range.delete();
+        await context.sync();
+      } finally {
+        doc.changeTrackingMode = originalMode;
+        await context.sync();
+      }
+      return ok(undefined);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
+ * Apply a chat-proposed edit by dispatching to the right Office.js helper
+ * based on `proposal.action`. All variants run inside Word.run and produce a
+ * tracked change the lawyer reviews via Word's Review ribbon.
+ */
+export async function applyEdit(proposal: EditProposal): Promise<Result<void>> {
+  if (proposal.action === "replace") {
+    if (!proposal.target_text || !proposal.new_text) {
+      return fail("Replace proposal missing target_text or new_text.");
+    }
+    return acceptRedline(proposal.target_text, proposal.new_text);
+  }
+  if (proposal.action === "insert") {
+    if (!proposal.anchor_text || !proposal.new_text || !proposal.position) {
+      return fail("Insert proposal missing anchor_text, position, or new_text.");
+    }
+    return insertNear(proposal.anchor_text, proposal.position, proposal.new_text);
+  }
+  if (proposal.action === "delete") {
+    if (!proposal.target_text) return fail("Delete proposal missing target_text.");
+    return deleteClause(proposal.target_text);
+  }
+  return fail(`Unknown action: ${String((proposal as { action: unknown }).action)}`);
 }

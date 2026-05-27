@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { chatQuery } from "../api";
+import { extractEditBlocks, type EditProposal } from "../parseEditBlocks";
 import { readBody } from "../word";
+import EditProposalCard from "./EditProposalCard";
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  proposedEdits?: EditProposal[];
 }
 
 interface Props {
@@ -38,9 +41,20 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
         setError((res.errors ?? ["unknown error"])[0]);
         return;
       }
-      const answer =
+      const rawAnswer =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "(no response)";
-      setMessages((m) => [...m, { role: "assistant", content: answer }]);
+      // Strip fenced JSON blocks for display; prefer the backend's authoritative
+      // parsed proposed_edits, falling back to client-side extraction.
+      const { cleanedProse, blocks } = extractEditBlocks(rawAnswer);
+      const proposedEdits = res.data?.report?.proposed_edits ?? blocks;
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          content: cleanedProse || rawAnswer,
+          proposedEdits: proposedEdits.length > 0 ? proposedEdits : undefined,
+        },
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -67,6 +81,9 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
           <div key={i} className={`chat-msg chat-${m.role}`}>
             <div className="chat-role">{m.role === "user" ? "You" : "Assistant"}</div>
             <div className="chat-content">{m.content}</div>
+            {m.proposedEdits?.map((proposal, j) => (
+              <EditProposalCard key={`${i}-${j}`} proposal={proposal} />
+            ))}
           </div>
         ))}
         {busy && (

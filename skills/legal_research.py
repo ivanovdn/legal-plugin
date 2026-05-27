@@ -1,6 +1,7 @@
 # skills/legal_research.py
 """Legal research — multi-hop retrieval ReAct agent."""
 
+import json
 import logging
 import re
 
@@ -83,6 +84,30 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
     return "\n\n".join(parts)
 
 
+_JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_proposed_edits(prose: str) -> list[dict]:
+    """Pull fenced ```json``` blocks out of the agent's prose into structured edit proposals.
+
+    Tolerant of malformed JSON — any block that fails to parse is skipped with a warning.
+    The original prose is left untouched; the frontend strips blocks for display.
+    """
+    proposals: list[dict] = []
+    for match in _JSON_BLOCK_RE.finditer(prose or ""):
+        raw = match.group(1).strip()
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.warning("[legal_research] skipping malformed JSON block: %s", e)
+            continue
+        if isinstance(obj, dict) and obj.get("action") in {"replace", "insert", "delete"}:
+            proposals.append(obj)
+        else:
+            logger.warning("[legal_research] JSON block missing/invalid action: %r", obj)
+    return proposals
+
+
 def legal_research(state: LegalAgentState) -> LegalAgentState:
     """Run the legal research ReAct agent.
 
@@ -113,7 +138,31 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
             f"'Open Gaps', or 'Confidence Assessment'. Cite specific section numbers or "
             f"clause names inline when relevant (e.g., 'Per Section 4, ...'). Skip the "
             f"structured research report format — that's reserved for explicit research "
-            f"requests without an attached document."
+            f"requests without an attached document.\n\n"
+            f"--- PROPOSING EDITS (REQUIRED when the user asks for a change) ---\n"
+            f"If the user asks you to change, rewrite, tighten, loosen, add, insert, remove, "
+            f"delete, or redraft ANYTHING in the attached document, you MUST end your reply "
+            f"with a fenced ```json``` block describing the edit. This is NOT optional — the "
+            f"block is the ONLY way the change reaches the document. If you describe a change "
+            f"in prose but omit the block, nothing happens and the user is stuck. Always emit "
+            f"the block, even alongside your prose explanation. One block per edit.\n\n"
+            f"Worked example — user says \"tighten the liability cap to 2x\":\n"
+            f"Sure — here's a 2x cap for Section 5.\n"
+            f"```json\n"
+            f'{{"action": "replace", "target_text": "shall be limited to the fees paid by '
+            f'Client in the 12 months preceding the relevant claim", "new_text": "shall be '
+            f'limited to two times (2x) the fees paid by Client in the 12 months preceding '
+            f'the relevant claim", "rationale": "Doubles the cap, keeps the 12-month period."}}\n'
+            f"```\n\n"
+            f"Actions and required fields:\n"
+            f'- "replace": rewrite existing text. Needs "target_text" + "new_text".\n'
+            f'- "insert":  add new text. Needs "anchor_text" + "position" ("after"|"before") '
+            f'+ "new_text".\n'
+            f'- "delete":  remove text. Needs "target_text".\n'
+            f"The target_text / anchor_text MUST be copied VERBATIM from the attached document "
+            f"(exact words, punctuation, and casing) — the client searches for it literally, "
+            f"so paraphrasing breaks the match. Do NOT emit a block when the user is only "
+            f"asking a question (e.g. 'why is this risky?')."
         )
 
     attorney_notes = (state.get("attorney_notes") or "").strip()
@@ -134,8 +183,10 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
             last_msg = messages[-1]
             content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
             state["llm_response"] = content
+            state["proposed_edits"] = _extract_proposed_edits(content)
         else:
             state["llm_response"] = "Error: Agent returned no messages."
+            state["proposed_edits"] = []
 
         source_docs = set()
         for msg in messages:
@@ -149,12 +200,14 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
         ]
 
         logger.info(
-            "[legal_research] agent completed, response=%d chars, sources=%d",
+            "[legal_research] agent completed, response=%d chars, sources=%d, edits=%d",
             len(state["llm_response"]), len(source_docs),
+            len(state.get("proposed_edits", [])),
         )
 
     except Exception as e:
         logger.error("[legal_research] agent failed: %s", e)
         state["llm_response"] = f"Error: Legal research agent failed — {e}"
+        state["proposed_edits"] = []
 
     return state

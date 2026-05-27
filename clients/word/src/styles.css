@@ -3,16 +3,19 @@
   --fg: #1a1d21;
   --muted: #5c6772;
   --border: #d8dde3;
-  --accent: #2c3e50;
+  --accent: #0078d4;        /* Office blue */
+  --accent-hover: #106ebe;  /* Office blue (hover) */
   --accent-fg: #ffffff;
+  --focus-ring: rgba(0, 120, 212, 0.45);
   --secondary-bg: #ffffff;
   --secondary-border: #c8d0d8;
+  --secondary-hover-bg: #f3f5f8;
   --red-bg: #fde7e9;
-  --red-fg: #9b1d2a;
+  --red-fg: #a4262c;        /* Office red */
   --yellow-bg: #fff4d6;
-  --yellow-fg: #7a5b00;
+  --yellow-fg: #7a5b00;     /* readable amber-on-white */
   --green-bg: #e1f4e2;
-  --green-fg: #1f6b2a;
+  --green-fg: #107c10;      /* Office green */
   --user-bg: #dbeafe;
   --assistant-bg: #ffffff;
 }
@@ -27,9 +30,17 @@ html, body, #root {
   padding: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.45;
+}
+
+/* Office-style focus ring on every interactive element. */
+button:focus-visible,
+textarea:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .app {
@@ -78,6 +89,10 @@ html, body, #root {
   margin-bottom: -1px;
 }
 
+.tab:hover:not(.active) {
+  color: var(--fg);
+}
+
 .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
@@ -114,6 +129,11 @@ button.primary {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  transition: background 0.08s ease-in-out;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
 }
 
 button.primary:disabled {
@@ -130,6 +150,11 @@ button.secondary {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
+  transition: background 0.08s ease-in-out;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--secondary-hover-bg);
 }
 
 button.secondary:disabled {
@@ -340,4 +365,74 @@ button.secondary:disabled {
   border-radius: 4px;
   font-family: inherit;
   font-size: 12px;
+}
+
+/* ---------- Edit proposal card (chat-driven document edits) ---------- */
+
+.edit-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: #fafbfc;
+  padding: 8px 10px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.edit-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.edit-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.edit-action {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.edit-action-replace {
+  background: #e6f1fb;
+  color: #084771;
+}
+
+.edit-action-insert {
+  background: var(--green-bg);
+  color: var(--green-fg);
+}
+
+.edit-action-delete {
+  background: var(--red-bg);
+  color: var(--red-fg);
+}
+
+.edit-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+  background: white;
+}
+
+.edit-textarea:disabled {
+  background: #f3f5f8;
+  color: var(--muted);
 }

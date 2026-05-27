@@ -382,3 +382,67 @@ def test_drafting_injects_attorney_notes(monkeypatch):
     last_user = result["messages"][-1]["content"]
     assert "ATTORNEY REVIEW NOTES" in last_user
     assert "mutual-NDA" in last_user
+
+
+def test_extract_proposed_edits_parses_well_formed_block():
+    """A single well-formed JSON block is parsed into a structured proposal."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        "Here's a tighter version of the cap.\n"
+        "```json\n"
+        '{"action": "replace", "target_text": "the fees paid", '
+        '"new_text": "2x the fees paid", "rationale": "Aligns with playbook"}\n'
+        "```"
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 1
+    assert edits[0]["action"] == "replace"
+    assert edits[0]["new_text"] == "2x the fees paid"
+
+
+def test_extract_proposed_edits_parses_multiple_blocks():
+    """Multiple JSON blocks yield multiple proposals in order."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        "Two alternatives:\n"
+        '```json\n{"action": "replace", "target_text": "X", "new_text": "Y"}\n```\n'
+        "Or:\n"
+        '```json\n{"action": "insert", "anchor_text": "Section 7", '
+        '"position": "after", "new_text": "Force majeure..."}\n```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 2
+    assert edits[0]["action"] == "replace"
+    assert edits[1]["action"] == "insert"
+    assert edits[1]["position"] == "after"
+
+
+def test_extract_proposed_edits_skips_malformed_json():
+    """Malformed JSON blocks are logged and skipped, not propagated."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        '```json\n{"action": "replace", "target_text": broken-no-quotes}\n```\n'
+        '```json\n{"action": "delete", "target_text": "auto-renew"}\n```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 1
+    assert edits[0]["action"] == "delete"
+
+
+def test_extract_proposed_edits_skips_blocks_without_valid_action():
+    """JSON blocks without a known action key are skipped."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = '```json\n{"action": "unknown", "target_text": "X"}\n```'
+    assert _extract_proposed_edits(prose) == []
+
+
+def test_extract_proposed_edits_no_blocks_returns_empty():
+    """Prose without any JSON blocks returns an empty list (Q&A turn)."""
+    from skills.legal_research import _extract_proposed_edits
+
+    assert _extract_proposed_edits("Why is the IP clause risky?") == []
+    assert _extract_proposed_edits("") == []

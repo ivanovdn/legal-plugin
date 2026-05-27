@@ -1,0 +1,26 @@
+SERVICE AGREEMENT
+
+Effective Date: January 1, 2026
+Between: LegalCo Inc., a Delaware corporation ("Service Provider")
+And: Vertex Systems Inc. ("Client")
+
+1. SERVICES
+Service Provider agrees to provide cloud infrastructure consulting services as described in each Statement of Work ("SOW") agreed by the parties. Service Provider shall perform services in a professional and workmanlike manner.
+
+2. PAYMENT
+Client shall pay Service Provider within 30 days of invoice. Late payments accrue interest at 1.5% per month.
+
+3. INTELLECTUAL PROPERTY
+All intellectual property created by Service Provider in the course of performing services is hereby assigned to Client, effective upon full payment of all related fees. Service Provider warrants it has authority to make this assignment.
+
+4. CONFIDENTIALITY
+Each party shall keep the other's confidential information strictly confidential and shall not disclose it to third parties without prior written consent. This obligation survives termination for 3 years.
+
+5. LIMITATION OF LIABILITY
+Service Provider's maximum liability to Client for any and all claims shall be limited to the fees paid by Client in the 12 months preceding the relevant claim. In no event will either party be liable for lost profits or consequential damages.
+
+6. TERMINATION
+Either party may terminate this Agreement on 60 days written notice. On termination, all outstanding invoices become immediately due.
+
+7. GOVERNING LAW
+This Agreement shall be governed by and construed in accordance with the laws of Delaware, USA.
