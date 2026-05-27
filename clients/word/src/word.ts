@@ -35,12 +35,25 @@ export async function readBody(): Promise<string> {
  * progressively shorter prefixes — first sentence, ~200-char head, ~100-char
  * head — to find at least the START of the clause.
  */
+// Characters Word's body.search treats as wildcard-special — even with
+// matchWildcards off on Word for Mac it won't match them literally, so a needle
+// containing them (e.g. a heading annotated "[Source: …]") silently returns no
+// match. We fall back to the leading run before the first such character.
+const SEARCH_SPECIAL = /[[\](){}<>?*@^~\\]/;
+
 function searchCandidates(needle: string): string[] {
   const normalized = normalizeForSearch(needle);
   const candidates: string[] = [];
-  const add = (s: string) => {
+  const push = (s: string) => {
     const t = s.trim();
     if (t && t.length >= 12 && !candidates.includes(t)) candidates.push(t);
+  };
+  const add = (s: string) => {
+    push(s);
+    // Also try the clean leading run before the first wildcard-special char,
+    // so "7. GOVERNING LAW [Source: …]" still matches via "7. GOVERNING LAW".
+    const idx = s.search(SEARCH_SPECIAL);
+    if (idx > 0) push(s.slice(0, idx));
   };
 
   if (normalized.length <= 200 && !/\n/.test(needle)) add(normalized);
@@ -117,7 +130,10 @@ async function searchFirst(
   context: Word.RequestContext,
   trial: string,
 ): Promise<Word.Range | null> {
-  const results = context.document.body.search(trial, { matchCase: false });
+  const results = context.document.body.search(trial, {
+    matchCase: false,
+    matchWildcards: false,
+  });
   results.load("items");
   await context.sync();
   return results.items.length > 0 ? results.items[0] : null;
