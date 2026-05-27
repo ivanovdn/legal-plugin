@@ -81,6 +81,16 @@ function searchCandidates(needle: string): string[] {
     add(lastSpace > 50 ? head.slice(0, lastSpace) : head);
   }
 
+  // Progressively shorter word-aligned prefixes. body.search runs against the
+  // RAW document while our needle is normalized; when they differ mid-phrase
+  // (a soft line break, an odd space) the full string silently fails to match
+  // even though the text is present. A shorter leading run is far likelier to
+  // land inside one clean run — findClauseRange then bridges to the tail.
+  const words = normalized.split(/\s+/).filter(Boolean);
+  for (const n of [12, 8, 5]) {
+    if (words.length > n) add(words.slice(0, n).join(" "));
+  }
+
   if (candidates.length && /['"]/.test(candidates[candidates.length - 1])) {
     const curly = candidates[candidates.length - 1].replace(/'/g, "’").replace(/"/g, "“");
     add(curly);
@@ -140,22 +150,25 @@ async function searchFirst(
 }
 
 /**
- * Locate the full range of the clause matching `currentText`.
+ * Locate the range of the text matching `currentText`.
  *
- * Office.js body.search() has a 255-char limit and cannot cross paragraph
- * boundaries, so we:
- *   1. find the START via a short head snippet
- *   2. find the END via a short tail snippet (if currentText is long enough)
- *   3. extend a range from the start-paragraph's start to the end-paragraph's end
+ * Office.js body.search() has a 255-char limit, can't cross paragraph breaks,
+ * and runs against the raw document — so the full quote often fails to match
+ * even when the text is present (soft breaks, normalization differences). So we:
+ *   1. find the START via the first head candidate that matches (the full
+ *      string, then progressively shorter word-aligned prefixes)
+ *   2. find the END via the first tail candidate that matches
+ *   3. return a range spanning the START match's start → END match's end
  *
- * Falls back to single-paragraph match if the tail can't be found.
- * Returns a Range covering the full clause (possibly spanning multiple paragraphs).
+ * Using the MATCH boundaries (not whole paragraphs) means a fragment quote
+ * replaces exactly the fragment, while a full-clause quote still spans the
+ * whole clause. If no tail is found, the head match alone is returned.
  */
 async function findClauseRange(
   context: Word.RequestContext,
   currentText: string,
 ): Promise<Word.Range | null> {
-  // Step 1: find first match via progressively shorter head candidates
+  // Step 1: find the start via the first matching head candidate.
   let startMatch: Word.Range | null = null;
   for (const trial of searchCandidates(currentText)) {
     startMatch = await searchFirst(context, trial);
@@ -163,33 +176,20 @@ async function findClauseRange(
   }
   if (!startMatch) return null;
 
-  startMatch.paragraphs.load("items");
-  await context.sync();
-  if (startMatch.paragraphs.items.length === 0) return startMatch;
-  const startParagraph = startMatch.paragraphs.items[0];
-  const startRange = startParagraph.getRange(Word.RangeLocation.start);
-
-  // Step 2: try to find the end via progressively shorter tail snippets.
-  // The shortest candidates (last 2–3 words) reliably fit in a single paragraph
-  // even when the doc has mid-clause hard breaks.
+  // Step 2: find the end via the first matching tail candidate.
   let endMatch: Word.Range | null = null;
   for (const trial of tailCandidates(currentText)) {
     endMatch = await searchFirst(context, trial);
     if (endMatch) break;
   }
-  if (!endMatch) {
-    return startParagraph.getRange(Word.RangeLocation.whole);
-  }
-  endMatch.paragraphs.load("items");
-  await context.sync();
-  if (endMatch.paragraphs.items.length === 0) {
-    return startParagraph.getRange(Word.RangeLocation.whole);
-  }
-  const endParagraph = endMatch.paragraphs.items[0];
-  const endRange = endParagraph.getRange(Word.RangeLocation.end);
+  // No tail (short quote, or only the full string matched) → the head match
+  // already covers the whole quote.
+  if (!endMatch) return startMatch;
 
-  // Step 3: build a range from start of first paragraph to end of last paragraph
-  return startRange.expandTo(endRange);
+  // Step 3: span from the start of the head match to the end of the tail match.
+  return startMatch
+    .getRange(Word.RangeLocation.start)
+    .expandTo(endMatch.getRange(Word.RangeLocation.end));
 }
 
 /**
@@ -266,18 +266,51 @@ export async function insertNear(
   if (!newText.trim()) return fail("No insertion text provided.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRange(context, anchorText);
-      if (!range) return fail("Couldn't locate the anchor in the document.");
+      // Anchor on a SINGLE line/paragraph, not the whole multi-paragraph anchor:
+      // for "after" use the anchor's LAST line (end of the section), for
+      // "before" its FIRST line. Each line sits in one paragraph, so body.search
+      // matches reliably — and we insert a whole new paragraph relative to it,
+      // which keeps the new clause from splitting the section or gluing on.
+      const lines = anchorText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const targetLine = position === "after" ? lines[lines.length - 1] : lines[0];
+
+      let match: Word.Range | null = null;
+      for (const trial of searchCandidates(targetLine)) {
+        match = await searchFirst(context, trial);
+        if (match) break;
+      }
+      if (!match) return fail("Couldn't locate the anchor in the document.");
+      match.paragraphs.load("items");
+      await context.sync();
+      if (match.paragraphs.items.length === 0) {
+        return fail("Couldn't resolve the anchor paragraph.");
+      }
+      const anchorParagraph = match.paragraphs.items[0];
 
       const doc = context.document;
       doc.load("changeTrackingMode");
       await context.sync();
       const originalMode = doc.changeTrackingMode;
 
+      // Split the new clause into individual paragraphs so embedded newlines
+      // become real paragraph breaks (insertParagraph would otherwise render a
+      // raw "\n" as literal text). Insert each as its own paragraph, in order.
+      const newParas = newText.split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
+
       doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
       try {
-        const loc = position === "after" ? Word.InsertLocation.after : Word.InsertLocation.before;
-        range.insertText(newText, loc);
+        if (position === "after") {
+          // Chain after the anchor so paragraphs keep their order.
+          let ref = anchorParagraph;
+          for (const p of newParas) {
+            ref = ref.insertParagraph(p, Word.InsertLocation.after);
+          }
+        } else {
+          // Insert each before the anchor, in order.
+          for (const p of newParas) {
+            anchorParagraph.insertParagraph(p, Word.InsertLocation.before);
+          }
+        }
         await context.sync();
       } finally {
         doc.changeTrackingMode = originalMode;
