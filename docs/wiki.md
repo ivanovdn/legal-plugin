@@ -1,6 +1,6 @@
 # Legal Plugin — Project Wiki
 
-> Last updated: 2026-05-26 | 121 tests passing | Python 3.12 | Redis checkpointer active | Word add-in shipped
+> Last updated: 2026-05-27 | 127 tests passing | Python 3.12 | Redis checkpointer active | Word add-in shipped (chat-driven edits)
 
 ## What Is This
 
@@ -498,6 +498,7 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 | `clients/` regrouping | shipped with Word add-in | `frontend/` → `clients/web/`; new client surfaces land as sibling dirs under `clients/` |
 | **Word add-in MVP (Iteration 1)** | `feat/word-addin-triage` | React + TS + Vite, sideloaded into Word for Mac via the `wef` folder. Reads doc body via Office.js → `POST /api/query` (`task_type=contract_review`, `uploaded_text=body`) → renders per-clause cards with severity badges, current text, suggested redline, rationale. Zero backend changes — parses the existing `contract_review` markdown via regex. |
 | **Word add-in interactive assistant (Iteration 2)** | shipped with add-in | Each card gets "Show in document" (scrolls + Word Comment) and "Accept redline" (Track Changes replace). Multi-paragraph clauses handled via head + tail snippet search and `range.expandTo()`. New Chat tab uses the same `session_id` so `chat_history` carries the prior `contract_review` forward into Q&A turns. `legal_research` patched to read `uploaded_docs` and respond conversationally (no structured headers) when a doc is attached. Tabs stay mounted with `display:none` toggling so state persists across switches. |
+| **Word add-in: chat-driven document edits (Iteration 3)** | `feat/word-addin-chat-edits` | Chat is now a drafting partner. When the lawyer asks for a change, `legal_research` emits fenced ```json``` edit proposals (`replace`/`insert`/`delete`) alongside its prose; the pane renders a preview card per proposal with an editable "after" textarea and **Apply with Track Changes**. `risk_assessor` no longer flags "no chunks" as high-risk when a doc is attached (that spurious interrupt was dropping chat output). Matching hardened: shorter word-prefix + clean-prefix search candidates, match-boundary ranges (fragment rewrites replace exactly the fragment), `insertParagraph`-based inserts. Light styling polish (Office `#0078D4`, Segoe UI, focus rings). |
 
 ---
 
@@ -506,7 +507,9 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 | Feature | Priority | Notes |
 |---|---|---|
 | Word add-in: playbook-grounded findings (Phase 2) | High | Make `contract_review` emit structured per-finding JSON including the retrieved RAG chunks; pane shows "your firm's standard says X" next to "this contract says Y" with source citations. The real Spellbook differentiator. |
-| Word add-in: generate-clause tab (Phase 6) | Medium | Third tab — prompt for a clause description → `drafting` skill → insert at cursor with Track Changes on. |
+| Word add-in: chat history persistence across pane reopen | Medium | Chat is per-pane-lifetime today; persist messages + `session_id` to `localStorage` keyed by doc so reopening the pane restores the conversation. |
+| Word add-in: bulk actions ("Apply all RED") | Medium | Findings tab — one click to track-change every RED finding, plus filter/sort pills and a stale-findings banner after the doc is edited. |
+| Word add-in: generate-clause tab (Phase 6) | Low | Mostly subsumed by Iteration 3's chat-driven inserts; a dedicated tab is now optional polish rather than the primary path. |
 | Word add-in: AppSource publishing | Low | Sideload-only for now; publish to AppSource when ready for outside attorneys. Needs proper icons + manifest signing. |
 | WebSocket / SSE streaming | Medium | LLM responses arrive all at once; would improve perceived latency on long generations |
 | Admin API endpoints (sessions, skills, reviews, audit) | Medium | Deferred until a UI consumes them |
