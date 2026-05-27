@@ -45,6 +45,14 @@ function searchCandidates(needle: string): string[] {
 
   if (normalized.length <= 200 && !/\n/.test(needle)) add(normalized);
 
+  // First non-empty line of the original needle. Paragraph breaks (\n) survive
+  // in the needle, so the first line is guaranteed to sit inside a single
+  // paragraph — body.search can't cross breaks, so for multi-paragraph anchors
+  // (e.g. a "Heading\nbody…" insert anchor) this matches the opening paragraph
+  // where the longer head snippets straddle the break and always miss.
+  const firstLine = needle.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+  if (firstLine) add(normalizeForSearch(firstLine));
+
   const sentenceMatch = normalized.match(/^.+?[.!?](?:\s|$)/);
   if (sentenceMatch) add(sentenceMatch[0]);
 
