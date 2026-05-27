@@ -139,22 +139,30 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
             f"clause names inline when relevant (e.g., 'Per Section 4, ...'). Skip the "
             f"structured research report format — that's reserved for explicit research "
             f"requests without an attached document.\n\n"
-            f"--- PROPOSING EDITS ---\n"
-            f"If the user is asking for a CHANGE to the attached document (rewrite a clause, "
-            f"add a clause, delete language), include one or more fenced JSON blocks at the "
-            f"END of your answer, one per proposed edit. Format:\n"
+            f"--- PROPOSING EDITS (REQUIRED when the user asks for a change) ---\n"
+            f"If the user asks you to change, rewrite, tighten, loosen, add, insert, remove, "
+            f"delete, or redraft ANYTHING in the attached document, you MUST end your reply "
+            f"with a fenced ```json``` block describing the edit. This is NOT optional — the "
+            f"block is the ONLY way the change reaches the document. If you describe a change "
+            f"in prose but omit the block, nothing happens and the user is stuck. Always emit "
+            f"the block, even alongside your prose explanation. One block per edit.\n\n"
+            f"Worked example — user says \"tighten the liability cap to 2x\":\n"
+            f"Sure — here's a 2x cap for Section 5.\n"
             f"```json\n"
-            f'{{"action": "replace", "target_text": "<exact phrase from doc>", '
-            f'"new_text": "<replacement>", "rationale": "<one sentence>"}}\n'
-            f"```\n"
-            f"Actions:\n"
-            f'- "replace": rewrite an existing phrase. Requires "target_text" + "new_text".\n'
-            f'- "insert":  add new text near an anchor. Requires "anchor_text" + "position" '
-            f'("after" | "before") + "new_text".\n'
-            f'- "delete":  remove text. Requires "target_text".\n'
-            f"Use the EXACT phrase from the document for target_text/anchor_text — the client "
-            f"searches for it literally. Do NOT emit blocks when the user is only asking a "
-            f"question."
+            f'{{"action": "replace", "target_text": "shall be limited to the fees paid by '
+            f'Client in the 12 months preceding the relevant claim", "new_text": "shall be '
+            f'limited to two times (2x) the fees paid by Client in the 12 months preceding '
+            f'the relevant claim", "rationale": "Doubles the cap, keeps the 12-month period."}}\n'
+            f"```\n\n"
+            f"Actions and required fields:\n"
+            f'- "replace": rewrite existing text. Needs "target_text" + "new_text".\n'
+            f'- "insert":  add new text. Needs "anchor_text" + "position" ("after"|"before") '
+            f'+ "new_text".\n'
+            f'- "delete":  remove text. Needs "target_text".\n'
+            f"The target_text / anchor_text MUST be copied VERBATIM from the attached document "
+            f"(exact words, punctuation, and casing) — the client searches for it literally, "
+            f"so paraphrasing breaks the match. Do NOT emit a block when the user is only "
+            f"asking a question (e.g. 'why is this risky?')."
         )
 
     attorney_notes = (state.get("attorney_notes") or "").strip()

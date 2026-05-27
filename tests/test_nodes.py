@@ -305,6 +305,25 @@ def test_risk_assessor_no_chunks_means_high_risk():
     assert result["risk_level"] == "high"
 
 
+def test_risk_assessor_no_chunks_low_risk_when_doc_attached():
+    """With an attached document, no RAG chunks is expected — not a risk.
+
+    The Word add-in chat answers from the open contract (uploaded_docs), so it
+    legitimately retrieves no RAG chunks. Flagging that as high risk would
+    spuriously trip the human-review interrupt and drop the chat response.
+    """
+    from graph.nodes.risk_assessor import risk_assessor
+    state = _make_state(
+        task_type="research",
+        llm_response="Per Section 5, the cap is 12 months of fees.",
+        retrieved_chunks=[],
+        uploaded_docs=[{"text": "5. LIMITATION OF LIABILITY ..."}],
+    )
+    result = risk_assessor(state)
+    assert result["risk_level"] == "low"
+    assert result["risk_flags"] == []
+
+
 # --- output_formatter ---
 
 def test_output_formatter_builds_report():

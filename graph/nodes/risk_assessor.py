@@ -9,10 +9,20 @@ from graph.state import LegalAgentState
 logger = logging.getLogger(__name__)
 
 
-def _check_citations(llm_response: str, chunks: list[dict]) -> list[dict]:
-    """Check if the response references retrieved documents."""
+def _check_citations(
+    llm_response: str, chunks: list[dict], has_uploaded_doc: bool = False
+) -> list[dict]:
+    """Check if the response references retrieved documents.
+
+    When the user attached a document (e.g. the Word add-in chat answering
+    about the open contract), the attached doc is the citation source, so
+    having no RAG chunks is expected — not a risk. Otherwise, a response with
+    no retrievable sources is flagged for attorney review.
+    """
     flags = []
     if not chunks:
+        if has_uploaded_doc:
+            return flags
         flags.append({"reason": "No citation possible — no chunks retrieved", "severity": "high"})
         return flags
 
@@ -38,8 +48,9 @@ def risk_assessor(state: LegalAgentState) -> LegalAgentState:
     """Evaluate risk based on citations, task type, and content."""
     llm_response = state.get("llm_response", "")
     chunks = state.get("retrieved_chunks", [])
+    has_uploaded_doc = bool(state.get("uploaded_docs"))
 
-    risk_flags = _check_citations(llm_response, chunks)
+    risk_flags = _check_citations(llm_response, chunks, has_uploaded_doc)
     state["risk_flags"] = risk_flags
 
     if any(f["severity"] == "high" for f in risk_flags):
