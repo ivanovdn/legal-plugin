@@ -3,3 +3,8 @@ dist/
 .vite/
 *.log
 .DS_Store
+
+# Stray tsc emit — Vite transpiles .ts/.tsx itself; compiled .js next to
+# source shadows it (Vite resolves .js before .tsx). Never commit these.
+src/**/*.js
+*.tsbuildinfo
