@@ -53,3 +53,4 @@ class LegalAgentState(TypedDict):
     report_notes_unincorporated: str       # NEW — attorney notes the loop couldn't incorporate (set on cap)
     previous_draft: str                    # NEW — preserved across loop-back so skill revises rather than regenerates
     proposed_edits: list[dict]             # NEW — structured edit proposals parsed from chat skill output
+    contract_type_detected: str            # NEW — nda | msa | sow | baa (set by contract_review when uploaded_text present)
