@@ -446,3 +446,142 @@ def test_extract_proposed_edits_no_blocks_returns_empty():
 
     assert _extract_proposed_edits("Why is the IP clause risky?") == []
     assert _extract_proposed_edits("") == []
+
+
+# --- contract_review: per-type playbook bundle + type detection ---
+
+
+_NDA_SAMPLE = (
+    "MUTUAL NON-DISCLOSURE AGREEMENT\n\n"
+    "This Mutual Non-Disclosure Agreement is entered into between ACME and Trinetix.\n"
+    "Each party may disclose confidential information.\n"
+)
+_MSA_SAMPLE = (
+    "MASTER SERVICES AGREEMENT\n\n"
+    "This Master Services Agreement governs the engagement between Client and Trinetix.\n"
+    "All Services shall be governed by an SOW issued under this MSA.\n"
+)
+_SOW_SAMPLE = (
+    "STATEMENT OF WORK\n\n"
+    "This Statement of Work is issued under the Master Services Agreement dated...\n"
+    "Project scope: design a new web portal.\n"
+)
+_BAA_SAMPLE = (
+    "BUSINESS ASSOCIATE AGREEMENT\n\n"
+    "This BAA is entered into pursuant to HIPAA between Covered Entity and Trinetix.\n"
+    "The parties handle Protected Health Information (PHI).\n"
+)
+
+
+def test_detect_contract_type_nda():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_NDA_SAMPLE)
+    assert t == "nda" and not ambig
+
+
+def test_detect_contract_type_msa():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_MSA_SAMPLE)
+    assert t == "msa" and not ambig
+
+
+def test_detect_contract_type_sow():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_SOW_SAMPLE)
+    assert t == "sow" and not ambig
+
+
+def test_detect_contract_type_baa():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_BAA_SAMPLE)
+    assert t == "baa" and not ambig
+
+
+def test_detect_contract_type_defaults_to_nda_on_unknown():
+    """No-pattern-matches doc returns (nda, ambiguous=True)."""
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type("Random business text without any contract keywords.")
+    assert t == "nda" and ambig
+
+
+def test_contract_review_sets_contract_type_detected():
+    """The skill stores the detected type on state for downstream surfacing."""
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _MSA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+    assert result["contract_type_detected"] == "msa"
+
+
+def test_contract_review_loads_per_type_bundle_in_system_prompt():
+    """The system prompt is the assembled playbook bundle for the detected type.
+
+    Verifies a representative slice of each bundle section is present and the
+    per-type SKILL.md matches the detected type.
+    """
+    state = _make_state(
+        request="Review this NDA.",
+        uploaded_docs=[{"text": _NDA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+    sys_msg = result["messages"][0]["content"]
+
+    # Ceiling wrap
+    assert sys_msg.startswith("STRICT INSTRUCTION")
+    assert "PLAYBOOK END" in sys_msg
+    # Global sections
+    assert "# Core Contracting Principles" in sys_msg
+    assert "# Risk Rating and Escalation" in sys_msg
+    assert "# Approval Matrix" in sys_msg
+    assert "# Required Final Output Format" in sys_msg
+    assert "# AI Review Procedure" in sys_msg
+    # Per-type pieces (NDA)
+    assert "NDA-001" in sys_msg  # from the NDA clause matrix
+    assert "# NDA Playbook Matrix" in sys_msg
+    # No-signature gate language is present
+    assert "DO NOT SEND FOR SIGNATURE" in sys_msg
+
+
+def test_contract_review_msa_loads_msa_matrix():
+    """An MSA-shaped doc loads MSA-001, not NDA-001."""
+    state = _make_state(
+        request="Review this MSA.",
+        uploaded_docs=[{"text": _MSA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+    sys_msg = result["messages"][0]["content"]
+    assert "# MSA Playbook Matrix" in sys_msg
+    assert "MSA-001" in sys_msg
+    assert "# NDA Playbook Matrix" not in sys_msg
+
+
+def test_load_bundle_raises_on_unknown_type(tmp_path):
+    from skills.base import load_bundle
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown contract_type"):
+        load_bundle(tmp_path, "lease")
+
+
+def test_load_bundle_raises_on_missing_bundle_file(tmp_path):
+    """If the playbook directory is empty, load_bundle reports which file is missing."""
+    from skills.base import load_bundle
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="Bundle file missing"):
+        load_bundle(tmp_path, "nda")
+
+
+def test_load_bundle_is_deterministic():
+    """Repeated calls with the same inputs return byte-identical output (caching/audit)."""
+    from pathlib import Path
+    from skills.base import load_bundle
+
+    playbook_root = Path(__file__).resolve().parent.parent / "skills" / "contract_review" / "playbook"
+    first = load_bundle(playbook_root, "nda")
+    second = load_bundle(playbook_root, "nda")
+    assert first == second
