@@ -291,6 +291,145 @@ button.secondary:disabled {
   color: var(--green-fg);
 }
 
+.badge.missing_context {
+  background: #ebe1f5;
+  color: #5a2c8a;
+}
+
+/* ---------- No-signature gate banner ---------- */
+
+.gate-banner {
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: 1px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gate-banner.ready {
+  background: var(--green-bg);
+  border-color: var(--green-fg);
+  color: var(--green-fg);
+}
+
+.gate-banner.blocked {
+  background: var(--red-bg);
+  border-color: var(--red-fg);
+  color: var(--red-fg);
+}
+
+.gate-status {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gate-line {
+  font-size: 12px;
+}
+
+/* ---------- Issue ID + clause meta on cards ---------- */
+
+.issue-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #f1f3f5;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- Blockers list ---------- */
+
+.blocker-list,
+.question-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blocker-list > li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.blocker-list > li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.blocker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.clause-name {
+  font-weight: 600;
+}
+
+.blocker-why {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.blocker-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------- Collapsible (Business Questions) ---------- */
+
+.collapsible-header {
+  background: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.caret {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.question-list > li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.question-list > li:first-child {
+  border-top: none;
+}
+
+.question-text {
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.question-why,
+.question-owner {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* ---------- Chat ---------- */
 
 .chat {

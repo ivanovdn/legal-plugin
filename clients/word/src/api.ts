@@ -15,6 +15,7 @@ export interface QueryResponse {
       sources?: unknown[];
       notes_unincorporated?: string;
       proposed_edits?: EditProposal[];
+      contract_type_detected?: string;
     };
     interrupt_payload?: {
       task_type?: string;

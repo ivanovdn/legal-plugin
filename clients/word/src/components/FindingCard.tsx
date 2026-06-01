@@ -10,10 +10,11 @@ type ActionState =
   | { kind: "error"; message: string };
 
 function buildCommentBody(f: Finding): string {
-  const lines = [`[${f.risk}] ${f.clause}`];
+  const lines = [`[${f.risk.replace("_", " ")}] ${f.clause}`];
   if (f.issue) lines.push(`Issue: ${f.issue}`);
+  if (f.requiredAction) lines.push(`Required action: ${f.requiredAction}`);
   if (f.redline) lines.push(`Suggested redline: ${f.redline}`);
-  if (f.rationale) lines.push(`Rationale: ${f.rationale}`);
+  if (f.owner) lines.push(`Owner: ${f.owner}`);
   return lines.join("\n");
 }
 
@@ -45,6 +46,7 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     <div className="card">
       <div className="card-header">
         <RiskBadge risk={finding.risk} />
+        {finding.issueId && <span className="issue-id">{finding.issueId}</span>}
         <div className="card-title">{finding.clause}</div>
       </div>
       {finding.issue && (
@@ -53,10 +55,16 @@ export default function FindingCard({ finding }: { finding: Finding }) {
           <div>{finding.issue}</div>
         </>
       )}
-      {finding.currentText && (
+      {finding.currentText && finding.currentText !== finding.issue && (
         <>
           <div className="card-section-label">Current text</div>
           <div className="card-quote">{finding.currentText}</div>
+        </>
+      )}
+      {finding.requiredAction && (
+        <>
+          <div className="card-section-label">Required action</div>
+          <div>{finding.requiredAction}</div>
         </>
       )}
       {finding.redline && (
@@ -65,10 +73,15 @@ export default function FindingCard({ finding }: { finding: Finding }) {
           <div className="card-quote card-redline">{finding.redline}</div>
         </>
       )}
-      {finding.rationale && (
+      {finding.owner && (
+        <div className="card-meta">
+          <strong>Owner:</strong> {finding.owner}
+        </div>
+      )}
+      {finding.externalComment && (
         <>
-          <div className="card-section-label">Rationale</div>
-          <div className="card-rationale">{finding.rationale}</div>
+          <div className="card-section-label">External comment</div>
+          <div className="card-rationale">{finding.externalComment}</div>
         </>
       )}
 
