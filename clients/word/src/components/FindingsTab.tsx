@@ -78,7 +78,11 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
       )}
       {status.kind === "error" && <div className="status error">Error: {status.message}</div>}
 
-      {result && <Results result={result} />}
+      {result && (
+        <div className="findings-scroll">
+          <Results result={result} />
+        </div>
+      )}
     </div>
   );
 }

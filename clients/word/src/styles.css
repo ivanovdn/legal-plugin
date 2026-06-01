@@ -186,11 +186,23 @@ button.secondary:disabled {
   background: white;
 }
 
+/* Whole results region scrolls as one (gate banner + summary + blockers +
+   findings + questions). Was previously only `.findings`, but new sections
+   below it would clip. */
+.findings-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px; /* room for the scrollbar so it doesn't overlap content */
+}
+
 .findings {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow-y: auto;
 }
 
 .card {
