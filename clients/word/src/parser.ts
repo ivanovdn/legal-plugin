@@ -274,34 +274,97 @@ function parseFindings(body: string): Finding[] {
     .filter((f): f is Finding => f !== null);
 }
 
+function clauseSegments(clause: string): string[] {
+  return clause
+    .toLowerCase()
+    .split(/\s*[\/|]\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Score how well a Suggested-Redlines row matches a given finding. Higher = more
+ * specific. Pinning is greedy by score so we never let a generic redline (e.g.
+ * one matching just "Preamble") attach to the first finding that happens to
+ * contain that substring while a more-specific row (e.g. "Preamble / Parties")
+ * exists in the same table.
+ */
+function scoreMatch(
+  rowIssueId: string,
+  rowClause: string,
+  finding: Finding,
+): number {
+  if (rowIssueId && finding.issueId && rowIssueId === finding.issueId) return 100;
+  if (!rowClause) return 0;
+  const r = rowClause.toLowerCase().trim();
+  const f = finding.clause.toLowerCase().trim();
+  if (!f) return 0;
+  if (r === f) return 80;
+
+  const rSegs = clauseSegments(rowClause);
+  const fSegs = clauseSegments(finding.clause);
+  if (rSegs.length === 0 || fSegs.length === 0) return 0;
+
+  // Redline-clause segments are ALL present in the finding's clause path.
+  // E.g. row "Preamble / Parties" matches finding "Preamble / Parties" (same
+  // length) > finding with extra segments. Score scales with redline specificity.
+  if (rSegs.every((s) => fSegs.includes(s))) return 40 + rSegs.length * 2;
+
+  // The finding's clause segments are ALL present in the redline's clause.
+  // Inverse direction — slightly weaker because the finding is the broader of
+  // the two, but still a real signal.
+  if (fSegs.every((s) => rSegs.includes(s))) return 20 + fSegs.length * 2;
+
+  // Last-resort substring overlap — kept so legacy "Section 5 — Term" style
+  // free-form clause names still match across small wording drift.
+  if (f.includes(r) || r.includes(f)) return 10;
+
+  return 0;
+}
+
 function mergeRedlines(findings: Finding[], body: string): void {
   const rows = parseTable(body);
-  for (const row of rows) {
+  if (rows.length === 0) return;
+
+  type Pair = { rowIdx: number; findingIdx: number; score: number };
+  const pairs: Pair[] = [];
+  const proposedByRow: string[] = [];
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri];
     const proposed = pick(row, "proposed wording or instruction", "proposed wording", "instruction");
+    proposedByRow[ri] = proposed;
     if (!proposed) continue;
-    const clause = pick(row, "clause / section", "clause");
-    const issueId = pick(row, "issue id");
-    const externalComment = pick(row, "external comment");
-    const action = pick(row, "action");
-    // Match by Issue ID first (exact), then by clause substring (case-insensitive).
-    const match =
-      findings.find((f) => issueId && f.issueId && f.issueId === issueId) ??
-      findings.find(
-        (f) =>
-          clause &&
-          (f.clause.toLowerCase().includes(clause.toLowerCase()) ||
-            clause.toLowerCase().includes(f.clause.toLowerCase())),
-      );
-    if (match) {
-      // Build a single redline string: the proposed wording is the primary
-      // payload for Accept-redline; quotes from inside it become the new text.
-      // Prefer the quoted portion when the LLM phrases the cell as
-      // 'Replace "X" with "Y"' or "Insert: 'Y'".
-      const quoted = extractQuoted(proposed);
-      match.redline = quoted || proposed;
-      if (action && !match.requiredAction) match.requiredAction = action;
-      if (externalComment) match.externalComment = externalComment;
+    const rowIssueId = pick(row, "issue id");
+    const rowClause = pick(row, "clause / section", "clause");
+    for (let fi = 0; fi < findings.length; fi++) {
+      const score = scoreMatch(rowIssueId, rowClause, findings[fi]);
+      if (score > 0) pairs.push({ rowIdx: ri, findingIdx: fi, score });
     }
+  }
+
+  // Greedy: highest-score pair wins, then drop both partners from the pool.
+  // This guarantees each redline lands on at most one finding and each finding
+  // collects at most one redline. Ties resolve in row-order (stable).
+  pairs.sort((a, b) => b.score - a.score);
+  const usedRows = new Set<number>();
+  const usedFindings = new Set<number>();
+
+  for (const p of pairs) {
+    if (usedRows.has(p.rowIdx) || usedFindings.has(p.findingIdx)) continue;
+    const row = rows[p.rowIdx];
+    const finding = findings[p.findingIdx];
+    const proposed = proposedByRow[p.rowIdx];
+    // Prefer the quoted portion when the LLM phrases the cell as
+    // 'Replace "X" with "Y"' or "Insert: 'Y'".
+    const quoted = extractQuoted(proposed);
+    finding.redline = quoted || proposed;
+    const action = pick(row, "action");
+    const externalComment = pick(row, "external comment");
+    if (action && !finding.requiredAction) finding.requiredAction = action;
+    if (externalComment) finding.externalComment = externalComment;
+    usedRows.add(p.rowIdx);
+    usedFindings.add(p.findingIdx);
   }
 }
 

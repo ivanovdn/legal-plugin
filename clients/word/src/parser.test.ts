@@ -152,3 +152,40 @@ console.log("\n=== Sample 4: empty input ===");
 pass(r4.findings.length === 0, "no findings on unrelated prose");
 pass(r4.gate.ready === false, "gate defaults to not-ready");
 pass(r4.blockers.length === 0, "no blockers");
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sample 5 — cross-card redline contamination (regression test)
+// Two findings under the same "Preamble" parent. The Suggested Redlines table
+// names each child specifically. The old substring-only matcher would attach
+// the FIRST row to the FIRST finding regardless of specificity; the scored
+// matcher must pair them correctly.
+// ──────────────────────────────────────────────────────────────────────────
+
+const sample5 = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| F1 | Preamble / Effective Date | Missing Context | Effective date is a placeholder. | Fill date. | Sales |
+| F2 | Preamble / Parties | Missing Context | Counterparty name and address are placeholders. | Fill counterparty details. | Sales |
+
+# Suggested Redlines / Fallbacks
+| Clause / section | Action | Proposed wording or instruction | External comment |
+| --- | --- | --- | --- |
+| Preamble / Parties | Insert | Insert [Legal Name], [Address] | — |
+| Preamble / Effective Date | Insert | Insert [Month] [Date], [Year] | — |
+`;
+
+const r5 = parseContractReview(sample5);
+const effDateF = r5.findings.find((f) => f.issueId === "F1")!;
+const partiesF = r5.findings.find((f) => f.issueId === "F2")!;
+console.log("\n=== Sample 5: cross-card contamination regression ===");
+console.log("Effective Date redline:", effDateF.redline);
+console.log("Parties redline:        ", partiesF.redline);
+
+pass(
+  effDateF.redline.includes("Month") && !effDateF.redline.includes("Legal Name"),
+  "Effective Date gets its OWN redline, not the Parties one",
+);
+pass(
+  partiesF.redline.includes("Legal Name") && !partiesF.redline.includes("Month"),
+  "Parties gets its OWN redline, not the Effective Date one",
+);
