@@ -22,10 +22,12 @@ export default function FindingCard({ finding }: { finding: Finding }) {
   const [comment, setComment] = useState<ActionState>({ kind: "idle" });
   const [redline, setRedline] = useState<ActionState>({ kind: "idle" });
 
+  const anchors = finding.anchors.length > 0 ? finding.anchors : [finding.currentText];
+
   const onShow = async () => {
     if (comment.kind === "running") return;
     setComment({ kind: "running" });
-    const res = await showInDocument(finding.currentText, buildCommentBody(finding));
+    const res = await showInDocument(anchors, buildCommentBody(finding));
     if (res.ok) setComment({ kind: "done", message: "Commented ✓" });
     else setComment({ kind: "error", message: res.error });
   };
@@ -37,7 +39,7 @@ export default function FindingCard({ finding }: { finding: Finding }) {
       return;
     }
     setRedline({ kind: "running" });
-    const res = await acceptRedline(finding.currentText, finding.redline);
+    const res = await acceptRedline(anchors, finding.redline);
     if (res.ok) setRedline({ kind: "done", message: "Applied ✓ — see Track Changes" });
     else setRedline({ kind: "error", message: res.error });
   };

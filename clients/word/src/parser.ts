@@ -25,6 +25,15 @@ export interface Finding {
   risk: Risk;
   issue: string;
   currentText: string;
+  /**
+   * Anchor candidates the Word add-in tries in order for Show-in-document /
+   * Accept-redline. The team's table format has no dedicated current-text
+   * column, and Issue cells frequently describe the problem meta-textually
+   * (e.g. "Effective date is a placeholder.") rather than quoting current
+   * wording — so a single anchor isn't enough. We populate the list with the
+   * strongest signals first (quoted text → clause-name tail → ...).
+   */
+  anchors: string[];
   redline: string;
   rationale: string;        // legacy field; mapped from "Issue" if no separate field exists
   requiredAction: string;
@@ -161,6 +170,43 @@ function extractQuoted(text: string): string {
   return m ? m[1].trim() : "";
 }
 
+/**
+ * Build the ordered list of anchor candidates for a finding. The first item is
+ * what `currentText` becomes (used as the card's quote display); all of them
+ * are passed to the Word add-in's search helpers, which try each until one
+ * matches the actual document.
+ */
+function buildAnchors(issue: string, clause: string): string[] {
+  const out: string[] = [];
+  const push = (s: string) => {
+    const t = s.trim();
+    if (t && t.length >= 3 && !out.includes(t)) out.push(t);
+  };
+
+  // 1. Quoted substring of the Issue cell — exact contract wording when the
+  //    model emits "Current wording / issue: '...'" style content.
+  const quoted = extractQuoted(issue);
+  if (quoted) push(quoted);
+
+  // 2. The "Clause / section" path commonly looks like "Preamble / Effective Date".
+  //    Each `/`-separated segment is a likely literal in the document. The
+  //    LAST segment (the specific name) is usually the strongest heading-style
+  //    anchor; the FIRST segment is a fallback.
+  const segments = clause.split(/\s*[\/|]\s*/).filter(Boolean);
+  for (let i = segments.length - 1; i >= 0; i--) {
+    push(segments[i]);
+  }
+
+  // 3. The full clause path — handy if the document literally repeats it.
+  push(clause);
+
+  // 4. Issue verbatim — last resort, often meta-textual but sometimes carries
+  //    a literal substring that happens to appear in the doc.
+  push(issue);
+
+  return out;
+}
+
 /** Find a cell value across a list of acceptable header aliases. */
 function pick(row: Record<string, string>, ...aliases: string[]): string {
   for (const a of aliases) {
@@ -210,13 +256,14 @@ function parseFindings(body: string): Finding[] {
       if (!risk) return null;
       const issue = pick(row, "issue");
       const clause = pick(row, "clause / section", "clause", "section");
-      const currentText = extractQuoted(issue) || issue || clause;
+      const anchors = buildAnchors(issue, clause);
       return {
         issueId: pick(row, "issue id"),
         clause,
         risk,
         issue,
-        currentText,
+        currentText: anchors[0] ?? "",
+        anchors,
         redline: "", // filled in by mergeRedlines
         rationale: issue, // legacy field; team format folds rationale into Issue
         requiredAction: pick(row, "required action"),

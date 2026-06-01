@@ -114,19 +114,34 @@ pass(r2.findings.length === 1 && r2.findings[0].risk === "GREEN", "single green 
 pass(r2.counts.red === 0 && r2.counts.green === 1, "counts");
 
 // ──────────────────────────────────────────────────────────────────────────
-// Sample 3 — Missing Context rating
+// Sample 3 — Missing Context rating + anchor candidates
 // ──────────────────────────────────────────────────────────────────────────
 
 const sample3 = `# Key Findings
 | Issue ID | Clause / section | Rating | Issue | Required action | Owner |
 | --- | --- | --- | --- | --- | --- |
 | MSA-X | Section 12 — Indemnity | Missing Context | Cap size not specified in the deal sheet. | Confirm deal size with Sales. | Finance |
+| NDA-Y | Preamble / Effective Date | Missing Context | Effective date is a placeholder. | Fill date. | Sales |
 `;
 
 const r3 = parseContractReview(sample3);
-console.log("\n=== Sample 3: Missing Context rating ===");
-pass(r3.findings[0].risk === "MISSING_CONTEXT", "Missing Context risk parsed");
-pass(r3.counts.missingContext === 1, "missingContext count");
+console.log("\n=== Sample 3: Missing Context rating + anchors ===");
+const indem = r3.findings.find((f) => f.issueId === "MSA-X")!;
+const effDate = r3.findings.find((f) => f.issueId === "NDA-Y")!;
+console.log("MSA-X anchors:", indem.anchors);
+console.log("NDA-Y anchors:", effDate.anchors);
+
+pass(indem.risk === "MISSING_CONTEXT", "Missing Context risk parsed");
+pass(r3.counts.missingContext === 2, "missingContext count");
+
+// Anchor strategy: for meta-textual Issue cells, the clause-name segments
+// must lead so the Word add-in can locate the section in the doc.
+pass(effDate.anchors.includes("Effective Date"), "anchors include last clause segment");
+pass(effDate.anchors.includes("Preamble"), "anchors include first clause segment");
+pass(
+  effDate.anchors.indexOf("Effective Date") < effDate.anchors.indexOf("Effective date is a placeholder."),
+  "clause-segment anchor ranks BEFORE meta-textual issue verbatim",
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sample 4 — graceful on empty / unrelated input

@@ -193,16 +193,46 @@ async function findClauseRange(
 }
 
 /**
+ * Try each anchor in order; return the first range that matches.
+ *
+ * Used for findings where the parser can't pin down one definitive quote — for
+ * example a Missing Context item whose Issue cell describes the gap ("Effective
+ * date is a placeholder.") rather than quoting current wording. The parser
+ * stacks several candidates (quoted text → clause-name segments → full clause →
+ * issue text), strongest first; we walk that list until something lands.
+ */
+async function findClauseRangeFromAnchors(
+  context: Word.RequestContext,
+  anchors: string[],
+): Promise<Word.Range | null> {
+  for (const candidate of anchors) {
+    if (!candidate.trim()) continue;
+    const range = await findClauseRange(context, candidate);
+    if (range) return range;
+  }
+  return null;
+}
+
+/** Normalize string|string[] into the ordered candidate list the helpers use. */
+function toAnchors(input: string | string[]): string[] {
+  return Array.isArray(input) ? input : [input];
+}
+
+/**
  * Scroll Word to the clause matching `currentText`, select its full range
  * (spanning all paragraphs the original quote covered), and attach a Word
  * Comment containing the supplied text.
  */
-export async function showInDocument(currentText: string, commentBody: string): Promise<Result<string>> {
+export async function showInDocument(
+  target: string | string[],
+  commentBody: string,
+): Promise<Result<string>> {
   if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
-  if (!currentText.trim()) return fail("Empty clause text — nothing to locate.");
+  const anchors = toAnchors(target).filter((s) => s.trim());
+  if (anchors.length === 0) return fail("Empty clause text — nothing to locate.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRange(context, currentText);
+      const range = await findClauseRangeFromAnchors(context, anchors);
       if (!range) return fail("Couldn't locate this clause in the document.");
       range.select();
       range.insertComment(commentBody);
@@ -221,13 +251,17 @@ export async function showInDocument(currentText: string, commentBody: string): 
  * paragraph → end of tail match's paragraph). Saves and restores the
  * document's prior change-tracking mode.
  */
-export async function acceptRedline(currentText: string, newText: string): Promise<Result<void>> {
+export async function acceptRedline(
+  target: string | string[],
+  newText: string,
+): Promise<Result<void>> {
   if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
-  if (!currentText.trim()) return fail("Empty clause text — nothing to replace.");
+  const anchors = toAnchors(target).filter((s) => s.trim());
+  if (anchors.length === 0) return fail("Empty clause text — nothing to replace.");
   if (!newText.trim()) return fail("No redline provided.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRange(context, currentText);
+      const range = await findClauseRangeFromAnchors(context, anchors);
       if (!range) return fail("Couldn't locate this clause in the document.");
 
       const doc = context.document;
