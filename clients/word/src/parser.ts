@@ -326,45 +326,39 @@ function mergeRedlines(findings: Finding[], body: string): void {
   const rows = parseTable(body);
   if (rows.length === 0) return;
 
-  type Pair = { rowIdx: number; findingIdx: number; score: number };
-  const pairs: Pair[] = [];
-  const proposedByRow: string[] = [];
+  // Each finding independently picks its best-scoring redline row. Same row
+  // can be claimed by multiple findings (e.g. the LLM emits one parent-level
+  // row "Preamble" covering both "Preamble / Effective Date" and "Preamble /
+  // Parties" — both findings then show that redline rather than one card
+  // having it and the other being empty). Exact-match rows (score 80+) still
+  // outscore segment-subset rows (40+), so when the LLM IS specific each
+  // finding gets its own dedicated wording.
+  for (const finding of findings) {
+    let bestScore = 0;
+    let bestRow: Record<string, string> | null = null;
 
-  for (let ri = 0; ri < rows.length; ri++) {
-    const row = rows[ri];
-    const proposed = pick(row, "proposed wording or instruction", "proposed wording", "instruction");
-    proposedByRow[ri] = proposed;
-    if (!proposed) continue;
-    const rowIssueId = pick(row, "issue id");
-    const rowClause = pick(row, "clause / section", "clause");
-    for (let fi = 0; fi < findings.length; fi++) {
-      const score = scoreMatch(rowIssueId, rowClause, findings[fi]);
-      if (score > 0) pairs.push({ rowIdx: ri, findingIdx: fi, score });
+    for (const row of rows) {
+      const proposed = pick(row, "proposed wording or instruction", "proposed wording", "instruction");
+      if (!proposed) continue;
+      const rowIssueId = pick(row, "issue id");
+      const rowClause = pick(row, "clause / section", "clause");
+      const score = scoreMatch(rowIssueId, rowClause, finding);
+      if (score > bestScore) {
+        bestScore = score;
+        bestRow = row;
+      }
     }
-  }
 
-  // Greedy: highest-score pair wins, then drop both partners from the pool.
-  // This guarantees each redline lands on at most one finding and each finding
-  // collects at most one redline. Ties resolve in row-order (stable).
-  pairs.sort((a, b) => b.score - a.score);
-  const usedRows = new Set<number>();
-  const usedFindings = new Set<number>();
-
-  for (const p of pairs) {
-    if (usedRows.has(p.rowIdx) || usedFindings.has(p.findingIdx)) continue;
-    const row = rows[p.rowIdx];
-    const finding = findings[p.findingIdx];
-    const proposed = proposedByRow[p.rowIdx];
+    if (!bestRow) continue;
+    const proposed = pick(bestRow, "proposed wording or instruction", "proposed wording", "instruction");
     // Prefer the quoted portion when the LLM phrases the cell as
     // 'Replace "X" with "Y"' or "Insert: 'Y'".
     const quoted = extractQuoted(proposed);
     finding.redline = quoted || proposed;
-    const action = pick(row, "action");
-    const externalComment = pick(row, "external comment");
+    const action = pick(bestRow, "action");
+    const externalComment = pick(bestRow, "external comment");
     if (action && !finding.requiredAction) finding.requiredAction = action;
     if (externalComment) finding.externalComment = externalComment;
-    usedRows.add(p.rowIdx);
-    usedFindings.add(p.findingIdx);
   }
 }
 

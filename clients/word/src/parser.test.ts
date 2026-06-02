@@ -189,3 +189,38 @@ pass(
   partiesF.redline.includes("Legal Name") && !partiesF.redline.includes("Month"),
   "Parties gets its OWN redline, not the Effective Date one",
 );
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sample 6 — LLM emits a parent-level redline covering multiple children.
+// Real failure mode observed on the local LLM: instead of two rows
+// ("Preamble / Effective Date" and "Preamble / Parties"), it emits ONE row
+// with clause "Preamble" whose wording covers both blanks. Both child
+// findings should still get the redline rendered on their card.
+// ──────────────────────────────────────────────────────────────────────────
+
+const sample6 = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Preamble / Effective Date | Missing Context | Effective date is a placeholder. | Fill date. | Sales |
+| 2 | Preamble / Parties | Missing Context | Counterparty name and address are placeholders. | Fill counterparty details. | Sales |
+| 3 | Execution | Missing Context | Signatory name/title placeholders. | Fill signatory details. | Sales |
+
+# Suggested Redlines / Fallbacks
+| Clause / section | Action | Proposed wording or instruction | External comment |
+| --- | --- | --- | --- |
+| Preamble | Fill placeholders | Insert [Legal Name], [Address], [Month] [Date], [Year]. | N/A |
+| Execution | Fill placeholders | Insert signatory name and title. | N/A |
+`;
+
+const r6 = parseContractReview(sample6);
+const f1 = r6.findings.find((f) => f.issueId === "1")!;
+const f2 = r6.findings.find((f) => f.issueId === "2")!;
+const f3 = r6.findings.find((f) => f.issueId === "3")!;
+console.log("\n=== Sample 6: parent-level redline propagation ===");
+console.log("F1 redline:", f1.redline);
+console.log("F2 redline:", f2.redline);
+console.log("F3 redline:", f3.redline);
+pass(!!f1.redline, "F1 (Effective Date) inherits the Preamble redline");
+pass(!!f2.redline, "F2 (Parties) inherits the Preamble redline");
+pass(f3.redline.includes("signatory"), "F3 (Execution) keeps its own redline");
+pass(f1.redline === f2.redline, "F1 and F2 share the same parent-level wording");
