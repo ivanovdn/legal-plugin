@@ -448,6 +448,100 @@ def test_extract_proposed_edits_no_blocks_returns_empty():
     assert _extract_proposed_edits("") == []
 
 
+# --- legal_research doc-chat fast path (no ReAct agent when uploaded_docs is present) ---
+
+
+def test_legal_research_doc_chat_skips_react_agent(monkeypatch):
+    """When uploaded_docs is set, the ReAct agent is NOT invoked — direct LLM only.
+
+    The agent path on the local LLM is multi-minute (tool calls × prompt size);
+    with the document already attached, the answer is single-step and tool-less.
+    """
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.content = "Per Section 4, the cap is 12 months."
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = fake_response
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [MagicMock(content="UNEXPECTED")]}
+
+    with (
+        patch("skills.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research._build_agent", return_value=fake_agent),
+    ):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Why is the cap risky?",
+            uploaded_docs=[{"text": "Service Agreement.\n\nSection 4. Liability cap is 12 months of fees."}],
+            task_type="research",
+        )
+        result = legal_research(state)
+
+    fake_llm.invoke.assert_called_once()
+    fake_agent.invoke.assert_not_called()
+    assert "Section 4" in result["llm_response"]
+    assert result["retrieved_chunks"] == []
+
+
+def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
+    """A response containing a fenced JSON block populates proposed_edits."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.content = (
+        "Tightening the cap to 2x:\n"
+        '```json\n{"action": "replace", "target_text": "12 months", "new_text": "2x"}\n```'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = fake_response
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Tighten the cap to 2x.",
+            uploaded_docs=[{"text": "Liability cap is 12 months."}],
+        )
+        result = legal_research(state)
+
+    assert len(result["proposed_edits"]) == 1
+    assert result["proposed_edits"][0]["action"] == "replace"
+    assert result["proposed_edits"][0]["new_text"] == "2x"
+
+
+def test_legal_research_resets_proposed_edits_each_turn(monkeypatch):
+    """A turn that produces no edit block clears the prior turn's proposal.
+
+    Without this reset, a stale edit from the previous turn would still appear
+    on the frontend, which would re-apply it (or confuse the lawyer).
+    """
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.content = "Just answering — no edit needed."
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = fake_response
+
+    stale_edit = [{"action": "replace", "target_text": "X", "new_text": "Y"}]
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Why is X risky?",
+            uploaded_docs=[{"text": "Some doc."}],
+            proposed_edits=stale_edit,
+        )
+        result = legal_research(state)
+
+    assert result["proposed_edits"] == []
+
+
 # --- contract_review: per-type playbook bundle + type detection ---
 
 

@@ -1,5 +1,5 @@
 # skills/legal_research.py
-"""Legal research — multi-hop retrieval ReAct agent."""
+"""Legal research — direct ChatOllama for doc-attached chats, ReAct agent for KB research."""
 
 import json
 import logging
@@ -41,7 +41,49 @@ Provide a comprehensive answer with:
 - Confidence assessment (how well-supported is the answer)"""
 
 
+# System prompt for the in-Word chat path. When uploaded_docs is present, the
+# document IS the source — RAG is unnecessary and tool calls add multi-minute
+# latency on the local LLM. The directive forbids tool talk, mandates the
+# JSON edit-block format for change requests, and keeps responses brief.
+CHAT_SYSTEM_PROMPT = """You are a contract-review assistant embedded in a Microsoft Word task pane. The user is reading an open document; the document is attached below as the source of truth.
+
+RULES:
+- The attached document is the ONLY source. Do not invent facts, suggest external research, or call any tools.
+- Answer conversationally in 2–5 sentences. No section headers like "Direct Answer", "Supporting Citations", "Open Gaps", or "Confidence Assessment".
+- Cite specific section numbers or clause names inline (e.g., "Per Section 4, …").
+
+PROPOSING EDITS (REQUIRED when the user asks for a change):
+If the user asks you to change, rewrite, tighten, loosen, add, insert, remove, delete, fill, or redraft ANYTHING in the attached document, you MUST end your reply with a fenced ```json``` block describing the edit. This is NOT optional — the block is the ONLY way the change reaches the document. Always emit the block, even alongside your prose explanation. One block per edit.
+
+Worked example — user says "tighten the liability cap to 2x":
+Sure — here's a 2x cap for Section 5.
+```json
+{"action": "replace", "target_text": "shall be limited to the fees paid by Client in the 12 months preceding the relevant claim", "new_text": "shall be limited to two times (2x) the fees paid by Client in the 12 months preceding the relevant claim", "rationale": "Doubles the cap, keeps the 12-month period."}
+```
+
+Actions and required fields:
+- "replace": rewrite existing text. Needs "target_text" + "new_text".
+- "insert":  add new text. Needs "anchor_text" + "position" ("after"|"before") + "new_text".
+- "delete":  remove text. Needs "target_text".
+
+The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
+
+
 _agent_cache = {}
+_llm_cache: dict[str, ChatOllama] = {}
+
+
+def _build_llm() -> ChatOllama:
+    """Build and cache a tool-less ChatOllama. Used for the doc-attached chat path."""
+    if "chat" not in _llm_cache:
+        settings = get_settings()
+        _llm_cache["chat"] = ChatOllama(
+            model=settings.llm_model,
+            base_url=settings.ollama_base_url,
+            temperature=0.0,
+            reasoning=False,
+        )
+    return _llm_cache["chat"]
 
 
 def _build_agent():
@@ -108,62 +150,55 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
     return proposals
 
 
-def legal_research(state: LegalAgentState) -> LegalAgentState:
-    """Run the legal research ReAct agent.
+def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list[dict]]:
+    """In-Word chat path: direct ChatOllama with the attached doc, no tools.
 
-    If an open document is attached via uploaded_docs (e.g. the Word add-in
-    chat tab sending the active document on every turn), embed it in the
-    user message so the agent answers from that context rather than relying
-    solely on RAG search.
+    Returns (response, proposed_edits). Skipping the ReAct agent avoids the
+    search_legal / get_document / escalate tool-call loops, which add minutes
+    of latency on the local LLM for chats whose source is already the
+    attached document.
+    """
+    request = state["request"]
+    user_message = (
+        f"User request: {request}\n\n"
+        f"--- ATTACHED DOCUMENT (the source of truth — answer from this) ---\n"
+        f"{uploaded_text}\n"
+        f"--- END ATTACHED DOCUMENT ---"
+    )
+    attorney_notes = (state.get("attorney_notes") or "").strip()
+    if attorney_notes:
+        user_message += (
+            f"\n\n--- ATTORNEY REVIEW NOTES (incorporate these changes) ---\n"
+            f"{attorney_notes}"
+        )
+
+    chat_history = state.get("chat_history", []) or []
+    messages: list[dict] = [
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        *chat_history,
+        {"role": "user", "content": user_message},
+    ]
+
+    llm = _build_llm()
+    response = llm.invoke(messages)
+    content = response.content if hasattr(response, "content") else str(response)
+    return content, _extract_proposed_edits(content)
+
+
+def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]:
+    """KB research path: ReAct agent with search_legal / get_document / escalate.
+
+    Used when no document is attached and the user is asking a research
+    question against the firm's RAG corpus. Returns (response, proposed_edits,
+    source_doc_ids).
     """
     request = state["request"]
     filters = state.get("filters", {})
     client_id = filters.get("client_id", "internal")
-
     context_parts = [f"Question: {request}", f"Client ID: {client_id}"]
     if filters.get("jurisdiction"):
         context_parts.append(f"Jurisdiction: {filters['jurisdiction']}")
-
     user_message = "\n".join(context_parts)
-
-    uploaded_text = _extract_uploaded_text(state)
-    if uploaded_text:
-        user_message += (
-            f"\n\n--- ATTACHED DOCUMENT (the user is asking about THIS document; prefer it over RAG) ---\n"
-            f"{uploaded_text}\n"
-            f"--- END ATTACHED DOCUMENT ---\n\n"
-            f"--- RESPONSE STYLE ---\n"
-            f"This is an in-Word chat conversation. Answer conversationally in 2–5 sentences. "
-            f"Do NOT emit section headers like 'Direct Answer', 'Supporting Citations', "
-            f"'Open Gaps', or 'Confidence Assessment'. Cite specific section numbers or "
-            f"clause names inline when relevant (e.g., 'Per Section 4, ...'). Skip the "
-            f"structured research report format — that's reserved for explicit research "
-            f"requests without an attached document.\n\n"
-            f"--- PROPOSING EDITS (REQUIRED when the user asks for a change) ---\n"
-            f"If the user asks you to change, rewrite, tighten, loosen, add, insert, remove, "
-            f"delete, or redraft ANYTHING in the attached document, you MUST end your reply "
-            f"with a fenced ```json``` block describing the edit. This is NOT optional — the "
-            f"block is the ONLY way the change reaches the document. If you describe a change "
-            f"in prose but omit the block, nothing happens and the user is stuck. Always emit "
-            f"the block, even alongside your prose explanation. One block per edit.\n\n"
-            f"Worked example — user says \"tighten the liability cap to 2x\":\n"
-            f"Sure — here's a 2x cap for Section 5.\n"
-            f"```json\n"
-            f'{{"action": "replace", "target_text": "shall be limited to the fees paid by '
-            f'Client in the 12 months preceding the relevant claim", "new_text": "shall be '
-            f'limited to two times (2x) the fees paid by Client in the 12 months preceding '
-            f'the relevant claim", "rationale": "Doubles the cap, keeps the 12-month period."}}\n'
-            f"```\n\n"
-            f"Actions and required fields:\n"
-            f'- "replace": rewrite existing text. Needs "target_text" + "new_text".\n'
-            f'- "insert":  add new text. Needs "anchor_text" + "position" ("after"|"before") '
-            f'+ "new_text".\n'
-            f'- "delete":  remove text. Needs "target_text".\n'
-            f"The target_text / anchor_text MUST be copied VERBATIM from the attached document "
-            f"(exact words, punctuation, and casing) — the client searches for it literally, "
-            f"so paraphrasing breaks the match. Do NOT emit a block when the user is only "
-            f"asking a question (e.g. 'why is this risky?')."
-        )
 
     attorney_notes = (state.get("attorney_notes") or "").strip()
     if attorney_notes:
@@ -172,42 +207,65 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
             f"{attorney_notes}"
         )
 
+    agent = _build_agent()
+    chat_history = state.get("chat_history", []) or []
+    agent_messages = [*chat_history, {"role": "user", "content": user_message}]
+    result = agent.invoke({"messages": agent_messages})
+
+    messages = result.get("messages", [])
+    content = ""
+    if messages:
+        last_msg = messages[-1]
+        content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+
+    source_docs: set[str] = set()
+    for msg in messages:
+        msg_text = msg.content if hasattr(msg, "content") else str(msg)
+        ids = re.findall(r"doc_id:\s*([a-f0-9-]+)", msg_text)
+        source_docs.update(ids)
+
+    return content, _extract_proposed_edits(content), source_docs
+
+
+def legal_research(state: LegalAgentState) -> LegalAgentState:
+    """Answer the user's request.
+
+    Two paths:
+      - Doc attached (Word add-in chat tab) → direct ChatOllama, no tools.
+      - No doc → ReAct agent with KB search tools.
+    """
+    uploaded_text = _extract_uploaded_text(state)
+
+    # Always reset proposed_edits at the start so a turn that produces no
+    # edit block doesn't carry the prior turn's proposal forward.
+    state["proposed_edits"] = []
+
     try:
-        agent = _build_agent()
-        chat_history = state.get("chat_history", []) or []
-        agent_messages = [*chat_history, {"role": "user", "content": user_message}]
-        result = agent.invoke({"messages": agent_messages})
-
-        messages = result.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+        if uploaded_text:
+            content, edits = _run_doc_chat(state, uploaded_text)
             state["llm_response"] = content
-            state["proposed_edits"] = _extract_proposed_edits(content)
+            state["proposed_edits"] = edits
+            state["retrieved_chunks"] = []
+            logger.info(
+                "[legal_research] doc-chat completed, response=%d chars, edits=%d",
+                len(content), len(edits),
+            )
         else:
-            state["llm_response"] = "Error: Agent returned no messages."
-            state["proposed_edits"] = []
-
-        source_docs = set()
-        for msg in messages:
-            msg_text = msg.content if hasattr(msg, "content") else str(msg)
-            ids = re.findall(r"doc_id:\s*([a-f0-9-]+)", msg_text)
-            source_docs.update(ids)
-
-        state["retrieved_chunks"] = [
-            {"doc_id": did, "doc_title": f"Source {did[:8]}"}
-            for did in source_docs
-        ]
-
-        logger.info(
-            "[legal_research] agent completed, response=%d chars, sources=%d, edits=%d",
-            len(state["llm_response"]), len(source_docs),
-            len(state.get("proposed_edits", [])),
-        )
+            content, edits, source_docs = _run_kb_research(state)
+            state["llm_response"] = content or "Error: Agent returned no messages."
+            state["proposed_edits"] = edits
+            state["retrieved_chunks"] = [
+                {"doc_id": did, "doc_title": f"Source {did[:8]}"}
+                for did in source_docs
+            ]
+            logger.info(
+                "[legal_research] kb-research completed, response=%d chars, sources=%d, edits=%d",
+                len(content), len(source_docs), len(edits),
+            )
 
     except Exception as e:
-        logger.error("[legal_research] agent failed: %s", e)
-        state["llm_response"] = f"Error: Legal research agent failed — {e}"
+        logger.error("[legal_research] failed: %s", e)
+        state["llm_response"] = f"Error: Legal research failed — {e}"
         state["proposed_edits"] = []
 
     return state
