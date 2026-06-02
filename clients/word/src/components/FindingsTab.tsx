@@ -24,6 +24,7 @@ interface Props {
 
 export default function FindingsTab({ sessionId, result, setResult }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [rawResponse, setRawResponse] = useState<string>("");
 
   const onReview = async () => {
     try {
@@ -45,6 +46,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
         setStatus({ kind: "error", message: "Backend returned no review text." });
         return;
       }
+      setRawResponse(reportText);
       const parsed = parseContractReview(reportText);
       // Surface contract_type_detected from the backend (Phase 4) into the
       // header so the lawyer sees what bundle was applied — overrides any
@@ -81,9 +83,19 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
       {result && (
         <div className="findings-scroll">
           <Results result={result} />
+          {rawResponse && <RawResponse markdown={rawResponse} />}
         </div>
       )}
     </div>
+  );
+}
+
+function RawResponse({ markdown }: { markdown: string }) {
+  return (
+    <details className="raw-response">
+      <summary>Show raw LLM response ({markdown.length.toLocaleString()} chars)</summary>
+      <pre>{markdown}</pre>
+    </details>
   );
 }
 

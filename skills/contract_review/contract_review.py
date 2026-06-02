@@ -71,6 +71,32 @@ _TYPE_PATTERNS: tuple[tuple[str, tuple[re.Pattern, ...]], ...] = (
 
 _DEFAULT_TYPE = "nda"
 
+# Runtime directive appended to the system message after the canonical bundle.
+# The team's required output format leaves one detail open to interpretation:
+# nothing in `shared_operating_rules.md` explicitly forbids combining multiple
+# findings into one Suggested Redlines row. The model sometimes coalesces
+# adjacent placeholders (e.g. "Preamble / Effective Date" + "Preamble / Parties"
+# → one row "Insert [Legal Name], [Address], [Month] [Date], [Year]"), which
+# breaks per-card redline rendering in the Word add-in. This constraint pins
+# the one-row-per-finding rule without touching the canonical bundle.
+_OUTPUT_CONSTRAINTS = """OUTPUT CONSTRAINTS (in addition to the playbook above):
+
+1. The "Suggested Redlines / Fallbacks" table must contain ONE ROW PER FINDING. \
+Each row's "Clause / section" cell must match the corresponding finding's \
+"Clause / section" cell verbatim (including the full "Parent / Child" path).
+
+2. Do NOT combine multiple findings into a single redline row. If "Preamble / \
+Effective Date" and "Preamble / Parties" are both findings, emit two separate \
+rows — one whose "Proposed wording or instruction" addresses ONLY the date, \
+and another whose wording addresses ONLY the parties.
+
+3. Each redline's "Proposed wording or instruction" must address only the issue \
+named in its "Clause / section". Don't include text related to other findings.
+
+4. A finding listed under "Key Findings" with a Yellow or Red rating, or under \
+"Red and Missing Context Items", must have at least one corresponding row in \
+"Suggested Redlines / Fallbacks"."""
+
 
 def _detect_contract_type(text: str) -> tuple[str, bool]:
     """Detect contract type from text. Returns (type, was_ambiguous).
@@ -154,6 +180,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
 
     state["messages"] = [
         {"role": "system", "content": playbook},
+        {"role": "system", "content": _OUTPUT_CONSTRAINTS},
         {"role": "user", "content": user_content},
     ]
 

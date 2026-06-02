@@ -442,6 +442,41 @@ button.secondary:disabled {
   color: var(--muted);
 }
 
+/* ---------- Raw-response diagnostic viewer ---------- */
+
+.raw-response {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.raw-response > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.raw-response > summary:hover {
+  color: var(--fg);
+}
+
+.raw-response pre {
+  margin: 8px 0 0;
+  padding: 8px;
+  background: #f7f8fa;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ---------- Chat ---------- */
 
 .chat {
