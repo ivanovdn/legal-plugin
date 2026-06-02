@@ -41,12 +41,17 @@ export async function readBody(): Promise<string> {
 // match. We fall back to the leading run before the first such character.
 const SEARCH_SPECIAL = /[[\](){}<>?*@^~\\]/;
 
+// Office.js body.search rejects strings over 255 chars with
+// SearchStringInvalidOrTooLong. 200 leaves a safety margin and matches the
+// existing direct-add filter below.
+const SEARCH_MAX_LEN = 200;
+
 function searchCandidates(needle: string): string[] {
   const normalized = normalizeForSearch(needle);
   const candidates: string[] = [];
   const push = (s: string) => {
     const t = s.trim();
-    if (t && t.length >= 12 && !candidates.includes(t)) candidates.push(t);
+    if (t && t.length >= 12 && t.length <= SEARCH_MAX_LEN && !candidates.includes(t)) candidates.push(t);
   };
   const add = (s: string) => {
     push(s);
@@ -100,13 +105,14 @@ function searchCandidates(needle: string): string[] {
   // happens for parser-supplied anchors like "Parties", "Effective Date" —
   // intentional short clause-name anchors, not stray common words), include
   // the cleaned needle anyway. The parser chose this anchor on purpose; trust it.
+  // Length must still be within SEARCH_MAX_LEN or body.search will throw.
   if (candidates.length === 0) {
     const trimmed = normalized.trim();
-    if (trimmed) candidates.push(trimmed);
+    if (trimmed && trimmed.length <= SEARCH_MAX_LEN) candidates.push(trimmed);
     const idx = trimmed.search(SEARCH_SPECIAL);
     if (idx > 0) {
       const clean = trimmed.slice(0, idx).trim();
-      if (clean && clean !== trimmed) candidates.push(clean);
+      if (clean && clean !== trimmed && clean.length <= SEARCH_MAX_LEN) candidates.push(clean);
     }
   }
 
@@ -154,13 +160,23 @@ async function searchFirst(
   context: Word.RequestContext,
   trial: string,
 ): Promise<Word.Range | null> {
-  const results = context.document.body.search(trial, {
-    matchCase: false,
-    matchWildcards: false,
-  });
-  results.load("items");
-  await context.sync();
-  return results.items.length > 0 ? results.items[0] : null;
+  try {
+    const results = context.document.body.search(trial, {
+      matchCase: false,
+      matchWildcards: false,
+    });
+    results.load("items");
+    await context.sync();
+    return results.items.length > 0 ? results.items[0] : null;
+  } catch (e) {
+    // body.search itself throws on malformed candidates (>255 chars,
+    // certain wildcard-special char combinations the API rejects post-queue,
+    // etc.). Treat as "no match" so the search loop moves on to the next
+    // candidate rather than aborting the whole find/delete/redline flow.
+    // Logged at warn so it's visible in DevTools without surfacing to the UI.
+    console.warn("[word.ts] body.search rejected candidate:", trial.slice(0, 80), e);
+    return null;
+  }
 }
 
 /**
