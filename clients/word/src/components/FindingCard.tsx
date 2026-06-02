@@ -88,16 +88,32 @@ export default function FindingCard({ finding }: { finding: Finding }) {
       )}
 
       {finding.currentText && (
-        <div className="card-actions">
-          <button className="secondary" onClick={onShow} disabled={comment.kind === "running"}>
-            {comment.kind === "running" ? "Locating…" : "Show in document"}
-          </button>
-          {finding.redline && (
-            <button className="secondary" onClick={onAccept} disabled={redline.kind === "running"}>
-              {redline.kind === "running" ? "Applying…" : "Accept redline"}
+        <>
+          <div className="card-actions">
+            <button className="secondary" onClick={onShow} disabled={comment.kind === "running"}>
+              {comment.kind === "running" ? "Locating…" : "Show in document"}
             </button>
+            {/*
+              Accept redline only when the Issue cell quoted the literal current
+              wording. For Missing-Context findings (placeholders, missing
+              clauses), the redline is an instruction not a replacement, and
+              applying it would strike out the section heading and insert
+              "Insert [...]" instructional text — nonsense outcome. Lawyer fills
+              the placeholder by hand instead.
+            */}
+            {finding.redline && finding.hasQuotedText && (
+              <button className="secondary" onClick={onAccept} disabled={redline.kind === "running"}>
+                {redline.kind === "running" ? "Applying…" : "Accept redline"}
+              </button>
+            )}
+          </div>
+          {finding.redline && !finding.hasQuotedText && (
+            <div className="card-hint">
+              No literal current wording to replace — fill the placeholder
+              manually using the suggested wording above as a guide.
+            </div>
           )}
-        </div>
+        </>
       )}
       {comment.kind === "done" && <div className="card-status success">{comment.message}</div>}
       {comment.kind === "error" && <div className="card-status error">{comment.message}</div>}

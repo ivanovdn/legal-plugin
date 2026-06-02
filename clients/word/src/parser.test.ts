@@ -142,6 +142,11 @@ pass(
   effDate.anchors.indexOf("Effective Date") < effDate.anchors.indexOf("Effective date is a placeholder."),
   "clause-segment anchor ranks BEFORE meta-textual issue verbatim",
 );
+pass(effDate.hasQuotedText === false, "hasQuotedText=false for meta-textual Issue (no quotes)");
+pass(indem.hasQuotedText === false, "hasQuotedText=false when no quotes in Issue");
+
+// Sample 1's NDA-006 Issue DOES include quoted text — hasQuotedText should be true
+pass(term!.hasQuotedText === true, "hasQuotedText=true when Issue cell quotes current wording");
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sample 4 — graceful on empty / unrelated input

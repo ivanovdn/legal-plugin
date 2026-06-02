@@ -34,6 +34,15 @@ export interface Finding {
    * strongest signals first (quoted text → clause-name tail → ...).
    */
   anchors: string[];
+  /**
+   * True when the Issue cell quotes literal current wording (extractQuoted
+   * returned non-empty). Gates the Accept-redline button: replacing a clause-
+   * name like "Effective Date" with the AI's instruction text "Insert [Legal
+   * Name], [Address], …" is a nonsense outcome — when we don't have a real
+   * current-text anchor, we only offer Show-in-document (which navigates + adds
+   * a comment, both of which work fine with a clause-name anchor).
+   */
+  hasQuotedText: boolean;
   redline: string;
   rationale: string;        // legacy field; mapped from "Issue" if no separate field exists
   requiredAction: string;
@@ -256,6 +265,7 @@ function parseFindings(body: string): Finding[] {
       if (!risk) return null;
       const issue = pick(row, "issue");
       const clause = pick(row, "clause / section", "clause", "section");
+      const quoted = extractQuoted(issue);
       const anchors = buildAnchors(issue, clause);
       return {
         issueId: pick(row, "issue id"),
@@ -264,6 +274,7 @@ function parseFindings(body: string): Finding[] {
         issue,
         currentText: anchors[0] ?? "",
         anchors,
+        hasQuotedText: !!quoted,
         redline: "", // filled in by mergeRedlines
         rationale: issue, // legacy field; team format folds rationale into Issue
         requiredAction: pick(row, "required action"),

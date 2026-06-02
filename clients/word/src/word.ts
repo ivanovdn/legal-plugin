@@ -96,6 +96,20 @@ function searchCandidates(needle: string): string[] {
     add(curly);
   }
 
+  // Fallback: if the >= 12-char length filter rejected every variant (which
+  // happens for parser-supplied anchors like "Parties", "Effective Date" —
+  // intentional short clause-name anchors, not stray common words), include
+  // the cleaned needle anyway. The parser chose this anchor on purpose; trust it.
+  if (candidates.length === 0) {
+    const trimmed = normalized.trim();
+    if (trimmed) candidates.push(trimmed);
+    const idx = trimmed.search(SEARCH_SPECIAL);
+    if (idx > 0) {
+      const clean = trimmed.slice(0, idx).trim();
+      if (clean && clean !== trimmed) candidates.push(clean);
+    }
+  }
+
   return candidates;
 }
 
