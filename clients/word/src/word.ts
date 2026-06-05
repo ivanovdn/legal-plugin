@@ -332,6 +332,9 @@ export async function showInDocument(
  * paragraph → end of tail match's paragraph). Saves and restores the
  * document's prior change-tracking mode.
  */
+/** Minimum fraction of the intended target the matched range must cover. */
+const MATCH_COMPLETENESS_THRESHOLD = 0.85;
+
 export async function acceptRedline(
   target: string | string[],
   newText: string,
@@ -344,6 +347,24 @@ export async function acceptRedline(
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
       if (!range) return fail("Couldn't locate this clause in the document.");
+
+      // Verify the matched range covers most of the intended target. searchCandidates
+      // falls back to shorter prefixes when the full target isn't found verbatim —
+      // useful for "show in document" navigation, but for REPLACE that means we'd
+      // inject the entire (long) new_text into a (short) prefix match. Refuse and
+      // surface a clear error instead of producing a silently-wrong track change.
+      range.load("text");
+      await context.sync();
+      const intended = normalizeForSearch(anchors[0]).trim();
+      const matched = normalizeForSearch(range.text).trim();
+      if (matched.length < intended.length * MATCH_COMPLETENESS_THRESHOLD) {
+        const preview = (intended.length > 50 ? intended.slice(0, 50) + "…" : intended);
+        return fail(
+          `Couldn't find the exact target text in the document (looked for "${preview}"). ` +
+            `The model may have referenced a phrase that isn't present verbatim — ` +
+            `rephrase the request or quote the exact wording.`,
+        );
+      }
 
       const doc = context.document;
       doc.load("changeTrackingMode");
