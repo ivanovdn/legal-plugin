@@ -283,6 +283,17 @@ button.secondary:disabled {
   padding: 4px 0 0;
 }
 
+/* Chat: warning shown when the LLM described an edit but didn't emit a JSON block. */
+.chat-warning {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--yellow-fg);
+  background: var(--yellow-bg);
+  color: var(--yellow-fg);
+  font-size: 11px;
+  border-radius: 3px;
+}
+
 /* ---------- Badge ---------- */
 
 .badge {

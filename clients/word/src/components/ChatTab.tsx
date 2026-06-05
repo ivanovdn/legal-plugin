@@ -8,6 +8,20 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   proposedEdits?: EditProposal[];
+  /** True when the response sounded like an edit promise but no block came through. */
+  promisedEditMissing?: boolean;
+}
+
+// Phrases the LLM uses when it claims it's about to make an edit. If we see any
+// of these in the response AND no JSON block was emitted, surface a warning —
+// the user otherwise sees a confident "I will replace X" with no actual change.
+const PROMISE_PATTERNS = [
+  /\bi['’]?(?:ll| will| am going to| have)\b[^.?!\n]*\b(?:replace|insert|delete|fill|add|remove|change|rewrite|tighten|loosen|update|edit|modify|set)\b/i,
+  /\bi['’]?(?:ll| will| am going to)\b[^.?!\n]*\b(?:make|apply)\b[^.?!\n]*\b(?:edit|change|update|replacement)\b/i,
+];
+
+function looksLikeEditPromise(prose: string): boolean {
+  return PROMISE_PATTERNS.some((p) => p.test(prose));
 }
 
 interface Props {
@@ -47,12 +61,16 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
       // parsed proposed_edits, falling back to client-side extraction.
       const { cleanedProse, blocks } = extractEditBlocks(rawAnswer);
       const proposedEdits = res.data?.report?.proposed_edits ?? blocks;
+      const finalProse = cleanedProse || rawAnswer;
+      const promisedEditMissing =
+        proposedEdits.length === 0 && looksLikeEditPromise(finalProse);
       setMessages((m) => [
         ...m,
         {
           role: "assistant",
-          content: cleanedProse || rawAnswer,
+          content: finalProse,
           proposedEdits: proposedEdits.length > 0 ? proposedEdits : undefined,
+          promisedEditMissing,
         },
       ]);
     } catch (e) {
@@ -84,6 +102,13 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
             {m.proposedEdits?.map((proposal, j) => (
               <EditProposalCard key={`${i}-${j}`} proposal={proposal} />
             ))}
+            {m.promisedEditMissing && (
+              <div className="chat-warning">
+                The assistant described an edit but didn't emit the required edit block, so
+                nothing was changed in the document. Try rephrasing — e.g., quote the exact
+                text to replace, or split the request into one location at a time.
+              </div>
+            )}
           </div>
         ))}
         {busy && (
