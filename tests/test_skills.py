@@ -468,6 +468,37 @@ def test_extract_proposed_edits_accepts_array_inside_one_block():
     assert all(e["new_text"] == "Signed by: John Doe" for e in edits)
 
 
+def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():
+    """Local LLMs sometimes line-wrap long string values mid-content, producing
+    JSON with a literal newline inside a quoted string (spec-invalid). The
+    tolerant parser escapes those raw newlines and recovers the block."""
+    from skills.legal_research import _extract_proposed_edits
+
+    # Note the LITERAL newline between "Signed by:" and "[__]\\t..." inside
+    # the target_text value — this is what the user saw on the second block.
+    prose = (
+        "I will replace the two instances.\n\n"
+        "```json\n"
+        '{"action": "replace", "target_text": "...long dots line...\nSigned by:\n[__]\\tSigned by: Boris", '
+        '"new_text": "...long dots line...\nSigned by: John Doe\\tSigned by: Boris"}\n'
+        "```"
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 1
+    assert edits[0]["action"] == "replace"
+    assert "John Doe" in edits[0]["new_text"]
+
+
+def test_tolerant_json_loads_handles_internal_tabs_and_returns():
+    """Tab and carriage-return characters inside string values are also escaped."""
+    from skills.legal_research import _tolerant_json_loads
+
+    raw = '{"target": "col1\tcol2\rcol3"}'  # raw \t and \r inside the string
+    parsed = _tolerant_json_loads(raw)
+    assert parsed is not None
+    assert parsed["target"] == "col1\tcol2\rcol3"
+
+
 def test_extract_proposed_edits_array_with_invalid_entries_filtered():
     """An array containing some invalid entries keeps the valid ones and drops the rest."""
     from skills.legal_research import _extract_proposed_edits

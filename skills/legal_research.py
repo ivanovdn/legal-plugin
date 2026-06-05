@@ -125,9 +125,8 @@ def _parse_json_edits(raw: str) -> list[dict]:
       [{...}, {...}]                   (bare array)
       {"action": "replace", ...}       (single bare edit)
     """
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
+    parsed = _tolerant_json_loads(raw)
+    if parsed is None:
         return []
     if isinstance(parsed, list):
         candidates = parsed
@@ -201,6 +200,50 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
+
+def _escape_unescaped_whitespace_in_strings(raw: str) -> str:
+    """Escape literal LF / CR / TAB characters that sit INSIDE JSON string
+    values. Local LLMs occasionally line-wrap long string values mid-content,
+    producing JSON that's structurally fine outside strings but invalid inside
+    them (a JSON string can't contain a raw newline). This walks the text,
+    tracks whether we're inside a quoted string, and replaces raw whitespace
+    with the proper backslash-escape sequences."""
+    out: list[str] = []
+    in_string = False
+    escape_next = False
+    table = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    for ch in raw:
+        if escape_next:
+            out.append(ch)
+            escape_next = False
+            continue
+        if in_string and ch == "\\":
+            out.append(ch)
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ch in table:
+            out.append(table[ch])
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _tolerant_json_loads(raw: str):
+    """json.loads with a best-effort fallback for raw newlines/tabs inside
+    string values. Returns the parsed value or None if both attempts fail."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return json.loads(_escape_unescaped_whitespace_in_strings(raw))
+    except json.JSONDecodeError:
+        return None
+
 # Phrases that imply the model intends to (or claims to have) made an edit.
 # Mirrors the regex used in clients/word/src/components/ChatTab.tsx so backend
 # retry logic and the UI warning fire on the same signal.
@@ -236,10 +279,9 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
     proposals: list[dict] = []
     for match in _JSON_BLOCK_RE.finditer(prose or ""):
         raw = match.group(1).strip()
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError as e:
-            logger.warning("[legal_research] skipping malformed JSON block: %s", e)
+        obj = _tolerant_json_loads(raw)
+        if obj is None:
+            logger.warning("[legal_research] skipping malformed JSON block: %r", raw[:120])
             continue
         candidates = obj if isinstance(obj, list) else [obj]
         for c in candidates:

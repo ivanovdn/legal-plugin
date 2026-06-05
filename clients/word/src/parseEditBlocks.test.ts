@@ -89,6 +89,22 @@ const pass = (cond: boolean, label: string) =>
   );
 }
 
+// 7b. Block whose string value contains a LITERAL newline (LLM line-wrapped
+//     the value mid-content). Spec-invalid JSON but recoverable.
+{
+  const prose =
+    "```json\n" +
+    '{"action": "replace", "target_text": "long-dots-line\nSigned by:\n[__]\\tSigned by: Boris", ' +
+    '"new_text": "long-dots-line\nSigned by: John Doe\\tSigned by: Boris"}\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 1, "broken-string: tolerant parser recovers");
+  pass(
+    blocks[0]?.new_text?.includes("John Doe") ?? false,
+    "broken-string: new_text preserved",
+  );
+}
+
 // 8. Array with mixed-validity entries — valid ones kept, invalid dropped.
 {
   const prose =

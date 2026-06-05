@@ -17,6 +17,54 @@ export type EditProposal = {
 const JSON_BLOCK_RE = /```json\s*\n([\s\S]*?)```/g;
 const VALID_ACTIONS = new Set<EditAction>(["replace", "insert", "delete"]);
 
+/** Escape literal LF/CR/TAB characters that sit INSIDE JSON string values.
+ *  Local LLMs occasionally line-wrap a long string value mid-content, which
+ *  leaves a raw newline inside a quoted string (JSON spec: invalid). We walk
+ *  the text, track whether we're inside a quoted string, and replace raw
+ *  whitespace with proper backslash-escape sequences. */
+function escapeUnescapedWhitespaceInStrings(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escapeNext = false;
+  for (const ch of raw) {
+    if (escapeNext) {
+      out += ch;
+      escapeNext = false;
+      continue;
+    }
+    if (inString && ch === "\\") {
+      out += ch;
+      escapeNext = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+    if (inString && (ch === "\n" || ch === "\r" || ch === "\t")) {
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** JSON.parse with a best-effort fallback for raw whitespace inside strings. */
+function tolerantParse(raw: string): unknown | undefined {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // fall through
+  }
+  try {
+    return JSON.parse(escapeUnescapedWhitespaceInStrings(raw));
+  } catch {
+    return undefined;
+  }
+}
+
 export function extractEditBlocks(prose: string): {
   cleanedProse: string;
   blocks: EditProposal[];
@@ -26,10 +74,8 @@ export function extractEditBlocks(prose: string): {
 
   for (const match of prose.matchAll(JSON_BLOCK_RE)) {
     const raw = match[1].trim();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
+    const parsed = tolerantParse(raw);
+    if (parsed === undefined) {
       // Tolerant: skip malformed blocks, keep others.
       continue;
     }
