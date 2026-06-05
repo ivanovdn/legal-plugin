@@ -67,7 +67,12 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
       // Strip fenced JSON blocks for display; prefer the backend's authoritative
       // parsed proposed_edits, falling back to client-side extraction.
       const { cleanedProse, blocks } = extractEditBlocks(rawAnswer);
-      const proposedEdits = res.data?.report?.proposed_edits ?? blocks;
+      // Use the backend's parsed edits when present, otherwise the frontend's
+      // own extraction. Note: a plain `??` would only fall back on null/undefined
+      // — an empty array would short-circuit to the empty backend value and
+      // ignore the frontend's correctly-parsed blocks. Prefer NON-EMPTY instead.
+      const backendEdits = res.data?.report?.proposed_edits ?? [];
+      const proposedEdits = backendEdits.length > 0 ? backendEdits : blocks;
       const finalProse = cleanedProse || rawAnswer;
       const promisedEditMissing =
         proposedEdits.length === 0 && looksLikeEditPromise(finalProse);
