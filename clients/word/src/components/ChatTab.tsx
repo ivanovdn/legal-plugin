@@ -12,12 +12,17 @@ export interface ChatMessage {
   promisedEditMissing?: boolean;
 }
 
-// Phrases the LLM uses when it claims it's about to make an edit. If we see any
-// of these in the response AND no JSON block was emitted, surface a warning —
-// the user otherwise sees a confident "I will replace X" with no actual change.
+// Phrases the LLM uses when it claims it's about to make an edit OR has just
+// made one. If we see any of these in the response AND no JSON block was
+// emitted, surface a warning — the user otherwise sees a confident "I will
+// replace X" / "I have replaced X" with no actual change.
+//
+// Verb-stem trick: stems are shortened so the `\w{0,3}\b` tail matches both
+// present (replace, replaces, replacing) AND past (replaced) tenses. Mirrors
+// the _EDIT_PROMISE_RE pattern in skills/legal_research.py.
 const PROMISE_PATTERNS = [
-  /\bi['’]?(?:ll| will| am going to| have)\b[^.?!\n]*\b(?:replace|insert|delete|fill|add|remove|change|rewrite|tighten|loosen|update|edit|modify|set)\b/i,
-  /\bi['’]?(?:ll| will| am going to)\b[^.?!\n]*\b(?:make|apply)\b[^.?!\n]*\b(?:edit|change|update|replacement)\b/i,
+  /\bi['’]?(?:ll|ve| will| have| am going to)\b[^.?!\n]*\b(?:replac|insert|delet|fill|add|remov|chang|rewrit|tighten|loosen|updat|edit|modif|set)\w{0,3}\b/i,
+  /\bi['’]?(?:ll|ve| will| have| am going to)\b[^.?!\n]*\b(?:made|appli\w{0,3}|perform\w{0,3})\b[^.?!\n]*\b(?:edit|change|update|replacement)\w?\b/i,
 ];
 
 function looksLikeEditPromise(prose: string): boolean {

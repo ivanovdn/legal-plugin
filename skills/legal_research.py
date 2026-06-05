@@ -141,12 +141,18 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
-# Phrases that imply the model intends to make an edit. Mirrors the regex used
-# in clients/word/src/components/ChatTab.tsx so backend retry logic and the UI
-# warning fire on the same signal.
+# Phrases that imply the model intends to (or claims to have) made an edit.
+# Mirrors the regex used in clients/word/src/components/ChatTab.tsx so backend
+# retry logic and the UI warning fire on the same signal.
+#
+# Verb-stem trick: stems are shortened so the `\w{0,3}\b` tail matches both the
+# present (replace, replaces, replacing) AND past (replaced) tenses. The
+# original `\breplace\b` form silently missed "I have replaced..." because the
+# trailing `d` is still a word char so no word boundary existed before it.
 _EDIT_PROMISE_RE = re.compile(
-    r"\bi['’]?(?:ll| will| am going to| have)\b[^.?!\n]*"
-    r"\b(?:replace|insert|delete|fill|add|remove|change|rewrite|tighten|loosen|update|edit|modify|set)\b",
+    r"\bi['’]?(?:ll|ve| will| have| am going to)\b[^.?!\n]*"
+    r"\b(?:replac|insert|delet|fill|add|remov|chang|rewrit|tighten|loosen|updat|edit|modif|set)"
+    r"\w{0,3}\b",
     re.IGNORECASE,
 )
 

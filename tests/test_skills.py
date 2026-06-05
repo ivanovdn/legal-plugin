@@ -575,6 +575,75 @@ def test_legal_research_does_not_retry_when_block_already_present(monkeypatch):
     assert fake_llm.invoke.call_count == 1
 
 
+def test_edit_promise_detector_matches_past_tense():
+    """The detector must match 'I have replaced...' too — without this, the
+    retry path never fires when the local LLM uses past tense and the user
+    sees a confident lie ('I have replaced…') with no actual edit."""
+    from skills.legal_research import _looks_like_edit_promise
+
+    # Past-tense forms — the original \breplace\b regex missed these.
+    assert _looks_like_edit_promise(
+        'I have replaced the placeholder "Signed by: [__]" with "Signed by: John Doe"'
+    )
+    assert _looks_like_edit_promise("I've inserted a force majeure clause after Section 7.")
+    assert _looks_like_edit_promise("I have deleted the auto-renewal language.")
+    assert _looks_like_edit_promise("I have filled all the placeholders.")
+
+    # Present / future forms — these always worked, keep them green.
+    assert _looks_like_edit_promise(
+        'I will replace "Signed by: [__]" with "Signed by: John Doe".'
+    )
+    assert _looks_like_edit_promise("I am going to insert a clause here.")
+    assert _looks_like_edit_promise("I'll delete that section.")
+
+
+def test_edit_promise_detector_skips_qa_and_unrelated():
+    """The detector must NOT match pure Q&A or unrelated mentions of edit verbs."""
+    from skills.legal_research import _looks_like_edit_promise
+
+    # Pure Q&A
+    assert not _looks_like_edit_promise("Per Section 4, the cap is 12 months of fees.")
+    assert not _looks_like_edit_promise("The IP clause is risky because it assigns ownership.")
+    # Discussing concepts without claiming to do anything
+    assert not _looks_like_edit_promise("Replacing the cap would require legal review.")
+    assert not _looks_like_edit_promise("")
+    # False-positive guards: noun forms shouldn't trigger
+    assert not _looks_like_edit_promise("The replacement clause is in Section 9.")
+    assert not _looks_like_edit_promise("The editor of this contract approved it.")
+
+
+def test_legal_research_retries_on_past_tense_promise(monkeypatch):
+    """Regression for the user-reported case: 'I have replaced...' must
+    trigger the retry path. Before the regex fix this was a silent failure."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    first = MagicMock()
+    first.content = (
+        'I have replaced the placeholder "Signed by: [__]" with "Signed by: John Doe" '
+        "in the signature block at the end of the document."
+    )
+    second = MagicMock()
+    second.content = (
+        '```json\n{"action": "replace", "target_text": "Signed by: [__]",'
+        ' "new_text": "Signed by: John Doe"}\n```'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.side_effect = [first, second]
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Fill the Signed by placeholder with John Doe.",
+            uploaded_docs=[{"text": "Signed by: [__]"}],
+        )
+        result = legal_research(state)
+
+    assert fake_llm.invoke.call_count == 2
+    assert len(result["proposed_edits"]) == 1
+
+
 def test_legal_research_does_not_retry_on_pure_qa(monkeypatch):
     """A Q&A response with no edit promise must not trigger a retry."""
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
