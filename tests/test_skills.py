@@ -514,10 +514,36 @@ def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
     assert result["proposed_edits"][0]["new_text"] == "2x"
 
 
+def test_parse_json_edits_accepts_three_shapes():
+    """_parse_json_edits handles the three shapes Ollama's format=json emits:
+    {edits: [...]} wrapping, bare array, bare single edit."""
+    from skills.legal_research import _parse_json_edits
+
+    wrapped = '{"edits": [{"action": "replace", "target_text": "X", "new_text": "Y"}]}'
+    bare_array = '[{"action": "replace", "target_text": "X", "new_text": "Y"}]'
+    bare_single = '{"action": "replace", "target_text": "X", "new_text": "Y"}'
+
+    for raw in (wrapped, bare_array, bare_single):
+        edits = _parse_json_edits(raw)
+        assert len(edits) == 1
+        assert edits[0]["action"] == "replace"
+
+
+def test_parse_json_edits_rejects_invalid_actions_and_malformed_json():
+    """Malformed JSON and entries without a valid action are dropped silently."""
+    from skills.legal_research import _parse_json_edits
+
+    assert _parse_json_edits("not json at all") == []
+    assert _parse_json_edits('{"edits": "not a list"}') == []
+    assert _parse_json_edits('{"edits": [{"action": "frobnicate"}]}') == []
+    assert _parse_json_edits('{"action": "unknown", "target_text": "X"}') == []
+
+
 def test_legal_research_retries_when_edit_promise_lacks_block(monkeypatch):
     """When the LLM promises an edit in prose but emits no JSON block, the
-    skill re-prompts once for a focused JSON-only response and merges the
-    resulting block(s) into the final state."""
+    skill re-prompts ONCE via a separate format=json LLM and merges the
+    resulting edits into state. format=json is structurally forced JSON
+    output — no more 'I will replace…' hand-waving without action."""
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     get_settings.cache_clear()
@@ -527,15 +553,20 @@ def test_legal_research_retries_when_edit_promise_lacks_block(monkeypatch):
         'I will replace the placeholder "Signed by: [__]" with "Signed by: John Doe" '
         "in two locations within the document."
     )
-    second = MagicMock()
-    second.content = (
-        '```json\n{"action": "replace", "target_text": "Signed by: [__]\\t",'
-        ' "new_text": "Signed by: John Doe\\t"}\n```'
+    retry = MagicMock()
+    retry.content = (
+        '{"edits": [{"action": "replace", "target_text": "Signed by: [__]\\t",'
+        ' "new_text": "Signed by: John Doe\\t"}]}'
     )
     fake_llm = MagicMock()
-    fake_llm.invoke.side_effect = [first, second]
+    fake_llm.invoke.return_value = first
+    fake_json_llm = MagicMock()
+    fake_json_llm.invoke.return_value = retry
 
-    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+    with (
+        patch("skills.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research._build_json_llm", return_value=fake_json_llm),
+    ):
         from skills.legal_research import legal_research
         state = _make_state(
             request="take every blank Signed by: [__] and fill with John Doe",
@@ -543,9 +574,10 @@ def test_legal_research_retries_when_edit_promise_lacks_block(monkeypatch):
         )
         result = legal_research(state)
 
-    # Both LLM calls happened — primary + retry.
-    assert fake_llm.invoke.call_count == 2
-    # And the retry's block landed on state.
+    # Conversational LLM ran once; JSON-mode LLM ran once for the retry.
+    fake_llm.invoke.assert_called_once()
+    fake_json_llm.invoke.assert_called_once()
+    # The retry's edit landed on state.
     assert len(result["proposed_edits"]) == 1
     assert result["proposed_edits"][0]["new_text"].startswith("Signed by: John Doe")
 
@@ -624,15 +656,17 @@ def test_legal_research_retries_on_past_tense_promise(monkeypatch):
         'I have replaced the placeholder "Signed by: [__]" with "Signed by: John Doe" '
         "in the signature block at the end of the document."
     )
-    second = MagicMock()
-    second.content = (
-        '```json\n{"action": "replace", "target_text": "Signed by: [__]",'
-        ' "new_text": "Signed by: John Doe"}\n```'
-    )
+    retry = MagicMock()
+    retry.content = '{"edits": [{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]}'
     fake_llm = MagicMock()
-    fake_llm.invoke.side_effect = [first, second]
+    fake_llm.invoke.return_value = first
+    fake_json_llm = MagicMock()
+    fake_json_llm.invoke.return_value = retry
 
-    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+    with (
+        patch("skills.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research._build_json_llm", return_value=fake_json_llm),
+    ):
         from skills.legal_research import legal_research
         state = _make_state(
             request="Fill the Signed by placeholder with John Doe.",
@@ -640,7 +674,8 @@ def test_legal_research_retries_on_past_tense_promise(monkeypatch):
         )
         result = legal_research(state)
 
-    assert fake_llm.invoke.call_count == 2
+    fake_llm.invoke.assert_called_once()
+    fake_json_llm.invoke.assert_called_once()
     assert len(result["proposed_edits"]) == 1
 
 

@@ -10,6 +10,8 @@ export interface ChatMessage {
   proposedEdits?: EditProposal[];
   /** True when the response sounded like an edit promise but no block came through. */
   promisedEditMissing?: boolean;
+  /** Original LLM output before edit-block stripping — for the "show raw" toggle. */
+  rawResponse?: string;
 }
 
 // Phrases the LLM uses when it claims it's about to make an edit OR has just
@@ -76,6 +78,7 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
           content: finalProse,
           proposedEdits: proposedEdits.length > 0 ? proposedEdits : undefined,
           promisedEditMissing,
+          rawResponse: rawAnswer,
         },
       ]);
     } catch (e) {
@@ -113,6 +116,12 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
                 nothing was changed in the document. Try rephrasing — e.g., quote the exact
                 text to replace, or split the request into one location at a time.
               </div>
+            )}
+            {m.role === "assistant" && m.rawResponse && (
+              <details className="raw-response">
+                <summary>Show raw LLM response ({m.rawResponse.length.toLocaleString()} chars)</summary>
+                <pre>{m.rawResponse}</pre>
+              </details>
             )}
           </div>
         ))}

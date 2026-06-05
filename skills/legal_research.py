@@ -99,6 +99,66 @@ def _build_llm() -> ChatOllama:
     return _llm_cache["chat"]
 
 
+def _build_json_llm() -> ChatOllama:
+    """ChatOllama in JSON-output mode. Used for the edit-extraction retry path
+    when the conversational LLM refused to emit a fenced JSON block. Ollama's
+    `format='json'` parameter forces the response to be valid JSON — no prose,
+    no markdown, no "I will replace…" hand-waving. More expensive than asking
+    nicely but actually deterministic."""
+    if "json" not in _llm_cache:
+        settings = get_settings()
+        _llm_cache["json"] = ChatOllama(
+            model=settings.llm_model,
+            base_url=settings.ollama_base_url,
+            temperature=0.0,
+            reasoning=False,
+            format="json",
+        )
+    return _llm_cache["json"]
+
+
+def _parse_json_edits(raw: str) -> list[dict]:
+    """Pull edit dicts out of a free-form JSON response.
+
+    Accepts three shapes Ollama's format=json mode actually produces:
+      {"edits": [{...}, {...}]}       (preferred wrapping)
+      [{...}, {...}]                   (bare array)
+      {"action": "replace", ...}       (single bare edit)
+    """
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, list):
+        candidates = parsed
+    elif isinstance(parsed, dict):
+        if isinstance(parsed.get("edits"), list):
+            candidates = parsed["edits"]
+        elif parsed.get("action") in {"replace", "insert", "delete"}:
+            candidates = [parsed]
+        else:
+            return []
+    else:
+        return []
+    return [
+        c for c in candidates
+        if isinstance(c, dict) and c.get("action") in {"replace", "insert", "delete"}
+    ]
+
+
+_JSON_RETRY_SYSTEM = """You output ONE JSON object describing the edit(s) to apply to a document. No prose, no markdown, no fenced code blocks — just the JSON object.
+
+Schema:
+  {"edits": [<edit>, <edit>, ...]}
+
+Each <edit> is one of:
+  {"action": "replace", "target_text": "...", "new_text": "..."}
+  {"action": "insert",  "anchor_text": "...", "position": "after"|"before", "new_text": "..."}
+  {"action": "delete",  "target_text": "..."}
+
+If the same target_text appears multiple times and ALL of them must change, emit one separate replace edit per location whose target_text includes enough surrounding context (the previous line, an adjacent column/tab, etc.) to be unique. The client searches for target_text literally and replaces only the FIRST match per edit."""
+
+
 def _build_agent():
     """Build and cache the ReAct agent."""
     cache_key = "legal_research"
@@ -217,41 +277,36 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     content = response.content if hasattr(response, "content") else str(response)
     edits = _extract_proposed_edits(content)
 
-    # Retry once if the model promised an edit in prose but forgot the JSON
-    # block. The local LLM (qwen3.6) does this for multi-location requests
-    # like "fill every Signed by: [__]" — it says "I will replace..." but
-    # emits no block, so the change never reaches the document. A focused
-    # follow-up prompt fixes it most of the time without changing the
-    # conversational UX (the user sees the original prose plus a working
-    # Apply card).
+    # Retry path: when the model promised an edit in prose but forgot the
+    # JSON block, ask again with Ollama's format='json' mode. The previous
+    # "please emit a ```json``` block" retry was just another conversational
+    # plea the LLM ignored. format='json' forces structurally-valid JSON
+    # output — no more "I will replace…" hand-waving without action.
     if not edits and _looks_like_edit_promise(content):
-        logger.info("[legal_research] edit-promise detected without block — retrying for JSON")
-        retry_messages = [
-            *messages,
-            {"role": "assistant", "content": content},
-            {"role": "user", "content": (
-                "You described an edit but didn't emit the required ```json``` block, "
-                "so the change can't reach the document. Output ONLY the fenced "
-                "```json``` block(s) for the edit you described — no prose, no "
-                "preamble, no closing remark. If the same placeholder text appears "
-                "in multiple locations, emit one block PER LOCATION and include "
-                "surrounding context in each target_text so the matches are unique."
-            )},
-        ]
-        retry_response = llm.invoke(retry_messages)
-        retry_content = (
+        logger.info("[legal_research] edit-promise detected without block — retrying in JSON mode")
+        json_llm = _build_json_llm()
+        retry_user = (
+            f"User request: {request}\n\n"
+            f"--- ATTACHED DOCUMENT ---\n{uploaded_text}\n--- END ATTACHED DOCUMENT ---\n\n"
+            f"Your previous prose answer (which forgot the JSON block):\n{content}\n\n"
+            f"Now output the edits JSON for the change you described above."
+        )
+        retry_response = json_llm.invoke([
+            {"role": "system", "content": _JSON_RETRY_SYSTEM},
+            {"role": "user", "content": retry_user},
+        ])
+        retry_raw = (
             retry_response.content if hasattr(retry_response, "content") else str(retry_response)
         )
-        retry_edits = _extract_proposed_edits(retry_content)
+        retry_edits = _parse_json_edits(retry_raw)
         if retry_edits:
-            # Keep the original prose as the user-facing answer; append the
-            # retry's blocks so _extract_proposed_edits on the combined text
-            # picks them up (the frontend strips blocks for display anyway).
-            content = f"{content}\n\n{retry_content}"
             edits = retry_edits
-            logger.info("[legal_research] retry yielded %d block(s)", len(edits))
+            logger.info("[legal_research] JSON-mode retry yielded %d edit(s)", len(edits))
         else:
-            logger.warning("[legal_research] retry also produced no edit block")
+            logger.warning(
+                "[legal_research] JSON-mode retry produced no usable edits; raw=%r",
+                retry_raw[:200],
+            )
 
     return content, edits
 
