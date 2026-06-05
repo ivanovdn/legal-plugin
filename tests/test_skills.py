@@ -440,6 +440,19 @@ def test_extract_proposed_edits_skips_blocks_without_valid_action():
     assert _extract_proposed_edits(prose) == []
 
 
+def test_extract_proposed_edits_accepts_replace_all_action():
+    """replace_all is a valid action — used for 'fill every X' requests."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        '```json\n{"action": "replace_all", "target_text": "Signed by: [__]", '
+        '"new_text": "Signed by: John Doe"}\n```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 1
+    assert edits[0]["action"] == "replace_all"
+
+
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
     from skills.legal_research import _extract_proposed_edits

@@ -75,9 +75,12 @@ Sure — here's a 2x cap for Section 5.
 ```
 
 Actions and required fields:
-- "replace": rewrite existing text. Needs "target_text" + "new_text".
-- "insert":  add new text. Needs "anchor_text" + "position" ("after"|"before") + "new_text".
-- "delete":  remove text. Needs "target_text".
+- "replace":     rewrite ONE specific occurrence. Needs "target_text" + "new_text". Use when the user is changing a single, uniquely-identifiable phrase.
+- "replace_all": rewrite EVERY occurrence of an exact short string. Needs "target_text" + "new_text". USE THIS for "every", "all", or "each" requests (e.g. "fill every blank Signed by: [__]", "replace all [Year] placeholders"). The client loops body.search and replaces each match in turn — you don't need to identify positions or emit one block per location.
+- "insert":      add new text. Needs "anchor_text" + "position" ("after"|"before") + "new_text".
+- "delete":      remove text. Needs "target_text".
+
+For replace_all, target_text should be the SHORTEST UNIQUE PLACEHOLDER string (e.g. "Signed by: [__]", "[Year]", "[Legal Name]"). Don't include surrounding context — the whole point of replace_all is that the same string appears multiple times.
 
 The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
 
@@ -141,7 +144,7 @@ def _parse_json_edits(raw: str) -> list[dict]:
         return []
     return [
         c for c in candidates
-        if isinstance(c, dict) and c.get("action") in {"replace", "insert", "delete"}
+        if isinstance(c, dict) and c.get("action") in _VALID_ACTIONS
     ]
 
 
@@ -151,11 +154,12 @@ Schema:
   {"edits": [<edit>, <edit>, ...]}
 
 Each <edit> is one of:
-  {"action": "replace", "target_text": "...", "new_text": "..."}
-  {"action": "insert",  "anchor_text": "...", "position": "after"|"before", "new_text": "..."}
-  {"action": "delete",  "target_text": "..."}
+  {"action": "replace",     "target_text": "...", "new_text": "..."}
+  {"action": "replace_all", "target_text": "...", "new_text": "..."}
+  {"action": "insert",      "anchor_text": "...", "position": "after"|"before", "new_text": "..."}
+  {"action": "delete",      "target_text": "..."}
 
-If the same target_text appears multiple times and ALL of them must change, emit one separate replace edit per location whose target_text includes enough surrounding context (the previous line, an adjacent column/tab, etc.) to be unique. The client searches for target_text literally and replaces only the FIRST match per edit."""
+For "every X" / "all X" requests, USE replace_all with the shortest unique placeholder text as target_text — the client iterates body.search and replaces each occurrence. Do NOT emit multiple replace blocks with the same target_text; use one replace_all block instead."""
 
 
 def _build_agent():
@@ -265,6 +269,12 @@ def _looks_like_edit_promise(prose: str) -> bool:
     return bool(_EDIT_PROMISE_RE.search(prose or ""))
 
 
+# Edit actions the chat skill emits. `replace_all` is the multi-location variant
+# of `replace` — the client loops body.search on every match instead of just the
+# first. Lets the LLM stop hallucinating positions for "fill every X" requests.
+_VALID_ACTIONS = {"replace", "replace_all", "insert", "delete"}
+
+
 def _extract_proposed_edits(prose: str) -> list[dict]:
     """Pull fenced ```json``` blocks out of the agent's prose into structured edit proposals.
 
@@ -285,7 +295,7 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
             continue
         candidates = obj if isinstance(obj, list) else [obj]
         for c in candidates:
-            if isinstance(c, dict) and c.get("action") in {"replace", "insert", "delete"}:
+            if isinstance(c, dict) and c.get("action") in _VALID_ACTIONS:
                 proposals.append(c)
             else:
                 logger.warning("[legal_research] edit entry missing/invalid action: %r", c)

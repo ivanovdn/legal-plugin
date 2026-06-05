@@ -52,6 +52,16 @@ const pass = (cond: boolean, label: string) =>
   pass(blocks.length === 0, "unknown-action: skipped");
 }
 
+// 4b. replace_all action — accepted for multi-occurrence requests.
+{
+  const prose =
+    '```json\n{"action": "replace_all", "target_text": "Signed by: [__]", ' +
+    '"new_text": "Signed by: John Doe"}\n```';
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 1, "replace_all: accepted");
+  pass(blocks[0].action === "replace_all", "replace_all: action preserved");
+}
+
 // 5. No blocks — empty array, prose unchanged
 {
   const prose = "Why is the IP clause risky? It's the assignment direction.";

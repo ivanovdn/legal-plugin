@@ -460,6 +460,71 @@ export async function insertNear(
 }
 
 /**
+ * Replace EVERY occurrence of `target` with `newText` as tracked changes.
+ *
+ * Used for chat-driven "fill every X" requests. The LLM can't reliably enumerate
+ * positions for repeated placeholders (it hallucinates locations, fights with
+ * tab-separated columns, etc.) — but it CAN identify the placeholder string
+ * itself. We loop body.search → replace until no more matches, with a safety
+ * counter to prevent infinite loops on pathological inputs.
+ *
+ * Returns the number of replacements made. Fails closed (and rolls back to the
+ * user's prior change-tracking mode) on any error mid-loop.
+ */
+async function replaceAll(target: string, newText: string): Promise<Result<number>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  if (!target.trim()) return fail("Empty target text — nothing to replace.");
+  if (!newText.trim()) return fail("No replacement text provided.");
+
+  const MAX_ITER = 100;
+
+  try {
+    return await Word.run(async (context) => {
+      const doc = context.document;
+      doc.load("changeTrackingMode");
+      await context.sync();
+      const originalMode = doc.changeTrackingMode;
+      doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+
+      let count = 0;
+      try {
+        for (let i = 0; i < MAX_ITER; i++) {
+          const range = await findClauseRangeFromAnchors(context, [target]);
+          if (!range) break;
+
+          // Verify the match covers most of the intended target (same safety
+          // net as acceptRedline). Stops the loop if body.search fell back to
+          // a shorter prefix that would produce a nonsensical replacement.
+          range.load("text");
+          await context.sync();
+          const intended = normalizeForSearch(target).trim();
+          const matched = normalizeForSearch(range.text).trim();
+          if (matched.length < intended.length * MATCH_COMPLETENESS_THRESHOLD) {
+            break;
+          }
+
+          range.insertText(newText, Word.InsertLocation.replace);
+          await context.sync();
+          count++;
+        }
+      } finally {
+        doc.changeTrackingMode = originalMode;
+        await context.sync();
+      }
+
+      if (count === 0) {
+        return fail(
+          `Couldn't find "${target.length > 50 ? target.slice(0, 50) + "…" : target}" in the document.`,
+        );
+      }
+      return ok(count);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
  * Delete the range matching `targetText` as a tracked change (strikethrough).
  * Used for chat-driven removals like "delete the auto-renewal language."
  */
@@ -503,6 +568,15 @@ export async function applyEdit(proposal: EditProposal): Promise<Result<void>> {
     }
     const simplified = simplifyMultilineReplace(proposal.target_text, proposal.new_text);
     return acceptRedline(simplified.target, simplified.newText);
+  }
+  if (proposal.action === "replace_all") {
+    if (!proposal.target_text || !proposal.new_text) {
+      return fail("Replace-all proposal missing target_text or new_text.");
+    }
+    const result = await replaceAll(proposal.target_text, proposal.new_text);
+    // applyEdit returns Result<void>; surface the count via the success path
+    // implicitly (caller's "Applied ✓" UI doesn't need it). Errors propagate.
+    return result.ok ? ok(undefined) : result;
   }
   if (proposal.action === "insert") {
     if (!proposal.anchor_text || !proposal.new_text || !proposal.position) {

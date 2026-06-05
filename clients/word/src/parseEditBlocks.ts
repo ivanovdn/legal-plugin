@@ -3,7 +3,7 @@
 // the lawyer asks for a document change. Display the cleanedProse to the user;
 // render each EditProposal as a preview card with [Apply] / [Discard] buttons.
 
-export type EditAction = "replace" | "insert" | "delete";
+export type EditAction = "replace" | "replace_all" | "insert" | "delete";
 
 export type EditProposal = {
   action: EditAction;
@@ -15,7 +15,7 @@ export type EditProposal = {
 };
 
 const JSON_BLOCK_RE = /```json\s*\n([\s\S]*?)```/g;
-const VALID_ACTIONS = new Set<EditAction>(["replace", "insert", "delete"]);
+const VALID_ACTIONS = new Set<EditAction>(["replace", "replace_all", "insert", "delete"]);
 
 /** Escape literal LF/CR/TAB characters that sit INSIDE JSON string values.
  *  Local LLMs occasionally line-wrap a long string value mid-content, which
