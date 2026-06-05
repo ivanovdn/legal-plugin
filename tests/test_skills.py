@@ -514,6 +514,90 @@ def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
     assert result["proposed_edits"][0]["new_text"] == "2x"
 
 
+def test_legal_research_retries_when_edit_promise_lacks_block(monkeypatch):
+    """When the LLM promises an edit in prose but emits no JSON block, the
+    skill re-prompts once for a focused JSON-only response and merges the
+    resulting block(s) into the final state."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    first = MagicMock()
+    first.content = (
+        'I will replace the placeholder "Signed by: [__]" with "Signed by: John Doe" '
+        "in two locations within the document."
+    )
+    second = MagicMock()
+    second.content = (
+        '```json\n{"action": "replace", "target_text": "Signed by: [__]\\t",'
+        ' "new_text": "Signed by: John Doe\\t"}\n```'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.side_effect = [first, second]
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="take every blank Signed by: [__] and fill with John Doe",
+            uploaded_docs=[{"text": "Signed by: [__]\tSigned by: Boris"}],
+        )
+        result = legal_research(state)
+
+    # Both LLM calls happened — primary + retry.
+    assert fake_llm.invoke.call_count == 2
+    # And the retry's block landed on state.
+    assert len(result["proposed_edits"]) == 1
+    assert result["proposed_edits"][0]["new_text"].startswith("Signed by: John Doe")
+
+
+def test_legal_research_does_not_retry_when_block_already_present(monkeypatch):
+    """If the first response already contains a JSON block, no retry happens."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    response = MagicMock()
+    response.content = (
+        "Filling the placeholder:\n"
+        '```json\n{"action": "replace", "target_text": "X", "new_text": "Y"}\n```'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = response
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Replace X with Y.",
+            uploaded_docs=[{"text": "X here."}],
+        )
+        legal_research(state)
+
+    assert fake_llm.invoke.call_count == 1
+
+
+def test_legal_research_does_not_retry_on_pure_qa(monkeypatch):
+    """A Q&A response with no edit promise must not trigger a retry."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    response = MagicMock()
+    response.content = "Section 5 caps liability at 12 months of fees. That's the standard position."
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = response
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Why is the cap risky?",
+            uploaded_docs=[{"text": "Liability cap: 12 months."}],
+        )
+        result = legal_research(state)
+
+    assert fake_llm.invoke.call_count == 1
+    assert result["proposed_edits"] == []
+
+
 def test_legal_research_resets_proposed_edits_each_turn(monkeypatch):
     """A turn that produces no edit block clears the prior turn's proposal.
 

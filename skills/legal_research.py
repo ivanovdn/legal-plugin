@@ -141,6 +141,20 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
+# Phrases that imply the model intends to make an edit. Mirrors the regex used
+# in clients/word/src/components/ChatTab.tsx so backend retry logic and the UI
+# warning fire on the same signal.
+_EDIT_PROMISE_RE = re.compile(
+    r"\bi['’]?(?:ll| will| am going to| have)\b[^.?!\n]*"
+    r"\b(?:replace|insert|delete|fill|add|remove|change|rewrite|tighten|loosen|update|edit|modify|set)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_edit_promise(prose: str) -> bool:
+    """Heuristic: did the model claim it would make an edit (without emitting a block)?"""
+    return bool(_EDIT_PROMISE_RE.search(prose or ""))
+
 
 def _extract_proposed_edits(prose: str) -> list[dict]:
     """Pull fenced ```json``` blocks out of the agent's prose into structured edit proposals.
@@ -195,7 +209,45 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     llm = _build_llm()
     response = llm.invoke(messages)
     content = response.content if hasattr(response, "content") else str(response)
-    return content, _extract_proposed_edits(content)
+    edits = _extract_proposed_edits(content)
+
+    # Retry once if the model promised an edit in prose but forgot the JSON
+    # block. The local LLM (qwen3.6) does this for multi-location requests
+    # like "fill every Signed by: [__]" — it says "I will replace..." but
+    # emits no block, so the change never reaches the document. A focused
+    # follow-up prompt fixes it most of the time without changing the
+    # conversational UX (the user sees the original prose plus a working
+    # Apply card).
+    if not edits and _looks_like_edit_promise(content):
+        logger.info("[legal_research] edit-promise detected without block — retrying for JSON")
+        retry_messages = [
+            *messages,
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": (
+                "You described an edit but didn't emit the required ```json``` block, "
+                "so the change can't reach the document. Output ONLY the fenced "
+                "```json``` block(s) for the edit you described — no prose, no "
+                "preamble, no closing remark. If the same placeholder text appears "
+                "in multiple locations, emit one block PER LOCATION and include "
+                "surrounding context in each target_text so the matches are unique."
+            )},
+        ]
+        retry_response = llm.invoke(retry_messages)
+        retry_content = (
+            retry_response.content if hasattr(retry_response, "content") else str(retry_response)
+        )
+        retry_edits = _extract_proposed_edits(retry_content)
+        if retry_edits:
+            # Keep the original prose as the user-facing answer; append the
+            # retry's blocks so _extract_proposed_edits on the combined text
+            # picks them up (the frontend strips blocks for display anyway).
+            content = f"{content}\n\n{retry_content}"
+            edits = retry_edits
+            logger.info("[legal_research] retry yielded %d block(s)", len(edits))
+        else:
+            logger.warning("[legal_research] retry also produced no edit block")
+
+    return content, edits
 
 
 def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]:
