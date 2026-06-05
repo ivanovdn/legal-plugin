@@ -206,6 +206,13 @@ async function findClauseRange(
   }
   if (!startMatch) return null;
 
+  // Head+tail expansion is for long multi-paragraph clauses where the head
+  // alone can't pin the right range. For SHORT needles (<200 chars), the head
+  // is the intended range — expanding to a separately-found tail would
+  // silently absorb unrelated text up to the next time that tail word
+  // appears (often a section title that recurs in headings). Bail early.
+  if (currentText.length < 200) return startMatch;
+
   // Step 2: find the end via the first matching tail candidate.
   let endMatch: Word.Range | null = null;
   for (const trial of tailCandidates(currentText)) {
@@ -217,9 +224,19 @@ async function findClauseRange(
   if (!endMatch) return startMatch;
 
   // Step 3: span from the start of the head match to the end of the tail match.
-  return startMatch
+  const span = startMatch
     .getRange(Word.RangeLocation.start)
     .expandTo(endMatch.getRange(Word.RangeLocation.end));
+
+  // Safety check: if the span ended up much bigger than the original needle
+  // (head and tail in unrelated parts of the doc), the expansion is bogus.
+  // Fall back to just the head match.
+  span.load("text");
+  await context.sync();
+  if (span.text.length > currentText.length * 3) {
+    return startMatch;
+  }
+  return span;
 }
 
 /**
@@ -246,6 +263,40 @@ async function findClauseRangeFromAnchors(
 /** Normalize string|string[] into the ordered candidate list the helpers use. */
 function toAnchors(input: string | string[]): string[] {
   return Array.isArray(input) ? input : [input];
+}
+
+/**
+ * When target_text and new_text are both multi-line and differ on exactly ONE
+ * line, collapse to that single-line replace. The LLM emits multi-line targets
+ * (e.g. "Signed by: [__]\nPrecedence of Subsequent Agreement.") to disambiguate
+ * the location — but `body.search` doesn't match across paragraphs, so the
+ * head-and-tail expansion would silently absorb intervening text (a section
+ * number, a paragraph break). Replacing only the actually-changed line avoids
+ * the over-broad replacement while still benefiting from the LLM's intent.
+ *
+ * If zero or 2+ lines differ, leave both fields untouched and let the existing
+ * head+tail expansion handle the multi-paragraph case.
+ */
+export function simplifyMultilineReplace(
+  target: string,
+  newText: string,
+): { target: string; newText: string } {
+  if (!target.includes("\n") || !newText.includes("\n")) {
+    return { target, newText };
+  }
+  const tLines = target.split(/\r?\n/);
+  const nLines = newText.split(/\r?\n/);
+  if (tLines.length !== nLines.length) return { target, newText };
+  const diffs: Array<{ old: string; new: string }> = [];
+  for (let i = 0; i < tLines.length; i++) {
+    if (tLines[i].trim() !== nLines[i].trim()) {
+      diffs.push({ old: tLines[i], new: nLines[i] });
+    }
+  }
+  if (diffs.length === 1) {
+    return { target: diffs[0].old, newText: diffs[0].new };
+  }
+  return { target, newText };
 }
 
 /**
@@ -429,7 +480,8 @@ export async function applyEdit(proposal: EditProposal): Promise<Result<void>> {
     if (!proposal.target_text || !proposal.new_text) {
       return fail("Replace proposal missing target_text or new_text.");
     }
-    return acceptRedline(proposal.target_text, proposal.new_text);
+    const simplified = simplifyMultilineReplace(proposal.target_text, proposal.new_text);
+    return acceptRedline(simplified.target, simplified.newText);
   }
   if (proposal.action === "insert") {
     if (!proposal.anchor_text || !proposal.new_text || !proposal.position) {
