@@ -225,8 +225,13 @@ def _looks_like_edit_promise(prose: str) -> bool:
 def _extract_proposed_edits(prose: str) -> list[dict]:
     """Pull fenced ```json``` blocks out of the agent's prose into structured edit proposals.
 
-    Tolerant of malformed JSON — any block that fails to parse is skipped with a warning.
-    The original prose is left untouched; the frontend strips blocks for display.
+    A block can contain a single edit object OR an array of edits — the LLM
+    sometimes consolidates a multi-location request into one fenced block with
+    an array (e.g. ```json [{...}, {...}] ```). Both shapes are accepted.
+
+    Tolerant of malformed JSON — any block that fails to parse is skipped with
+    a warning. The original prose is left untouched; the frontend strips blocks
+    for display.
     """
     proposals: list[dict] = []
     for match in _JSON_BLOCK_RE.finditer(prose or ""):
@@ -236,10 +241,12 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
         except json.JSONDecodeError as e:
             logger.warning("[legal_research] skipping malformed JSON block: %s", e)
             continue
-        if isinstance(obj, dict) and obj.get("action") in {"replace", "insert", "delete"}:
-            proposals.append(obj)
-        else:
-            logger.warning("[legal_research] JSON block missing/invalid action: %r", obj)
+        candidates = obj if isinstance(obj, list) else [obj]
+        for c in candidates:
+            if isinstance(c, dict) and c.get("action") in {"replace", "insert", "delete"}:
+                proposals.append(c)
+            else:
+                logger.warning("[legal_research] edit entry missing/invalid action: %r", c)
     return proposals
 
 

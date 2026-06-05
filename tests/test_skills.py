@@ -448,6 +448,43 @@ def test_extract_proposed_edits_no_blocks_returns_empty():
     assert _extract_proposed_edits("") == []
 
 
+def test_extract_proposed_edits_accepts_array_inside_one_block():
+    """Regression: local LLM consolidates multi-location edits into a single
+    fenced block whose body is a JSON array. The old parser expected only a
+    single dict and silently dropped the array, leaving proposed_edits empty
+    even though the model emitted the right structured data."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        'I will replace the placeholder in two locations.\n\n'
+        '```json\n'
+        '[{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}, '
+        '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]\n'
+        '```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 2
+    assert all(e["action"] == "replace" for e in edits)
+    assert all(e["new_text"] == "Signed by: John Doe" for e in edits)
+
+
+def test_extract_proposed_edits_array_with_invalid_entries_filtered():
+    """An array containing some invalid entries keeps the valid ones and drops the rest."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        '```json\n'
+        '[{"action": "replace", "target_text": "X", "new_text": "Y"}, '
+        '{"action": "moonwalk", "target_text": "Z"}, '
+        '{"action": "insert", "anchor_text": "Sec 7", "position": "after", "new_text": "..."}]\n'
+        '```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 2
+    assert edits[0]["action"] == "replace"
+    assert edits[1]["action"] == "insert"
+
+
 # --- legal_research doc-chat fast path (no ReAct agent when uploaded_docs is present) ---
 
 

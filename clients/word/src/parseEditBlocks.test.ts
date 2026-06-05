@@ -66,3 +66,39 @@ const pass = (cond: boolean, label: string) =>
   pass(blocks.length === 0, "empty: no blocks");
   pass(cleanedProse === "", "empty: empty prose");
 }
+
+// 7. Array inside ONE block (the regression that broke "fill every Signed by")
+//    The local LLM consolidated two edits into a single fenced block holding
+//    an array. The old parser dropped both because it expected a single dict.
+{
+  const prose =
+    "I will replace the placeholder in two locations.\n\n" +
+    "```json\n" +
+    '[{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}, ' +
+    '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 2, "array-in-block: both edits extracted");
+  pass(
+    blocks[0].action === "replace" && blocks[1].action === "replace",
+    "array-in-block: both are replace",
+  );
+  pass(
+    blocks[0].new_text === "Signed by: John Doe",
+    "array-in-block: new_text preserved",
+  );
+}
+
+// 8. Array with mixed-validity entries — valid ones kept, invalid dropped.
+{
+  const prose =
+    "```json\n" +
+    '[{"action": "replace", "target_text": "X", "new_text": "Y"}, ' +
+    '{"action": "moonwalk", "target_text": "Z"}, ' +
+    '{"action": "insert", "anchor_text": "Section 7", "position": "after", "new_text": "..."}]\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 2, "array-mixed: 2 valid kept, 1 dropped");
+  pass(blocks[0].action === "replace", "array-mixed: replace kept");
+  pass(blocks[1].action === "insert", "array-mixed: insert kept");
+}

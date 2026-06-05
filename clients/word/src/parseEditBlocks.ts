@@ -33,13 +33,19 @@ export function extractEditBlocks(prose: string): {
       // Tolerant: skip malformed blocks, keep others.
       continue;
     }
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      VALID_ACTIONS.has((parsed as { action: EditAction }).action)
-    ) {
-      blocks.push(parsed as EditProposal);
+    // A block may contain a single edit object OR an array of edits — the LLM
+    // sometimes consolidates multi-location requests into one fenced block
+    // with an array (e.g. ```json [{...}, {...}] ```). Both shapes accepted.
+    const candidates: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    for (const c of candidates) {
+      if (
+        c &&
+        typeof c === "object" &&
+        !Array.isArray(c) &&
+        VALID_ACTIONS.has((c as { action: EditAction }).action)
+      ) {
+        blocks.push(c as EditProposal);
+      }
     }
   }
 
