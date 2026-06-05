@@ -476,36 +476,73 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
   if (!target.trim()) return fail("Empty target text — nothing to replace.");
   if (!newText.trim()) return fail("No replacement text provided.");
 
-  const MAX_ITER = 100;
+  // Hard ceiling regardless of how many matches body.text reports. Stops a
+  // runaway loop from blowing up the doc if anything in the iteration logic
+  // gets confused (e.g. Track Changes interactions surprise body.search).
+  const HARD_CAP = 25;
+
+  const preview = target.length > 50 ? target.slice(0, 50) + "…" : target;
 
   try {
     return await Word.run(async (context) => {
       const doc = context.document;
+      const body = doc.body;
       doc.load("changeTrackingMode");
+      body.load("text");
       await context.sync();
+
+      // Count occurrences up-front so the loop is bounded by the actual
+      // expected matches. Critical: with Track Changes ON, the model preserves
+      // the strikethrough copy of replaced text in the doc tree — without an
+      // upper bound the previous loop kept re-matching the same position and
+      // stacked dozens of insertions on top of one another.
+      const expectedCount = body.text.split(target).length - 1;
+      if (expectedCount === 0) {
+        return fail(`Couldn't find "${preview}" in the document.`);
+      }
+      const cap = Math.min(expectedCount + 2, HARD_CAP);
+
       const originalMode = doc.changeTrackingMode;
       doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
 
       let count = 0;
-      try {
-        for (let i = 0; i < MAX_ITER; i++) {
-          const range = await findClauseRangeFromAnchors(context, [target]);
-          if (!range) break;
+      // Search scope advances after each replacement so the next iteration
+      // can only find matches downstream of the last edit. Range.search and
+      // Body.search share the same signature, so the union type calls .search
+      // uniformly.
+      let scope: Word.Body | Word.Range = body;
 
-          // Verify the match covers most of the intended target (same safety
-          // net as acceptRedline). Stops the loop if body.search fell back to
-          // a shorter prefix that would produce a nonsensical replacement.
-          range.load("text");
+      try {
+        for (let i = 0; i < cap; i++) {
+          const results: Word.RangeCollection = scope.search(target, {
+            matchCase: false,
+            matchWildcards: false,
+          });
+          results.load("items");
           await context.sync();
+          if (results.items.length === 0) break;
+
+          const match: Word.Range = results.items[0];
+          match.load("text");
+          await context.sync();
+
           const intended = normalizeForSearch(target).trim();
-          const matched = normalizeForSearch(range.text).trim();
+          const matched = normalizeForSearch(match.text).trim();
           if (matched.length < intended.length * MATCH_COMPLETENESS_THRESHOLD) {
             break;
           }
 
-          range.insertText(newText, Word.InsertLocation.replace);
+          const inserted: Word.Range = match.insertText(newText, Word.InsertLocation.replace);
           await context.sync();
           count++;
+
+          // Advance the search scope to AFTER the inserted text so the next
+          // iteration moves forward in the document. Without this, Track
+          // Changes keeps the original target visible to body.search and the
+          // loop spins on the same location.
+          scope = inserted
+            .getRange(Word.RangeLocation.end)
+            .expandTo(body.getRange(Word.RangeLocation.end));
         }
       } finally {
         doc.changeTrackingMode = originalMode;
@@ -513,9 +550,7 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
       }
 
       if (count === 0) {
-        return fail(
-          `Couldn't find "${target.length > 50 ? target.slice(0, 50) + "…" : target}" in the document.`,
-        );
+        return fail(`Couldn't find "${preview}" in the document.`);
       }
       return ok(count);
     });
