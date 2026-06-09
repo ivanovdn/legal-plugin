@@ -22,6 +22,7 @@ Main business context: Pre-engagement diligence for SaaS rollout.
 | NDA-002 | Section 1 — Definition of CI | Yellow | Only marked information protected — definition says "any Confidential Information must be marked or identified in writing." | Broaden to include oral and unmarked. | Legal owner |
 | NDA-006 | Section 5 — Term | Red | Term is 6 months — "this Agreement shall terminate six (6) months after the Effective Date." Trade secrets get no continuing protection. | Extend to 2 years; trade secrets indefinite. | CLCO |
 | NDA-010 | Section 8 — Governing law | Green | Tennessee/AAA — matches template. | None. | Legal owner |
+| NDA-MISSING-1 | Whole agreement | Missing Context | Counterparty's expected disclosures unknown. | Confirm whether ACME will share source code or pricing. | Sales |
 
 # Red and Missing Context Items
 | Issue ID | Type | Clause / section | Why it blocks signature | Required action | Approver / owner |
@@ -65,10 +66,13 @@ console.log("Counts:", r1.counts);
 
 pass(r1.header.contractType === "Mutual NDA", "header contractType");
 pass(r1.header.overallStatus === "Not ready", "header overallStatus");
-pass(r1.findings.length === 3, "3 findings parsed");
+pass(r1.findings.length === 4, "4 findings parsed");
 pass(r1.findings[0].risk === "RED", "RED first (sort order)");
-pass(r1.findings[2].risk === "GREEN", "GREEN last (sort order)");
-pass(r1.counts.red === 1 && r1.counts.yellow === 1 && r1.counts.green === 1, "counts");
+pass(r1.findings[3].risk === "GREEN", "GREEN last (sort order)");
+pass(
+  r1.counts.red === 1 && r1.counts.yellow === 1 && r1.counts.green === 1 && r1.counts.missingContext === 1,
+  "counts",
+);
 pass(r1.findings[0].issueId === "NDA-006", "issueId carried");
 pass(r1.findings[0].owner === "CLCO", "owner column");
 pass(r1.findings[0].requiredAction.includes("Extend to 2 years"), "requiredAction populated");
@@ -193,6 +197,65 @@ pass(
 pass(
   partiesF.redline.includes("Legal Name") && !partiesF.redline.includes("Month"),
   "Parties gets its OWN redline, not the Effective Date one",
+);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sample 5b — Blockers card is spec-conformant (drops Yellow, fills omissions).
+//
+// Real failure mode from user testing: the LLM put a Yellow row in the
+// "Red and Missing Context Items" table (spec says only Red + Missing
+// Context belong there), and ALSO omitted one Missing Context entry that
+// existed in Key Findings. The derived Blockers list must:
+//   - exclude the rogue Yellow row
+//   - include the omitted Missing Context row (enriched from Key Findings)
+//   - take "why it blocks" / "approver" from the raw table when present
+// ──────────────────────────────────────────────────────────────────────────
+
+const sample5b = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Preamble / Effective Date | Missing Context | Date is a placeholder. | Fill date. | Sales |
+| 2 | Structure of the Agreement | Yellow | SOW precedence undermines MSA. | Revise. | Legal |
+| 3 | Indemnity Exceptions | Red | Uncapped indemnity. | Apply cap. | CLCO |
+| 4 | Information Security & Privacy | Missing Context | No DPA attached. | Request data flow. | Privacy |
+
+# Red and Missing Context Items
+| Issue ID | Type | Clause / section | Why it blocks signature | Required action | Approver / owner |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Missing Context | Preamble / Effective Date | Unfilled legal names, dates. | Complete all placeholders. | Sales / Legal |
+| 2 | Yellow | Structure of the Agreement | SOW precedence undermines IP. | Revise to MSA-prevailing. | Legal |
+| 3 | Red | Indemnity Exceptions | Uncapped liability. | Apply cap or escalate. | CLCO |
+`;
+
+const r5b = parseContractReview(sample5b);
+console.log("\n=== Sample 5b: Blockers card spec-conformance ===");
+console.log("Blockers:", r5b.blockers.map((b) => `${b.type} :: ${b.clause}`));
+
+pass(r5b.blockers.length === 3, "blockers: 3 entries (1 Red + 2 Missing Context — Yellow dropped)");
+pass(
+  r5b.blockers.every((b) => b.type === "Red" || b.type === "Missing Context"),
+  "blockers: no Yellow leakage",
+);
+pass(
+  !r5b.blockers.some((b) => b.clause === "Structure of the Agreement"),
+  "blockers: Yellow row excluded",
+);
+pass(
+  r5b.blockers.some((b) => b.clause === "Information Security & Privacy"),
+  "blockers: omitted Missing Context entry filled in from Key Findings",
+);
+// The Effective Date entry should pick up the richer "why it blocks" from the
+// raw blockers table (vs falling back to the shorter Key Findings issue text).
+const effDateBlocker = r5b.blockers.find((b) => b.clause === "Preamble / Effective Date");
+pass(
+  !!effDateBlocker && effDateBlocker.whyItBlocks.includes("Unfilled legal names"),
+  "blockers: 'why it blocks' enriched from raw table when present",
+);
+// The InfoSec entry has no raw row → fall back to Key Findings' issue text.
+const infoSecBlocker = r5b.blockers.find((b) => b.clause === "Information Security & Privacy");
+pass(
+  !!infoSecBlocker && infoSecBlocker.whyItBlocks === "No DPA attached.",
+  "blockers: 'why it blocks' falls back to Key Findings issue when no raw row",
 );
 
 // ──────────────────────────────────────────────────────────────────────────

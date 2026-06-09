@@ -373,7 +373,7 @@ function mergeRedlines(findings: Finding[], body: string): void {
   }
 }
 
-function parseBlockers(body: string): Blocker[] {
+function parseBlockerRows(body: string): Blocker[] {
   return parseTable(body).map((row) => ({
     issueId: pick(row, "issue id"),
     type: pick(row, "type"),
@@ -382,6 +382,42 @@ function parseBlockers(body: string): Blocker[] {
     requiredAction: pick(row, "required action"),
     approverOwner: pick(row, "approver / owner", "approver"),
   }));
+}
+
+/**
+ * Derive the spec-conformant Blockers list.
+ *
+ * The team's required output format types the "Red and Missing Context Items"
+ * table as a strict subset of Key Findings where rating ∈ {Red, Missing Context}.
+ * The LLM is often non-conformant (puts Yellow rows in there, or omits a
+ * Red/Missing Context finding from the blocker table entirely). We rebuild
+ * the list from Key Findings (the comprehensive source of truth) and enrich
+ * each blocker with "why it blocks" + "approver" from the matching Red/Missing
+ * row when available — matched first by Issue ID, then by clause-name.
+ */
+function deriveBlockers(findings: Finding[], rawBlockerRows: Blocker[]): Blocker[] {
+  const byIssueId = new Map<string, Blocker>();
+  const byClause = new Map<string, Blocker>();
+  for (const b of rawBlockerRows) {
+    if (b.issueId) byIssueId.set(b.issueId, b);
+    if (b.clause) byClause.set(b.clause.toLowerCase().trim(), b);
+  }
+  const out: Blocker[] = [];
+  for (const f of findings) {
+    if (f.risk !== "RED" && f.risk !== "MISSING_CONTEXT") continue;
+    const enrich =
+      (f.issueId ? byIssueId.get(f.issueId) : undefined) ??
+      byClause.get(f.clause.toLowerCase().trim());
+    out.push({
+      issueId: f.issueId,
+      type: f.risk === "RED" ? "Red" : "Missing Context",
+      clause: f.clause,
+      whyItBlocks: enrich?.whyItBlocks || f.issue,
+      requiredAction: enrich?.requiredAction || f.requiredAction,
+      approverOwner: enrich?.approverOwner || f.owner,
+    });
+  }
+  return out;
 }
 
 function parseQuestions(body: string): BusinessQuestion[] {
@@ -397,13 +433,18 @@ export function parseContractReview(markdown: string): ReviewSummary {
 
   const header = parseHeader(sections.get("review summary") ?? "");
   const findings = parseFindings(sections.get("key findings") ?? "");
-  const blockers = parseBlockers(sections.get("red and missing context items") ?? "");
+  const rawBlockerRows = parseBlockerRows(sections.get("red and missing context items") ?? "");
   const businessQuestions = parseQuestions(sections.get("business questions") ?? "");
   const gate = parseGate(sections.get("no signature checklist result") ?? "");
 
   mergeRedlines(findings, sections.get("suggested redlines / fallbacks") ?? "");
 
   findings.sort((a, b) => RISK_ORDER[a.risk] - RISK_ORDER[b.risk]);
+
+  // Derive the spec-conformant blockers list AFTER findings are populated +
+  // sorted. Source of truth is Key Findings; the raw Red/Missing-Context
+  // table only provides supplemental "why it blocks" and "approver" data.
+  const blockers = deriveBlockers(findings, rawBlockerRows);
 
   const counts = {
     red: findings.filter((f) => f.risk === "RED").length,
