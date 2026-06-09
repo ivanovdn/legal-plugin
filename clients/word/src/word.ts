@@ -476,11 +476,9 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
   if (!target.trim()) return fail("Empty target text — nothing to replace.");
   if (!newText.trim()) return fail("No replacement text provided.");
 
-  // Hard ceiling regardless of how many matches body.text reports. Stops a
-  // runaway loop from blowing up the doc if anything in the iteration logic
-  // gets confused (e.g. Track Changes interactions surprise body.search).
+  // Hard ceiling — even if body.search returns dozens of matches, never apply
+  // more than this many tracked changes from a single chat turn.
   const HARD_CAP = 25;
-
   const preview = target.length > 50 ? target.slice(0, 50) + "…" : target;
 
   try {
@@ -488,70 +486,63 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
       const doc = context.document;
       const body = doc.body;
       doc.load("changeTrackingMode");
-      body.load("text");
       await context.sync();
 
-      // Count occurrences up-front so the loop is bounded by the actual
-      // expected matches. Critical: with Track Changes ON, the model preserves
-      // the strikethrough copy of replaced text in the doc tree — without an
-      // upper bound the previous loop kept re-matching the same position and
-      // stacked dozens of insertions on top of one another.
-      const expectedCount = body.text.split(target).length - 1;
-      if (expectedCount === 0) {
+      // CRITICAL: collect every match BEFORE turning Track Changes on or doing
+      // any modification. body.search returns Range objects pinned to the
+      // current doc positions; iterating over THESE references means we
+      // operate on a frozen snapshot, never re-search a doc that has Track
+      // Changes deletion-markup interfering with body.search.
+      //
+      // Earlier attempts (loop+advance-scope, loop+upfront-count) couldn't
+      // beat this: Office.js Track Changes leaves the original target text
+      // visible to body.search even after insertText('replace'), so any
+      // re-search inside the same Word.run kept finding the same spot and
+      // stacking insertions on top of one another.
+      const matches = body.search(target, {
+        matchCase: false,
+        matchWildcards: false,
+      });
+      matches.load("items");
+      await context.sync();
+
+      if (matches.items.length === 0) {
         return fail(`Couldn't find "${preview}" in the document.`);
       }
-      const cap = Math.min(expectedCount + 2, HARD_CAP);
+
+      const snapshot: Word.Range[] = matches.items.slice(0, HARD_CAP);
+      // Load text on every match in one batch so we can verify completeness
+      // before mutating anything.
+      for (const m of snapshot) m.load("text");
+      await context.sync();
+
+      const intended = normalizeForSearch(target).trim();
+      const validMatches = snapshot.filter(
+        (m) =>
+          normalizeForSearch(m.text).trim().length >=
+          intended.length * MATCH_COMPLETENESS_THRESHOLD,
+      );
+      if (validMatches.length === 0) {
+        return fail(
+          `Found "${preview}" but no match covered enough of the target — refusing to apply partial replacements.`,
+        );
+      }
 
       const originalMode = doc.changeTrackingMode;
       doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
 
       let count = 0;
-      // Search scope advances after each replacement so the next iteration
-      // can only find matches downstream of the last edit. Range.search and
-      // Body.search share the same signature, so the union type calls .search
-      // uniformly.
-      let scope: Word.Body | Word.Range = body;
-
       try {
-        for (let i = 0; i < cap; i++) {
-          const results: Word.RangeCollection = scope.search(target, {
-            matchCase: false,
-            matchWildcards: false,
-          });
-          results.load("items");
-          await context.sync();
-          if (results.items.length === 0) break;
-
-          const match: Word.Range = results.items[0];
-          match.load("text");
-          await context.sync();
-
-          const intended = normalizeForSearch(target).trim();
-          const matched = normalizeForSearch(match.text).trim();
-          if (matched.length < intended.length * MATCH_COMPLETENESS_THRESHOLD) {
-            break;
-          }
-
-          const inserted: Word.Range = match.insertText(newText, Word.InsertLocation.replace);
-          await context.sync();
+        for (const match of validMatches) {
+          match.insertText(newText, Word.InsertLocation.replace);
           count++;
-
-          // Advance the search scope to AFTER the inserted text so the next
-          // iteration moves forward in the document. Without this, Track
-          // Changes keeps the original target visible to body.search and the
-          // loop spins on the same location.
-          scope = inserted
-            .getRange(Word.RangeLocation.end)
-            .expandTo(body.getRange(Word.RangeLocation.end));
         }
+        await context.sync();
       } finally {
         doc.changeTrackingMode = originalMode;
         await context.sync();
       }
 
-      if (count === 0) {
-        return fail(`Couldn't find "${preview}" in the document.`);
-      }
       return ok(count);
     });
   } catch (e) {
