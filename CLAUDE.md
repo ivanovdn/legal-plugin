@@ -21,7 +21,7 @@ skills/             Domain skills invoked by the graph
   base.py             load_skill_prompt + load_bundle (per-type playbook assembly)
   contract_review/    Per-type playbook bundle (auto-detects NDA/MSA/SOW/BAA)
     playbook/         GENERATED — do not hand-edit (run scripts/build_playbook.py)
-  legal_research.py   ReAct agent — handles uploaded_docs + chat_history
+  legal_research.py   Direct ChatOllama for doc-attached chats; ReAct agent for RAG research
 data/contract_review_skills/   CANONICAL legal-team source — do not hand-edit
   Trinetix_Contract_Playbook_2026.docx + per-type SKILL.md + shared references
 clients/
@@ -59,6 +59,11 @@ scripts/build_playbook.py   .docx + team skill folders → playbook/ markdown (i
 - **Track Changes restore:** wrap redline replacement in try/finally and restore `doc.changeTrackingMode` to the user's prior value.
 - **Tab state persistence:** keep both tabs mounted and toggle `display: none` — conditional rendering wipes chat history on tab switch. See [clients/word/src/App.tsx](clients/word/src/App.tsx).
 - **Chat tab grounding:** [skills/legal_research.py](skills/legal_research.py) reads `uploaded_docs` from state and embeds the doc text + a conversational response-style directive into the user message. ChatTab posts with `task_type: "research"` to skip the intent router.
+- **`body.search` re-finds Track-Changes deletions.** A second `body.search` inside the same `Word.run` after `range.insertText('replace')` keeps finding the deletion-marked original at the same position — looping with scope-advancement still failed. For multi-location replace: call `body.search` ONCE upfront, snapshot the `Range[]`, then iterate and replace each. Office.js ranges remain valid after sibling modifications. See `replaceAll` in [clients/word/src/word.ts](clients/word/src/word.ts).
+- **`body.search` ignores raw `\t` characters in tables.** Two-column signature blocks where Word renders text as `Signed by: [__]\tSigned by: Boris` won't match a literal-tab needle — fall back to shorter anchors or use a `replace_all` block with the un-tabbed placeholder string.
+- **Refuse to apply when the matched range is < 85% of the intended target.** `searchCandidates` falls back to progressively shorter prefixes; without the safety net, `acceptRedline` would inject the full long `new_text` into a short prefix match (silently-wrong track change). Threshold check is in [clients/word/src/word.ts](clients/word/src/word.ts).
+- **Multi-line replace targets need single-line collapse.** When `target_text` and `new_text` both have `\n` but differ on exactly one line, `simplifyMultilineReplace` reduces to a single-line replace — `body.search` can't span paragraph breaks, and head+tail expansion absorbs intervening text (eats section numbers, etc.).
+- **Frontend fallback uses `length > 0`, not `??`.** `??` only falls back on null/undefined — an empty `proposed_edits` array short-circuits to the empty backend value. Prefer non-empty: `backendEdits.length > 0 ? backendEdits : frontendBlocks`.
 
 ### Backend
 
@@ -66,6 +71,16 @@ scripts/build_playbook.py   .docx + team skill folders → playbook/ markdown (i
 - **`chat_history` reducer** in [graph/state.py](graph/state.py) caps at `2 * chat_history_n_turns` and is idempotent on no-op nodes — so passing `messages` through every node is safe.
 - **RedisSaver checkpointer** refreshes TTL on every interaction — sessions survive resume.
 - **CORS is `allow_origins=["*"]`** in [api/main.py](api/main.py) — both Chainlit and the Word add-in call same backend.
+- **Doc-attached chat skips the ReAct agent.** `legal_research._run_doc_chat` uses a direct `ChatOllama` call (`reasoning=False`) — the ReAct path with `search_legal`/`get_document` tools made each turn multi-minute on the local LLM with no gain when the doc is already in context. ReAct stays for the no-uploaded-docs research path.
+- **`uvicorn` does NOT auto-reload Python changes by default.** Edits to `skills/`, `graph/`, `api/` require restarting `bash scripts/start.sh`. Vite HMR catches frontend, FastAPI does not.
+
+### Chat edit-block parsing
+
+- **A fenced ` ```json ``` ` block can contain a single edit OR an array.** Local LLMs often consolidate multi-location requests into `[{...}, {...}]` inside one block. Both `_extract_proposed_edits` and `extractEditBlocks` accept either shape.
+- **JSON strings can have raw `\n`/`\t` mid-value.** When the LLM line-wraps a long string value, `json.loads`/`JSON.parse` throws. `_tolerant_json_loads` / `tolerantParse` walk the text, track in-string state, and escape unescaped whitespace before retrying.
+- **Edit-promise detector covers past tense too.** "I have replaced…" needs `\w{0,3}\b` suffix-tolerant verb stems (`replac`, `insert`, `delet`, …). Strict `\breplace\b` silently misses past-tense forms.
+- **Ollama `format='json'` mode for the retry.** When the conversational LLM emits prose without a JSON block, retry with `ChatOllama(format='json')` — structurally forces valid JSON output. See `_build_json_llm` in [skills/legal_research.py](skills/legal_research.py).
+- **Use `replace_all` for "every X" requests.** The model doesn't have to enumerate positions; the client snapshots all matches via `body.search` upfront. New `replace_all` action lives alongside `replace` / `insert` / `delete` — see `_VALID_ACTIONS` in [skills/legal_research.py](skills/legal_research.py) and `applyEdit` in [clients/word/src/word.ts](clients/word/src/word.ts).
 
 ### Playbook bundle (skills/contract_review/)
 
@@ -75,6 +90,7 @@ scripts/build_playbook.py   .docx + team skill folders → playbook/ markdown (i
 - **Contract type detection is a heading-keyword heuristic** ([skills/contract_review/contract_review.py](skills/contract_review/contract_review.py)). Defaults to NDA on ambiguous text and logs a warning. Surfaced via `state["contract_type_detected"]` → `report.contract_type_detected`.
 - **Output is markdown tables, not the old `CLAUSE:/RISK:` lines.** Sections required: `# Review Summary`, `# Key Findings`, `# Red and Missing Context Items`, `# Approved Deviations`, `# Suggested Redlines / Fallbacks`, `# Business Questions`, `# No Signature Checklist Result`. Word add-in parser at [clients/word/src/parser.ts](clients/word/src/parser.ts) is the consumer.
 - **Word add-in extracts "current text" from quoted substrings inside the "Issue" cell.** The team's required output format has no current-text column; the LLM emits quotes naturally per AI Review Procedure §10.2.
+- **Blockers card is derived from Key Findings, not the raw "Red and Missing Context" table.** Per spec the blockers table is a strict subset of Key Findings where rating ∈ {Red, Missing Context}. The LLM is often non-conformant (puts Yellow rows in the blocker table, or omits a Missing Context entry). `deriveBlockers` in [clients/word/src/parser.ts](clients/word/src/parser.ts) rebuilds the list from Key Findings and enriches each row with "why it blocks" + "approver" from the raw table by Issue ID then clause name. Source of truth wins; counts always reconcile.
 
 ## Common commands
 
