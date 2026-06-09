@@ -692,3 +692,31 @@ def test_output_formatter_omits_unincorporated_when_empty(monkeypatch):
     state = _make_state(task_type="contract_review", llm_response="OK")
     result = output_formatter(state)
     assert result["report"].get("notes_unincorporated", "") == ""
+
+
+def test_output_formatter_surfaces_contract_type_detected(monkeypatch):
+    """The report carries contract_type_detected so the Word add-in can render it."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    from graph.nodes.output_formatter import output_formatter
+
+    state = _make_state(
+        task_type="contract_review",
+        llm_response="...",
+        contract_type_detected="msa",
+    )
+    result = output_formatter(state)
+    assert result["report"]["contract_type_detected"] == "msa"
+
+
+def test_output_formatter_contract_type_detected_defaults_empty(monkeypatch):
+    """When no detection happened (research path), report carries an empty string."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    from graph.nodes.output_formatter import output_formatter
+
+    state = _make_state(task_type="research", llm_response="...")
+    result = output_formatter(state)
+    assert result["report"]["contract_type_detected"] == ""

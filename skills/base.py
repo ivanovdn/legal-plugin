@@ -22,16 +22,73 @@ PLAYBOOK END
 Remember: produce ONLY what the playbook above instructs. Nothing more."""
 
 
+# Order in which bundle files are concatenated to form the system message.
+# Rationale: role → guiding principles → scoring vocabulary (risk + approvers) →
+# output spec → procedure → external comments → catalogue (selection + clause-bank)
+# → per-type rules → No-Signature Gate (last so it's the most-recent instruction
+# the model reads before producing output).
+# See docs/playbook_cross_reference.md for which file owns which concern.
+BUNDLE_ORDER = (
+    "global/role_and_golden_rules.md",
+    "global/core_principles.md",
+    "global/risk_rating.md",
+    "global/approval_matrix.md",
+    "global/output_format.md",
+    "global/ai_review_procedure.md",
+    "global/external_comments.md",
+    "global/contract_selection.md",
+    "global/clause_bank.md",
+    "<type>/SKILL.md",
+    "<type>/playbook_matrix.md",
+    "global/no_signature_checklist.md",
+)
+
+SUPPORTED_CONTRACT_TYPES = ("nda", "msa", "sow", "baa")
+
+
+def _strip_frontmatter(text: str) -> str:
+    if text.startswith("---"):
+        end = text.find("---", 3)
+        if end != -1:
+            return text[end + 3:].strip()
+    return text
+
+
 def load_skill_prompt(skill_dir: Path) -> str:
     """Load SKILL.md from a skill directory, strip frontmatter, wrap with ceiling constraints."""
     skill_md = skill_dir / "SKILL.md"
     text = skill_md.read_text(encoding="utf-8")
-    # Strip YAML frontmatter
-    if text.startswith("---"):
-        end = text.find("---", 3)
-        if end != -1:
-            text = text[end + 3:].strip()
-    return _CEILING_PREFIX + text + _CEILING_SUFFIX
+    return _CEILING_PREFIX + _strip_frontmatter(text) + _CEILING_SUFFIX
+
+
+def load_bundle(playbook_root: Path, contract_type: str) -> str:
+    """Concatenate the playbook bundle for one contract type and wrap with ceiling constraints.
+
+    `playbook_root` is the directory containing `global/` and per-type subfolders
+    (typically `skills/contract_review/playbook/`).
+
+    Files load in the deterministic `BUNDLE_ORDER`; the resulting system message
+    is byte-identical for repeated runs against the same inputs (helps caching
+    and audit).
+
+    Raises ValueError on unknown contract type. Raises FileNotFoundError if any
+    bundle file is missing — that means `scripts/build_playbook.py` was not run.
+    """
+    if contract_type not in SUPPORTED_CONTRACT_TYPES:
+        raise ValueError(
+            f"Unknown contract_type {contract_type!r}; expected one of {SUPPORTED_CONTRACT_TYPES}"
+        )
+    parts: list[str] = []
+    for entry in BUNDLE_ORDER:
+        rel = entry.replace("<type>", contract_type)
+        path = playbook_root / rel
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Bundle file missing: {path}. Run `python scripts/build_playbook.py`."
+            )
+        parts.append(_strip_frontmatter(path.read_text(encoding="utf-8")).strip())
+    body = "\n\n".join(parts)
+    return _CEILING_PREFIX + body + _CEILING_SUFFIX
 
 
 def stub_skill(name: str):

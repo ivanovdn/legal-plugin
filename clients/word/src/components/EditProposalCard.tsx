@@ -11,12 +11,14 @@ type Status =
 
 const ACTION_LABEL: Record<EditProposal["action"], string> = {
   replace: "REWRITE",
+  replace_all: "REPLACE ALL",
   insert: "INSERT",
   delete: "DELETE",
 };
 
 const ACTION_CLASS: Record<EditProposal["action"], string> = {
   replace: "edit-action-replace",
+  replace_all: "edit-action-replace",
   insert: "edit-action-insert",
   delete: "edit-action-delete",
 };
@@ -45,8 +47,14 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
 
   if (status.kind === "discarded") return null;
 
-  const showBefore = proposal.action === "replace" || proposal.action === "delete";
-  const showAfter = proposal.action === "replace" || proposal.action === "insert";
+  const showBefore =
+    proposal.action === "replace" ||
+    proposal.action === "replace_all" ||
+    proposal.action === "delete";
+  const showAfter =
+    proposal.action === "replace" ||
+    proposal.action === "replace_all" ||
+    proposal.action === "insert";
   const showAnchor = proposal.action === "insert";
 
   return (
@@ -69,7 +77,9 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
 
       {showBefore && proposal.target_text && (
         <>
-          <div className="card-section-label">Before</div>
+          <div className="card-section-label">
+            {proposal.action === "replace_all" ? "Find (every occurrence)" : "Before"}
+          </div>
           <div className="card-quote">{proposal.target_text}</div>
         </>
       )}

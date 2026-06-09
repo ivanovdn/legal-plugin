@@ -21,7 +21,11 @@ _CLASSIFICATION_PROMPT = """You are a legal task classifier. Given a user reques
 
 Valid task types:
 - contract_generation: Generate a new contract or agreement
-- contract_review: Review, analyze, or extract clauses from an existing contract
+- contract_review: Review, analyze, or extract clauses from an existing contract.
+    Use this for any of: NDA / Mutual NDA / Confidentiality Agreement,
+    MSA (Master Services Agreement), SOW (Statement of Work / Work Order),
+    BAA (Business Associate Agreement / HIPAA). The contract_review skill
+    auto-detects which of these four types and applies the matching playbook.
 - compliance: Check documents against policies, regulations, or jurisdiction rules
 - research: Answer legal questions, find precedents, or research legal topics
 - drafting: Fill templates to produce NDAs, memos, briefs, or other documents

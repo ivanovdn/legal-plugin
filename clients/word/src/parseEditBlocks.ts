@@ -3,7 +3,7 @@
 // the lawyer asks for a document change. Display the cleanedProse to the user;
 // render each EditProposal as a preview card with [Apply] / [Discard] buttons.
 
-export type EditAction = "replace" | "insert" | "delete";
+export type EditAction = "replace" | "replace_all" | "insert" | "delete";
 
 export type EditProposal = {
   action: EditAction;
@@ -15,7 +15,55 @@ export type EditProposal = {
 };
 
 const JSON_BLOCK_RE = /```json\s*\n([\s\S]*?)```/g;
-const VALID_ACTIONS = new Set<EditAction>(["replace", "insert", "delete"]);
+const VALID_ACTIONS = new Set<EditAction>(["replace", "replace_all", "insert", "delete"]);
+
+/** Escape literal LF/CR/TAB characters that sit INSIDE JSON string values.
+ *  Local LLMs occasionally line-wrap a long string value mid-content, which
+ *  leaves a raw newline inside a quoted string (JSON spec: invalid). We walk
+ *  the text, track whether we're inside a quoted string, and replace raw
+ *  whitespace with proper backslash-escape sequences. */
+function escapeUnescapedWhitespaceInStrings(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escapeNext = false;
+  for (const ch of raw) {
+    if (escapeNext) {
+      out += ch;
+      escapeNext = false;
+      continue;
+    }
+    if (inString && ch === "\\") {
+      out += ch;
+      escapeNext = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+    if (inString && (ch === "\n" || ch === "\r" || ch === "\t")) {
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** JSON.parse with a best-effort fallback for raw whitespace inside strings. */
+function tolerantParse(raw: string): unknown | undefined {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // fall through
+  }
+  try {
+    return JSON.parse(escapeUnescapedWhitespaceInStrings(raw));
+  } catch {
+    return undefined;
+  }
+}
 
 export function extractEditBlocks(prose: string): {
   cleanedProse: string;
@@ -26,20 +74,24 @@ export function extractEditBlocks(prose: string): {
 
   for (const match of prose.matchAll(JSON_BLOCK_RE)) {
     const raw = match[1].trim();
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
+    const parsed = tolerantParse(raw);
+    if (parsed === undefined) {
       // Tolerant: skip malformed blocks, keep others.
       continue;
     }
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      VALID_ACTIONS.has((parsed as { action: EditAction }).action)
-    ) {
-      blocks.push(parsed as EditProposal);
+    // A block may contain a single edit object OR an array of edits — the LLM
+    // sometimes consolidates multi-location requests into one fenced block
+    // with an array (e.g. ```json [{...}, {...}] ```). Both shapes accepted.
+    const candidates: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    for (const c of candidates) {
+      if (
+        c &&
+        typeof c === "object" &&
+        !Array.isArray(c) &&
+        VALID_ACTIONS.has((c as { action: EditAction }).action)
+      ) {
+        blocks.push(c as EditProposal);
+      }
     }
   }
 

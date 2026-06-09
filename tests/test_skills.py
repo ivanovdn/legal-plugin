@@ -440,9 +440,511 @@ def test_extract_proposed_edits_skips_blocks_without_valid_action():
     assert _extract_proposed_edits(prose) == []
 
 
+def test_extract_proposed_edits_accepts_replace_all_action():
+    """replace_all is a valid action — used for 'fill every X' requests."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        '```json\n{"action": "replace_all", "target_text": "Signed by: [__]", '
+        '"new_text": "Signed by: John Doe"}\n```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 1
+    assert edits[0]["action"] == "replace_all"
+
+
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
     from skills.legal_research import _extract_proposed_edits
 
     assert _extract_proposed_edits("Why is the IP clause risky?") == []
     assert _extract_proposed_edits("") == []
+
+
+def test_extract_proposed_edits_accepts_array_inside_one_block():
+    """Regression: local LLM consolidates multi-location edits into a single
+    fenced block whose body is a JSON array. The old parser expected only a
+    single dict and silently dropped the array, leaving proposed_edits empty
+    even though the model emitted the right structured data."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        'I will replace the placeholder in two locations.\n\n'
+        '```json\n'
+        '[{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}, '
+        '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]\n'
+        '```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 2
+    assert all(e["action"] == "replace" for e in edits)
+    assert all(e["new_text"] == "Signed by: John Doe" for e in edits)
+
+
+def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():
+    """Local LLMs sometimes line-wrap long string values mid-content, producing
+    JSON with a literal newline inside a quoted string (spec-invalid). The
+    tolerant parser escapes those raw newlines and recovers the block."""
+    from skills.legal_research import _extract_proposed_edits
+
+    # Note the LITERAL newline between "Signed by:" and "[__]\\t..." inside
+    # the target_text value — this is what the user saw on the second block.
+    prose = (
+        "I will replace the two instances.\n\n"
+        "```json\n"
+        '{"action": "replace", "target_text": "...long dots line...\nSigned by:\n[__]\\tSigned by: Boris", '
+        '"new_text": "...long dots line...\nSigned by: John Doe\\tSigned by: Boris"}\n'
+        "```"
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 1
+    assert edits[0]["action"] == "replace"
+    assert "John Doe" in edits[0]["new_text"]
+
+
+def test_tolerant_json_loads_handles_internal_tabs_and_returns():
+    """Tab and carriage-return characters inside string values are also escaped."""
+    from skills.legal_research import _tolerant_json_loads
+
+    raw = '{"target": "col1\tcol2\rcol3"}'  # raw \t and \r inside the string
+    parsed = _tolerant_json_loads(raw)
+    assert parsed is not None
+    assert parsed["target"] == "col1\tcol2\rcol3"
+
+
+def test_extract_proposed_edits_array_with_invalid_entries_filtered():
+    """An array containing some invalid entries keeps the valid ones and drops the rest."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        '```json\n'
+        '[{"action": "replace", "target_text": "X", "new_text": "Y"}, '
+        '{"action": "moonwalk", "target_text": "Z"}, '
+        '{"action": "insert", "anchor_text": "Sec 7", "position": "after", "new_text": "..."}]\n'
+        '```'
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 2
+    assert edits[0]["action"] == "replace"
+    assert edits[1]["action"] == "insert"
+
+
+# --- legal_research doc-chat fast path (no ReAct agent when uploaded_docs is present) ---
+
+
+def test_legal_research_doc_chat_skips_react_agent(monkeypatch):
+    """When uploaded_docs is set, the ReAct agent is NOT invoked — direct LLM only.
+
+    The agent path on the local LLM is multi-minute (tool calls × prompt size);
+    with the document already attached, the answer is single-step and tool-less.
+    """
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.content = "Per Section 4, the cap is 12 months."
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = fake_response
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [MagicMock(content="UNEXPECTED")]}
+
+    with (
+        patch("skills.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research._build_agent", return_value=fake_agent),
+    ):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Why is the cap risky?",
+            uploaded_docs=[{"text": "Service Agreement.\n\nSection 4. Liability cap is 12 months of fees."}],
+            task_type="research",
+        )
+        result = legal_research(state)
+
+    fake_llm.invoke.assert_called_once()
+    fake_agent.invoke.assert_not_called()
+    assert "Section 4" in result["llm_response"]
+    assert result["retrieved_chunks"] == []
+
+
+def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
+    """A response containing a fenced JSON block populates proposed_edits."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.content = (
+        "Tightening the cap to 2x:\n"
+        '```json\n{"action": "replace", "target_text": "12 months", "new_text": "2x"}\n```'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = fake_response
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Tighten the cap to 2x.",
+            uploaded_docs=[{"text": "Liability cap is 12 months."}],
+        )
+        result = legal_research(state)
+
+    assert len(result["proposed_edits"]) == 1
+    assert result["proposed_edits"][0]["action"] == "replace"
+    assert result["proposed_edits"][0]["new_text"] == "2x"
+
+
+def test_parse_json_edits_accepts_three_shapes():
+    """_parse_json_edits handles the three shapes Ollama's format=json emits:
+    {edits: [...]} wrapping, bare array, bare single edit."""
+    from skills.legal_research import _parse_json_edits
+
+    wrapped = '{"edits": [{"action": "replace", "target_text": "X", "new_text": "Y"}]}'
+    bare_array = '[{"action": "replace", "target_text": "X", "new_text": "Y"}]'
+    bare_single = '{"action": "replace", "target_text": "X", "new_text": "Y"}'
+
+    for raw in (wrapped, bare_array, bare_single):
+        edits = _parse_json_edits(raw)
+        assert len(edits) == 1
+        assert edits[0]["action"] == "replace"
+
+
+def test_parse_json_edits_rejects_invalid_actions_and_malformed_json():
+    """Malformed JSON and entries without a valid action are dropped silently."""
+    from skills.legal_research import _parse_json_edits
+
+    assert _parse_json_edits("not json at all") == []
+    assert _parse_json_edits('{"edits": "not a list"}') == []
+    assert _parse_json_edits('{"edits": [{"action": "frobnicate"}]}') == []
+    assert _parse_json_edits('{"action": "unknown", "target_text": "X"}') == []
+
+
+def test_legal_research_retries_when_edit_promise_lacks_block(monkeypatch):
+    """When the LLM promises an edit in prose but emits no JSON block, the
+    skill re-prompts ONCE via a separate format=json LLM and merges the
+    resulting edits into state. format=json is structurally forced JSON
+    output — no more 'I will replace…' hand-waving without action."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    first = MagicMock()
+    first.content = (
+        'I will replace the placeholder "Signed by: [__]" with "Signed by: John Doe" '
+        "in two locations within the document."
+    )
+    retry = MagicMock()
+    retry.content = (
+        '{"edits": [{"action": "replace", "target_text": "Signed by: [__]\\t",'
+        ' "new_text": "Signed by: John Doe\\t"}]}'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = first
+    fake_json_llm = MagicMock()
+    fake_json_llm.invoke.return_value = retry
+
+    with (
+        patch("skills.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research._build_json_llm", return_value=fake_json_llm),
+    ):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="take every blank Signed by: [__] and fill with John Doe",
+            uploaded_docs=[{"text": "Signed by: [__]\tSigned by: Boris"}],
+        )
+        result = legal_research(state)
+
+    # Conversational LLM ran once; JSON-mode LLM ran once for the retry.
+    fake_llm.invoke.assert_called_once()
+    fake_json_llm.invoke.assert_called_once()
+    # The retry's edit landed on state.
+    assert len(result["proposed_edits"]) == 1
+    assert result["proposed_edits"][0]["new_text"].startswith("Signed by: John Doe")
+
+
+def test_legal_research_does_not_retry_when_block_already_present(monkeypatch):
+    """If the first response already contains a JSON block, no retry happens."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    response = MagicMock()
+    response.content = (
+        "Filling the placeholder:\n"
+        '```json\n{"action": "replace", "target_text": "X", "new_text": "Y"}\n```'
+    )
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = response
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Replace X with Y.",
+            uploaded_docs=[{"text": "X here."}],
+        )
+        legal_research(state)
+
+    assert fake_llm.invoke.call_count == 1
+
+
+def test_edit_promise_detector_matches_past_tense():
+    """The detector must match 'I have replaced...' too — without this, the
+    retry path never fires when the local LLM uses past tense and the user
+    sees a confident lie ('I have replaced…') with no actual edit."""
+    from skills.legal_research import _looks_like_edit_promise
+
+    # Past-tense forms — the original \breplace\b regex missed these.
+    assert _looks_like_edit_promise(
+        'I have replaced the placeholder "Signed by: [__]" with "Signed by: John Doe"'
+    )
+    assert _looks_like_edit_promise("I've inserted a force majeure clause after Section 7.")
+    assert _looks_like_edit_promise("I have deleted the auto-renewal language.")
+    assert _looks_like_edit_promise("I have filled all the placeholders.")
+
+    # Present / future forms — these always worked, keep them green.
+    assert _looks_like_edit_promise(
+        'I will replace "Signed by: [__]" with "Signed by: John Doe".'
+    )
+    assert _looks_like_edit_promise("I am going to insert a clause here.")
+    assert _looks_like_edit_promise("I'll delete that section.")
+
+
+def test_edit_promise_detector_skips_qa_and_unrelated():
+    """The detector must NOT match pure Q&A or unrelated mentions of edit verbs."""
+    from skills.legal_research import _looks_like_edit_promise
+
+    # Pure Q&A
+    assert not _looks_like_edit_promise("Per Section 4, the cap is 12 months of fees.")
+    assert not _looks_like_edit_promise("The IP clause is risky because it assigns ownership.")
+    # Discussing concepts without claiming to do anything
+    assert not _looks_like_edit_promise("Replacing the cap would require legal review.")
+    assert not _looks_like_edit_promise("")
+    # False-positive guards: noun forms shouldn't trigger
+    assert not _looks_like_edit_promise("The replacement clause is in Section 9.")
+    assert not _looks_like_edit_promise("The editor of this contract approved it.")
+
+
+def test_legal_research_retries_on_past_tense_promise(monkeypatch):
+    """Regression for the user-reported case: 'I have replaced...' must
+    trigger the retry path. Before the regex fix this was a silent failure."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    first = MagicMock()
+    first.content = (
+        'I have replaced the placeholder "Signed by: [__]" with "Signed by: John Doe" '
+        "in the signature block at the end of the document."
+    )
+    retry = MagicMock()
+    retry.content = '{"edits": [{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]}'
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = first
+    fake_json_llm = MagicMock()
+    fake_json_llm.invoke.return_value = retry
+
+    with (
+        patch("skills.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research._build_json_llm", return_value=fake_json_llm),
+    ):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Fill the Signed by placeholder with John Doe.",
+            uploaded_docs=[{"text": "Signed by: [__]"}],
+        )
+        result = legal_research(state)
+
+    fake_llm.invoke.assert_called_once()
+    fake_json_llm.invoke.assert_called_once()
+    assert len(result["proposed_edits"]) == 1
+
+
+def test_legal_research_does_not_retry_on_pure_qa(monkeypatch):
+    """A Q&A response with no edit promise must not trigger a retry."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    response = MagicMock()
+    response.content = "Section 5 caps liability at 12 months of fees. That's the standard position."
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = response
+
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Why is the cap risky?",
+            uploaded_docs=[{"text": "Liability cap: 12 months."}],
+        )
+        result = legal_research(state)
+
+    assert fake_llm.invoke.call_count == 1
+    assert result["proposed_edits"] == []
+
+
+def test_legal_research_resets_proposed_edits_each_turn(monkeypatch):
+    """A turn that produces no edit block clears the prior turn's proposal.
+
+    Without this reset, a stale edit from the previous turn would still appear
+    on the frontend, which would re-apply it (or confuse the lawyer).
+    """
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.content = "Just answering — no edit needed."
+    fake_llm = MagicMock()
+    fake_llm.invoke.return_value = fake_response
+
+    stale_edit = [{"action": "replace", "target_text": "X", "new_text": "Y"}]
+    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+        from skills.legal_research import legal_research
+        state = _make_state(
+            request="Why is X risky?",
+            uploaded_docs=[{"text": "Some doc."}],
+            proposed_edits=stale_edit,
+        )
+        result = legal_research(state)
+
+    assert result["proposed_edits"] == []
+
+
+# --- contract_review: per-type playbook bundle + type detection ---
+
+
+_NDA_SAMPLE = (
+    "MUTUAL NON-DISCLOSURE AGREEMENT\n\n"
+    "This Mutual Non-Disclosure Agreement is entered into between ACME and Trinetix.\n"
+    "Each party may disclose confidential information.\n"
+)
+_MSA_SAMPLE = (
+    "MASTER SERVICES AGREEMENT\n\n"
+    "This Master Services Agreement governs the engagement between Client and Trinetix.\n"
+    "All Services shall be governed by an SOW issued under this MSA.\n"
+)
+_SOW_SAMPLE = (
+    "STATEMENT OF WORK\n\n"
+    "This Statement of Work is issued under the Master Services Agreement dated...\n"
+    "Project scope: design a new web portal.\n"
+)
+_BAA_SAMPLE = (
+    "BUSINESS ASSOCIATE AGREEMENT\n\n"
+    "This BAA is entered into pursuant to HIPAA between Covered Entity and Trinetix.\n"
+    "The parties handle Protected Health Information (PHI).\n"
+)
+
+
+def test_detect_contract_type_nda():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_NDA_SAMPLE)
+    assert t == "nda" and not ambig
+
+
+def test_detect_contract_type_msa():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_MSA_SAMPLE)
+    assert t == "msa" and not ambig
+
+
+def test_detect_contract_type_sow():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_SOW_SAMPLE)
+    assert t == "sow" and not ambig
+
+
+def test_detect_contract_type_baa():
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_BAA_SAMPLE)
+    assert t == "baa" and not ambig
+
+
+def test_detect_contract_type_defaults_to_nda_on_unknown():
+    """No-pattern-matches doc returns (nda, ambiguous=True)."""
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type("Random business text without any contract keywords.")
+    assert t == "nda" and ambig
+
+
+def test_contract_review_sets_contract_type_detected():
+    """The skill stores the detected type on state for downstream surfacing."""
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _MSA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+    assert result["contract_type_detected"] == "msa"
+
+
+def test_contract_review_loads_per_type_bundle_in_system_prompt():
+    """The system prompt is the assembled playbook bundle for the detected type.
+
+    Verifies a representative slice of each bundle section is present and the
+    per-type SKILL.md matches the detected type.
+    """
+    state = _make_state(
+        request="Review this NDA.",
+        uploaded_docs=[{"text": _NDA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+    sys_msg = result["messages"][0]["content"]
+
+    # Ceiling wrap
+    assert sys_msg.startswith("STRICT INSTRUCTION")
+    assert "PLAYBOOK END" in sys_msg
+    # Global sections
+    assert "# Core Contracting Principles" in sys_msg
+    assert "# Risk Rating and Escalation" in sys_msg
+    assert "# Approval Matrix" in sys_msg
+    assert "# Required Final Output Format" in sys_msg
+    assert "# AI Review Procedure" in sys_msg
+    # Per-type pieces (NDA)
+    assert "NDA-001" in sys_msg  # from the NDA clause matrix
+    assert "# NDA Playbook Matrix" in sys_msg
+    # No-signature gate language is present
+    assert "DO NOT SEND FOR SIGNATURE" in sys_msg
+
+
+def test_contract_review_msa_loads_msa_matrix():
+    """An MSA-shaped doc loads MSA-001, not NDA-001."""
+    state = _make_state(
+        request="Review this MSA.",
+        uploaded_docs=[{"text": _MSA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+    sys_msg = result["messages"][0]["content"]
+    assert "# MSA Playbook Matrix" in sys_msg
+    assert "MSA-001" in sys_msg
+    assert "# NDA Playbook Matrix" not in sys_msg
+
+
+def test_load_bundle_raises_on_unknown_type(tmp_path):
+    from skills.base import load_bundle
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown contract_type"):
+        load_bundle(tmp_path, "lease")
+
+
+def test_load_bundle_raises_on_missing_bundle_file(tmp_path):
+    """If the playbook directory is empty, load_bundle reports which file is missing."""
+    from skills.base import load_bundle
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="Bundle file missing"):
+        load_bundle(tmp_path, "nda")
+
+
+def test_load_bundle_is_deterministic():
+    """Repeated calls with the same inputs return byte-identical output (caching/audit)."""
+    from pathlib import Path
+    from skills.base import load_bundle
+
+    playbook_root = Path(__file__).resolve().parent.parent / "skills" / "contract_review" / "playbook"
+    first = load_bundle(playbook_root, "nda")
+    second = load_bundle(playbook_root, "nda")
+    assert first == second

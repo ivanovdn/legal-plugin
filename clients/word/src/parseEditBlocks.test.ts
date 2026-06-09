@@ -52,6 +52,16 @@ const pass = (cond: boolean, label: string) =>
   pass(blocks.length === 0, "unknown-action: skipped");
 }
 
+// 4b. replace_all action — accepted for multi-occurrence requests.
+{
+  const prose =
+    '```json\n{"action": "replace_all", "target_text": "Signed by: [__]", ' +
+    '"new_text": "Signed by: John Doe"}\n```';
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 1, "replace_all: accepted");
+  pass(blocks[0].action === "replace_all", "replace_all: action preserved");
+}
+
 // 5. No blocks — empty array, prose unchanged
 {
   const prose = "Why is the IP clause risky? It's the assignment direction.";
@@ -65,4 +75,56 @@ const pass = (cond: boolean, label: string) =>
   const { cleanedProse, blocks } = extractEditBlocks("");
   pass(blocks.length === 0, "empty: no blocks");
   pass(cleanedProse === "", "empty: empty prose");
+}
+
+// 7. Array inside ONE block (the regression that broke "fill every Signed by")
+//    The local LLM consolidated two edits into a single fenced block holding
+//    an array. The old parser dropped both because it expected a single dict.
+{
+  const prose =
+    "I will replace the placeholder in two locations.\n\n" +
+    "```json\n" +
+    '[{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}, ' +
+    '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 2, "array-in-block: both edits extracted");
+  pass(
+    blocks[0].action === "replace" && blocks[1].action === "replace",
+    "array-in-block: both are replace",
+  );
+  pass(
+    blocks[0].new_text === "Signed by: John Doe",
+    "array-in-block: new_text preserved",
+  );
+}
+
+// 7b. Block whose string value contains a LITERAL newline (LLM line-wrapped
+//     the value mid-content). Spec-invalid JSON but recoverable.
+{
+  const prose =
+    "```json\n" +
+    '{"action": "replace", "target_text": "long-dots-line\nSigned by:\n[__]\\tSigned by: Boris", ' +
+    '"new_text": "long-dots-line\nSigned by: John Doe\\tSigned by: Boris"}\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 1, "broken-string: tolerant parser recovers");
+  pass(
+    blocks[0]?.new_text?.includes("John Doe") ?? false,
+    "broken-string: new_text preserved",
+  );
+}
+
+// 8. Array with mixed-validity entries — valid ones kept, invalid dropped.
+{
+  const prose =
+    "```json\n" +
+    '[{"action": "replace", "target_text": "X", "new_text": "Y"}, ' +
+    '{"action": "moonwalk", "target_text": "Z"}, ' +
+    '{"action": "insert", "anchor_text": "Section 7", "position": "after", "new_text": "..."}]\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 2, "array-mixed: 2 valid kept, 1 dropped");
+  pass(blocks[0].action === "replace", "array-mixed: replace kept");
+  pass(blocks[1].action === "insert", "array-mixed: insert kept");
 }

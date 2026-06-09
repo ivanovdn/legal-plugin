@@ -186,11 +186,23 @@ button.secondary:disabled {
   background: white;
 }
 
+/* Whole results region scrolls as one (gate banner + summary + blockers +
+   findings + questions). Was previously only `.findings`, but new sections
+   below it would clip. */
+.findings-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px; /* room for the scrollbar so it doesn't overlap content */
+}
+
 .findings {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow-y: auto;
 }
 
 .card {
@@ -264,6 +276,24 @@ button.secondary:disabled {
   color: var(--red-fg);
 }
 
+.card-hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 0 0;
+}
+
+/* Chat: warning shown when the LLM described an edit but didn't emit a JSON block. */
+.chat-warning {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--yellow-fg);
+  background: var(--yellow-bg);
+  color: var(--yellow-fg);
+  font-size: 11px;
+  border-radius: 3px;
+}
+
 /* ---------- Badge ---------- */
 
 .badge {
@@ -289,6 +319,180 @@ button.secondary:disabled {
 .badge.green {
   background: var(--green-bg);
   color: var(--green-fg);
+}
+
+.badge.missing_context {
+  background: #ebe1f5;
+  color: #5a2c8a;
+}
+
+/* ---------- No-signature gate banner ---------- */
+
+.gate-banner {
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: 1px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gate-banner.ready {
+  background: var(--green-bg);
+  border-color: var(--green-fg);
+  color: var(--green-fg);
+}
+
+.gate-banner.blocked {
+  background: var(--red-bg);
+  border-color: var(--red-fg);
+  color: var(--red-fg);
+}
+
+.gate-status {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gate-line {
+  font-size: 12px;
+}
+
+/* ---------- Issue ID + clause meta on cards ---------- */
+
+.issue-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #f1f3f5;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- Blockers list ---------- */
+
+.blocker-list,
+.question-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blocker-list > li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.blocker-list > li:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.blocker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.clause-name {
+  font-weight: 600;
+}
+
+.blocker-why {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.blocker-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------- Collapsible (Business Questions) ---------- */
+
+.collapsible-header {
+  background: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.caret {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.question-list > li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.question-list > li:first-child {
+  border-top: none;
+}
+
+.question-text {
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.question-why,
+.question-owner {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---------- Raw-response diagnostic viewer ---------- */
+
+.raw-response {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.raw-response > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.raw-response > summary:hover {
+  color: var(--fg);
+}
+
+.raw-response pre {
+  margin: 8px 0 0;
+  padding: 8px;
+  background: #f7f8fa;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ---------- Chat ---------- */
