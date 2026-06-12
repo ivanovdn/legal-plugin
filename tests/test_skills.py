@@ -834,6 +834,15 @@ _BAA_SAMPLE = (
     "This BAA is entered into pursuant to HIPAA between Covered Entity and Trinetix.\n"
     "The parties handle Protected Health Information (PHI).\n"
 )
+# An MSA that heavily references SOWs — reproduces the real-trace mis-detect
+# (the 4000-char flat count picked SOW; the title says MSA). See audit Dimension 7.
+_MSA_REFERENCES_SOW_SAMPLE = (
+    "MASTER SERVICE AGREEMENT\n\n"
+    "This Master Service Agreement (the \"MSA\") is made by and between Client and Trinetix.\n"
+    + ("Each SOW issued under this MSA defines the Services. The SOW prevails over the MSA "
+       "for scope. Refer to the applicable SOW. A separate SOW or Statement of Work governs "
+       "deliverables. ") * 6
+)
 
 
 def test_detect_contract_type_nda():
@@ -858,6 +867,14 @@ def test_detect_contract_type_baa():
     from skills.contract_review.contract_review import _detect_contract_type
     t, ambig = _detect_contract_type(_BAA_SAMPLE)
     assert t == "baa" and not ambig
+
+
+def test_detect_contract_type_msa_with_heavy_sow_references():
+    """Regression: an MSA that cites SOWs more than itself must still detect msa."""
+    from skills.contract_review.contract_review import _detect_contract_type
+    t, ambig = _detect_contract_type(_MSA_REFERENCES_SOW_SAMPLE)
+    assert t == "msa", f"expected msa, got {t}"
+    assert not ambig
 
 
 def test_detect_contract_type_defaults_to_nda_on_unknown():

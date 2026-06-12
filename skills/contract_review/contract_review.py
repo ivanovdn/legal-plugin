@@ -17,6 +17,8 @@ import logging
 import re
 from pathlib import Path
 
+from langfuse.decorators import langfuse_context
+
 from graph.state import LegalAgentState
 from skills.base import load_bundle
 
@@ -25,13 +27,14 @@ logger = logging.getLogger(__name__)
 _SKILL_DIR = Path(__file__).parent
 _PLAYBOOK_DIR = _SKILL_DIR / "playbook"
 
-# Heading/keyword cues for type detection. Search the first 4K chars of the
-# doc (headings live near the top). All matchers are case-insensitive whole-word
-# or anchored phrases — we want strong signal, not partial matches inside
-# random sentences.
+# Heading/keyword cues for type detection. Hits in the title region (first
+# ~200 chars) are weighted heavily; whole-document hits break ties — see
+# _detect_contract_type. All matchers are case-insensitive whole-word or
+# anchored phrases — we want strong signal, not partial matches inside random
+# sentences.
 #
-# Order matters only for tie-breaking ties, which the heuristic should rarely
-# hit; if it does, the first type whose regex matches wins.
+# Order matters only for breaking ties, which the heuristic should rarely hit;
+# if it does, the first type whose regex matches wins.
 _TYPE_PATTERNS: tuple[tuple[str, tuple[re.Pattern, ...]], ...] = (
     (
         "baa",
@@ -71,6 +74,14 @@ _TYPE_PATTERNS: tuple[tuple[str, tuple[re.Pattern, ...]], ...] = (
 
 _DEFAULT_TYPE = "nda"
 
+# Type detection weights. The document title/heading (first ~200 chars) is the
+# strongest signal and is weighted far above incidental body mentions: an MSA
+# references "SOW" throughout its body yet is titled "Master Services Agreement",
+# so a flat hit-count over the opening can wrongly pick SOW. We weight the title
+# region heavily and use whole-document body counts only as a tiebreak.
+_TITLE_REGION_CHARS = 200
+_TITLE_WEIGHT = 100
+
 # Runtime directive appended to the system message after the canonical bundle.
 # The team's required output format leaves one detail open to interpretation:
 # nothing in `shared_operating_rules.md` explicitly forbids combining multiple
@@ -101,13 +112,18 @@ named in its "Clause / section". Don't include text related to other findings.
 def _detect_contract_type(text: str) -> tuple[str, bool]:
     """Detect contract type from text. Returns (type, was_ambiguous).
 
-    Counts pattern hits in the first 4K characters and picks the type with the
-    most hits. Returns (_DEFAULT_TYPE, True) when no pattern matches.
+    Score = _TITLE_WEIGHT * (hits in the title region) + (hits in the whole
+    document). The title region (first ~200 chars) dominates because the
+    document's own heading is the most reliable signal; whole-document body
+    counts only break ties. Picks the highest-scoring type; returns
+    (_DEFAULT_TYPE, True) when nothing matches.
     """
-    head = text[:4000]
+    title = text[:_TITLE_REGION_CHARS]
     scores: dict[str, int] = {}
     for ctype, patterns in _TYPE_PATTERNS:
-        scores[ctype] = sum(len(p.findall(head)) for p in patterns)
+        title_hits = sum(len(p.findall(title)) for p in patterns)
+        body_hits = sum(len(p.findall(text)) for p in patterns)
+        scores[ctype] = _TITLE_WEIGHT * title_hits + body_hits
 
     best_type = max(scores, key=lambda t: scores[t])
     best_score = scores[best_type]
@@ -154,6 +170,20 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
             "Consider adding an LLM fallback or a user-facing override.",
             contract_type,
         )
+
+    # Surface detection on the Langfuse trace. This is the signal that was
+    # invisible when an MSA was silently reviewed as a SOW (audit Dimension 7) —
+    # the skill has no @observe span, so without this the detected type only
+    # leaks out via the final report payload. Tracing must never break the skill.
+    try:
+        langfuse_context.update_current_trace(
+            metadata={
+                "contract_type_detected": contract_type,
+                "contract_type_ambiguous": was_ambiguous,
+            },
+        )
+    except Exception:  # pragma: no cover - observability is best-effort
+        pass
 
     playbook = load_bundle(_PLAYBOOK_DIR, contract_type)
 
