@@ -54,3 +54,5 @@ class LegalAgentState(TypedDict):
     previous_draft: str                    # NEW — preserved across loop-back so skill revises rather than regenerates
     proposed_edits: list[dict]             # NEW — structured edit proposals parsed from chat skill output
     contract_type_detected: str            # NEW — nda | msa | sow | baa (set by contract_review when uploaded_text present)
+    requires_attorney: bool                # NEW — contract_review verdict says the doc needs attorney sign-off (blocker/yellow); surfaced in report
+    interactive_review: bool               # NEW — caller can handle a human_review interrupt + resume (Chainlit True; Word False)

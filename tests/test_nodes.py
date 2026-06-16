@@ -324,6 +324,179 @@ def test_risk_assessor_no_chunks_low_risk_when_doc_attached():
     assert result["risk_flags"] == []
 
 
+# --- contract_review verdict assessment ---
+
+# Realistic 7-section review outputs (shared_operating_rules.md "Required final
+# output format"). The verdict gate must read these, mirroring parser.ts.
+
+_REVIEW_BLOCKER_DO_NOT_SEND = """# Review Summary
+Overall status: Do not send for signature
+Contract type: MSA / Counterparty: Acme / Trinetix role: Vendor / Version reviewed: v1
+
+# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| MSA-001 | Liability / Cap | Red | Uncapped liability | Add 12-month cap | CLCO |
+| MSA-002 | Term / Renewal | Green | Standard auto-renew | None | - |
+
+# No Signature Checklist Result
+Overall status: Do not send for signature
+Blocking items: MSA-001 / Missing context: none / Final recommendation: escalate to CLCO
+"""
+
+_REVIEW_MISSING_CONTEXT_ONLY = """# Review Summary
+Overall status: Not ready
+
+# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| SOW-001 | Rate card | Missing Context | Rate card not attached | Obtain rate card | PM |
+
+# No Signature Checklist Result
+Overall status: Ready for signature
+"""
+
+_REVIEW_YELLOW_ONLY = """# Review Summary
+Overall status: Ready for legal approval
+
+# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| MSA-001 | Payment / Net terms | Yellow | Net-60 unusual | Negotiate Net-30 | PM |
+
+# No Signature Checklist Result
+Overall status: Ready for signature
+"""
+
+_REVIEW_CLEAN = """# Review Summary
+Overall status: Ready for legal approval
+
+# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| MSA-001 | Term | Green | Standard | None | - |
+
+# No Signature Checklist Result
+Overall status: Ready for signature
+"""
+
+
+def test_assess_verdict_do_not_send_is_high():
+    """The explicit 'Do not send for signature' verdict is a blocker → high."""
+    from graph.nodes.risk_assessor import _assess_review_verdict
+    level, flags = _assess_review_verdict(_REVIEW_BLOCKER_DO_NOT_SEND)
+    assert level == "high"
+    assert any("signature" in f.get("reason", "").lower() for f in flags)
+
+
+def test_assess_verdict_red_rating_is_high():
+    """A Red rating in Key Findings is a blocker → high (even without the phrase)."""
+    from graph.nodes.risk_assessor import _assess_review_verdict
+    text = _REVIEW_BLOCKER_DO_NOT_SEND.replace("Do not send for signature", "Not ready")
+    level, _ = _assess_review_verdict(text)
+    assert level == "high"
+
+
+def test_assess_verdict_missing_context_is_high():
+    """Missing Context is a blocker per the playbook → high, even when the model
+    non-conformantly wrote 'Ready for signature' in the gate (parser.ts parity)."""
+    from graph.nodes.risk_assessor import _assess_review_verdict
+    level, _ = _assess_review_verdict(_REVIEW_MISSING_CONTEXT_ONLY)
+    assert level == "high"
+
+
+def test_assess_verdict_yellow_only_is_medium():
+    """Yellow findings with no blocker → medium."""
+    from graph.nodes.risk_assessor import _assess_review_verdict
+    level, _ = _assess_review_verdict(_REVIEW_YELLOW_ONLY)
+    assert level == "medium"
+
+
+def test_assess_verdict_clean_is_low():
+    """All-green, ready-for-signature review → low."""
+    from graph.nodes.risk_assessor import _assess_review_verdict
+    level, flags = _assess_review_verdict(_REVIEW_CLEAN)
+    assert level == "low"
+    assert flags == []
+
+
+def test_assess_verdict_empty_is_high():
+    """An empty review output is itself a problem → high."""
+    from graph.nodes.risk_assessor import _assess_review_verdict
+    level, flags = _assess_review_verdict("   ")
+    assert level == "high"
+    assert flags
+
+
+def test_risk_assessor_contract_review_blocker_requires_attorney():
+    """contract_review reads the verdict (not citations): a blocker → high +
+    requires_attorney, regardless of uploaded-doc citation state."""
+    from graph.nodes.risk_assessor import risk_assessor
+    state = _make_state(
+        task_type="contract_review",
+        llm_response=_REVIEW_BLOCKER_DO_NOT_SEND,
+        uploaded_docs=[{"text": "MASTER SERVICES AGREEMENT ..."}],
+        retrieved_chunks=[],
+    )
+    result = risk_assessor(state)
+    assert result["risk_level"] == "high"
+    assert result["requires_attorney"] is True
+
+
+def test_risk_assessor_contract_review_clean_no_attorney():
+    """A clean contract_review → low, requires_attorney False."""
+    from graph.nodes.risk_assessor import risk_assessor
+    state = _make_state(
+        task_type="contract_review",
+        llm_response=_REVIEW_CLEAN,
+        uploaded_docs=[{"text": "MASTER SERVICES AGREEMENT ..."}],
+        retrieved_chunks=[],
+    )
+    result = risk_assessor(state)
+    assert result["risk_level"] == "low"
+    assert result["requires_attorney"] is False
+
+
+def test_risk_assessor_research_unchanged_uses_citations():
+    """The research path still keys on citation grounding, not the verdict."""
+    from graph.nodes.risk_assessor import risk_assessor
+    state = _make_state(
+        task_type="research",
+        llm_response="The law says you should do this.",  # no citation
+        retrieved_chunks=[{"chunk_id": "c1", "doc_id": "d1", "doc_title": "Contract A", "text": "x"}],
+    )
+    result = risk_assessor(state)
+    assert result["risk_level"] == "high"
+    assert result.get("requires_attorney") is False
+
+
+# --- route_risk: interrupt only where the caller can resume ---
+
+def test_route_risk_contract_review_blocker_interactive_goes_to_human_review():
+    from graph.nodes.risk_assessor import route_risk
+    state = _make_state(task_type="contract_review", risk_level="high")
+    state["interactive_review"] = True
+    assert route_risk(state) == "human_review"
+
+
+def test_route_risk_contract_review_blocker_noninteractive_skips_interrupt():
+    """Word (no resume UI) must NOT interrupt — go to output_formatter; the
+    report carries requires_attorney instead."""
+    from graph.nodes.risk_assessor import route_risk
+    state = _make_state(task_type="contract_review", risk_level="high")
+    state["interactive_review"] = False
+    assert route_risk(state) == "output_formatter"
+
+
+def test_route_risk_generation_unchanged():
+    """Generation/drafting still route to human_review (unchanged)."""
+    from graph.nodes.risk_assessor import route_risk
+    assert route_risk(_make_state(task_type="contract_generation", risk_level="high")) == "human_review"
+    assert route_risk(_make_state(task_type="drafting", risk_level="low")) == "human_review"
+
+
+def test_route_risk_research_high_unchanged():
+    """Research with a citation flag still routes to human_review (unchanged)."""
+    from graph.nodes.risk_assessor import route_risk
+    assert route_risk(_make_state(task_type="research", risk_level="high")) == "human_review"
+
+
 # --- output_formatter ---
 
 def test_output_formatter_builds_report():
@@ -339,6 +512,15 @@ def test_output_formatter_builds_report():
     assert "response" in result["report"]
     assert "task_type" in result["report"]
     assert result["report"]["response"] == "The answer is X."
+
+
+def test_output_formatter_surfaces_requires_attorney():
+    """The authoritative attorney-required signal reaches the report for both clients."""
+    from graph.nodes.output_formatter import output_formatter
+    state = _make_state(task_type="contract_review", llm_response="...", risk_level="high")
+    state["requires_attorney"] = True
+    result = output_formatter(state)
+    assert result["report"]["requires_attorney"] is True
 
 
 # --- memory_writer ---

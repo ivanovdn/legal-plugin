@@ -13,6 +13,7 @@ class QueryRequest(BaseModel):
     session_id: str = Field("", description="Optional: resume an existing session")
     filters: dict = Field(default_factory=dict, description="Optional: additional retrieval filters (jurisdiction, doc_type)")
     uploaded_text: str = Field("", description="Optional: uploaded document text for review/analysis")
+    interactive_review: bool = Field(False, description="Caller can handle a human_review interrupt and resume it. Set True by clients with a review loop (Chainlit); leave False for clients without a resume UI (Word) so a contract-review blocker is reported, not interrupted.")
 
 
 class ResumeRequest(BaseModel):

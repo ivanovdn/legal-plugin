@@ -26,6 +26,9 @@ async def submit_query(
             "task_type": task_type,
             "session_id": session_id,
             "filters": filters or {},
+            # Chainlit has the attorney review loop (approve / request-changes /
+            # reject → /resume), so it can handle a human_review interrupt.
+            "interactive_review": True,
         }
         if uploaded_text:
             body["uploaded_text"] = uploaded_text
