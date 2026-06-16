@@ -215,6 +215,108 @@ def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
     assert result.get("report", {}).get("response") != ""  # routed through output_formatter
 
 
+_REVIEW_BLOCKER_OUTPUT = """# Review Summary
+Overall status: Do not send for signature
+Contract type: MSA / Counterparty: Acme
+
+# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| MSA-001 | Liability / Cap | Red | Uncapped liability | Add 12-month cap | CLCO |
+
+# No Signature Checklist Result
+Overall status: Do not send for signature
+Blocking items: MSA-001 / Final recommendation: escalate to CLCO
+"""
+
+
+def _fake_ollama_review_blocker(url, **kwargs):
+    """Mock Ollama: classify → contract_review; otherwise → a blocker review."""
+    resp = MagicMock()
+    resp.status_code = 200
+    body = kwargs.get("json", {})
+    messages = body.get("messages", [])
+    user_msg = messages[-1]["content"] if messages else ""
+    if "classify" in user_msg.lower() or "task type" in user_msg.lower():
+        resp.json.return_value = {"message": {"content": '{"task_type": "contract_review"}'}}
+    else:
+        resp.json.return_value = {"message": {"content": _REVIEW_BLOCKER_OUTPUT}}
+    return resp
+
+
+def test_graph_contract_review_blocker_interactive_pauses(tmp_path, monkeypatch):
+    """A blocker review from an interactive caller (Chainlit) pauses at human_review."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=[]):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "thread-review-1"}}
+        state = _make_state(
+            request="Review this contract.",
+            task_type="contract_review",
+            skill_plan=["contract_review"],
+            uploaded_docs=[{"text": "MASTER SERVICES AGREEMENT between Acme and Trinetix."}],
+        )
+        state["interactive_review"] = True
+        result = compiled.invoke(state, config=config)
+
+    assert "__interrupt__" in result
+    assert result["__interrupt__"][0].value.get("type") == "human_review"
+    assert result.get("risk_level") == "high"
+
+
+def test_graph_contract_review_blocker_noninteractive_completes(tmp_path, monkeypatch):
+    """A blocker review from a non-interactive caller (Word) does NOT interrupt;
+    it completes through output_formatter and carries report.requires_attorney."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("SQLITE_PATH", db_path)
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    init_audit_db(db_path)
+    import graph.nodes.memory_writer as mw
+    mw._db_initialized = True
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=[]), \
+         patch("graph.nodes.human_review.interrupt") as mock_interrupt:
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "thread-review-2"}}
+        state = _make_state(
+            request="Review this contract.",
+            task_type="contract_review",
+            skill_plan=["contract_review"],
+            uploaded_docs=[{"text": "MASTER SERVICES AGREEMENT between Acme and Trinetix."}],
+        )
+        state["interactive_review"] = False
+        result = compiled.invoke(state, config=config)
+
+    mock_interrupt.assert_not_called()
+    assert "__interrupt__" not in result
+    assert result.get("risk_level") == "high"
+    assert result["report"]["requires_attorney"] is True
+    assert result["report"]["response"] != ""
+
+
 def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     """Full graph flow: intake -> ... -> memory_writer writes audit log."""
     db_path = str(tmp_path / "test_legal.db")

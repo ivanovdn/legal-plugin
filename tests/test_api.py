@@ -226,6 +226,37 @@ def test_submit_query_passes_empty_chat_history_in_initial_state(monkeypatch):
     assert state_arg["chat_history"] == []
 
 
+def test_submit_query_threads_interactive_review_flag(monkeypatch):
+    """interactive_review defaults False and is honored when the caller sets it.
+
+    The flag gates the contract-review human_review interrupt: callers without a
+    resume UI (Word) leave it False so a blocker is reported, not interrupted.
+    """
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    with patch("api.routes.query._get_graph") as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = _mock_graph_invoke
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        client.post("/api/query", json={"request": "review"}, headers={"X-User-ID": "word-addin"})
+        default_state = mock_graph.invoke.call_args.args[0]
+
+        client.post(
+            "/api/query",
+            json={"request": "review", "interactive_review": True},
+            headers={"X-User-ID": "chainlit"},
+        )
+        flagged_state = mock_graph.invoke.call_args.args[0]
+
+    assert default_state["interactive_review"] is False
+    assert flagged_state["interactive_review"] is True
+
+
 def test_get_graph_builds_with_checkpointer_when_enabled(monkeypatch):
     """_get_graph passes the result of build_checkpointer() to build_graph()."""
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")

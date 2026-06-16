@@ -118,6 +118,8 @@ def submit_query(
         "review_iterations": 0,
         "report_notes_unincorporated": "",
         "previous_draft": "",
+        "requires_attorney": False,
+        "interactive_review": body.interactive_review,
     }
 
     graph = _get_graph()
