@@ -18,8 +18,7 @@ import chainlit as cl
 from fpdf import FPDF
 
 from clients.web.api_client import submit_query, ingest_file, health_check, resume_query
-from ingest.parsers.pdf_parser import parse_pdf
-from ingest.parsers.docx_parser import parse_docx
+from ingest.parsers.plain_text import extract_document_text
 
 
 # ---------------------------------------------------------------------------
@@ -70,22 +69,14 @@ async def _extract_file_text(elements) -> str:
         original_name = getattr(element, "name", "") or filepath.name
         ext = Path(original_name).suffix.lower() or filepath.suffix.lower()
         try:
-            if ext == ".pdf":
-                chunks = parse_pdf(
-                    filepath=filepath, client_id="internal",
-                    jurisdiction="", doc_type="contract", sensitivity="internal",
-                )
-                parts.extend(c.text for c in chunks)
-            elif ext == ".docx":
-                chunks = parse_docx(
-                    filepath=filepath, client_id="internal",
-                    jurisdiction="", doc_type="contract", sensitivity="internal",
-                )
-                parts.extend(c.text for c in chunks)
-            elif ext == ".txt":
-                parts.append(filepath.read_text(encoding="utf-8"))
-            else:
-                parts.append(f"[Unsupported file type: {ext}]")
+            # Faithful, lossless full-text extraction — NOT the RAG chunker.
+            # parse_docx/parse_pdf split + strip + reformat for retrieval and
+            # silently drop clauses (a numbered clause body is read as a heading
+            # and discarded). The review feeds the whole document to the LLM, so
+            # it needs the verbatim text, matching the Word add-in's body.getText().
+            parts.append(extract_document_text(filepath, suffix=ext))
+        except ValueError:
+            parts.append(f"[Unsupported file type: {ext}]")
         except Exception as e:
             parts.append(f"[Error extracting {element.name}: {e}]")
     return "\n\n".join(parts)
