@@ -97,6 +97,33 @@ def test_external_comments_combines_rules_and_examples():
     assert "## Examples" in text
 
 
+def test_no_signature_gate_blocks_unresolved_placeholders():
+    """Layer 1 placeholder safety-net (prompt side): the gate's Automatic-blockers
+    list must name unfilled placeholders / blank fields / incomplete signature
+    blocks. Fix #2 dropped the only placeholder cue (§10.4 'Open placeholders') as
+    collateral; this restores it in the highest-attention end-of-prompt gate.
+    Settled by the §10.2-10.4 A/B (deterministic PROSE->FULL flip)."""
+    _run_build()
+    text = (PLAYBOOK / "global" / "no_signature_checklist.md").read_text(encoding="utf-8").lower()
+    assert "placeholder" in text
+    assert "signature" in text
+    assert "unfilled" in text or "incomplete" in text or "blank" in text
+
+
+def test_output_format_requires_placeholder_enumeration_and_current_wording():
+    """Layer 1: the canonical output spec must instruct the model to (a) quote the
+    current/offending wording per finding (Word extracts 'current text' from it), and
+    (b) raise every unfilled placeholder / incomplete signature block as its own
+    Missing Context finding. Restores the signal lost when §10.2 ('Current wording /
+    issue') and §10.4 ('Open placeholders') were dropped — WITHOUT reintroducing a
+    competing output schema."""
+    _run_build()
+    text = (PLAYBOOK / "global" / "output_format.md").read_text(encoding="utf-8").lower()
+    assert "placeholder" in text
+    assert "missing context" in text
+    assert "quote" in text and "wording" in text
+
+
 def test_ai_review_procedure_drops_competing_output_schemas():
     """Option A: keep §10.1 (behavior rules); drop §10.2/10.3/10.4 'AI output schema'
     blocks, which conflict with the canonical output_format.md. The bundle must carry

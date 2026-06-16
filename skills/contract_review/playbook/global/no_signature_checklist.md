@@ -50,6 +50,7 @@ The document must not proceed to signature if any of these remain unresolved:
 - client policies, procurement terms, online terms, or order forms incorporated without review;
 - sanctions, export control, restricted-country, or restricted-party concern;
 - non-standard governing law/forum creating material enforcement or cost risk;
+- unresolved placeholders, blank fields, or unfilled signature / execution blocks (for example `[__]`, `[Legal Name]`, `[Month] [Date], [Year]`, `[Address]`);
 - final version not checked after the latest edits.
 
 ## Certification language

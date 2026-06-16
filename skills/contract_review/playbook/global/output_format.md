@@ -38,3 +38,7 @@ Overall status: Ready for signature / Do not send for signature
 Blocking items:
 Missing context:
 Final recommendation:
+
+### Completeness and current wording
+- In the "Issue" cell of each finding, quote the current or offending wording from the document.
+- Raise every unfilled placeholder, blank field, or incomplete signature / execution block as its own Missing Context finding in "Key Findings" and "Red and Missing Context Items"; set "Clause / section" to where it appears in the document, and treat each as a signature blocker.
