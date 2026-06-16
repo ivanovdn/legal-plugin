@@ -109,6 +109,20 @@ def test_ai_review_procedure_drops_competing_output_schemas():
     assert "SOW readiness" not in text        # §10.4 body gone
 
 
+@pytest.mark.parametrize("ctype", ["nda", "msa", "sow", "baa"])
+def test_per_type_skill_has_no_dangling_reference_paths(ctype: str):
+    """The LLM has no file access; per-type SKILL.md must not tell it to open
+    `references/*.md`. The build rewrites those pointers to inline phrasing while
+    preserving intent. See docs/output_format_conflict.md."""
+    _run_build()
+    text = (PLAYBOOK / ctype / "SKILL.md").read_text(encoding="utf-8")
+    assert "references/" not in text, f"{ctype}: dangling references/ path survived"
+    # intent preserved
+    assert "risk ratings" in text
+    assert "No Signature Checklist" in text
+    assert "required final output format" in text
+
+
 def test_cross_reference_doc_exists_and_lists_canonical_sources():
     _run_build()
     text = CROSSREF.read_text(encoding="utf-8")

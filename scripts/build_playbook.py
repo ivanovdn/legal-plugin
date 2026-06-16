@@ -275,10 +275,44 @@ def _build_global_files(doc, sections: dict[str, str], no_sig_checklist: str) ->
     return files
 
 
+# The source per-type SKILL.md files were authored for a runtime where the
+# adjacent `references/*.md` files are readable. In our system the whole bundle is
+# inlined into one prompt and the LLM has NO file access — so those pointers are
+# dangling references to files it can't open, while the referenced content is
+# already present inline (shared_operating_rules.md -> risk_rating.md +
+# approval_matrix.md + output_format.md + external_comments.md; no_signature_checklist.md
+# -> global/no_signature_checklist.md). We rewrite the pointers to inline phrasing,
+# preserving intent + the workflow cue. See docs/output_format_conflict.md.
+# ROLLBACK: delete _REFERENCE_REWRITES + its use in _build_type_files, then rebuild.
+_REFERENCE_REWRITES = (
+    (
+        "Use `references/shared_operating_rules.md` for risk ratings, approval owners, "
+        "output rules, and external-comment rules.",
+        "Apply the risk ratings, approval owners, output rules, and external-comment "
+        "rules in this playbook.",
+    ),
+    (
+        "Use `references/no_signature_checklist.md` before the final recommendation.",
+        "Run the No Signature Checklist in this playbook before the final recommendation.",
+    ),
+    (
+        "Use the required final output format from `references/shared_operating_rules.md`.",
+        "Use the required final output format in this playbook.",
+    ),
+)
+
+
+def _rewrite_reference_pointers(text: str) -> str:
+    """Rewrite dangling `references/*.md` file pointers to inline phrasing."""
+    for old, new in _REFERENCE_REWRITES:
+        text = text.replace(old, new)
+    return text
+
+
 def _build_type_files(doc, contract_type: str) -> dict[str, str]:
     """Build playbook/<type>/{SKILL.md, playbook_matrix.md}."""
     folder = SRC_DIR / TYPE_TO_FOLDER[contract_type]
-    skill_md = _read(folder / "SKILL.md")
+    skill_md = _rewrite_reference_pointers(_read(folder / "SKILL.md"))
     matrix_md = _table_to_markdown(doc.tables[TABLE_INDEX[TYPE_TO_MATRIX_TABLE[contract_type]]])
     matrix_doc = (
         GENERATED_NOTICE
