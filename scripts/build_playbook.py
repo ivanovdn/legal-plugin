@@ -57,6 +57,18 @@ TABLE_INDEX = {
 AI_PROC_START = "10. AI Review Procedure"
 AI_PROC_END = "11. Clause Bank Naming Convention"
 
+# §10.2/10.3/10.4 of the playbook are titled "AI output schema: …" and present
+# alternative output formats (issue-list / executive-summary / SOW-readiness) that
+# CONFLICT with the canonical 7-section format in references/shared_operating_rules.md
+# (-> output_format.md). The operating rules + every per-type SKILL.md + every
+# test_prompt.md endorse the 7-section format; these schemas carry no authority and
+# no deferral. To give the model ONE output spec, we render §10.1 (mandatory behavior
+# rules) and STOP at the first "AI output schema" subsection. See decision record in
+# docs/output_format_conflict.md (Option A, 2026-06-16).
+# ROLLBACK: delete AI_PROC_DROP_FROM and the `break` that uses it in
+# _render_ai_review_procedure() to restore §10.2/10.3/10.4 verbatim, then re-run this script.
+AI_PROC_DROP_FROM = "ai output schema"
+
 TYPES = ("nda", "msa", "sow", "baa")
 TYPE_TO_FOLDER = {
     "nda": "NDA Review Skill",
@@ -117,7 +129,13 @@ def _extract_sections(text: str) -> dict[str, str]:
 
 
 def _render_ai_review_procedure(doc) -> str:
-    """Render Section 10 (AI Review Procedure) — paragraphs + headings + bullets — as markdown."""
+    """Render Section 10 (AI Review Procedure) as markdown.
+
+    Includes the §10 intro + §10.1 (mandatory behavior rules) only. Rendering stops
+    at the first "AI output schema" subsection (§10.2/10.3/10.4) — those are
+    unendorsed output formats that conflict with the canonical output_format.md.
+    See AI_PROC_DROP_FROM above and docs/output_format_conflict.md (Option A).
+    """
     para_map = {p._element: p for p in doc.paragraphs}
     in_section = False
     out: list[str] = []
@@ -140,6 +158,9 @@ def _render_ai_review_procedure(doc) -> str:
         if not in_section:
             continue
         if style == "Heading 2":
+            # Stop before the conflicting output schemas (§10.2/10.3/10.4). Option A.
+            if AI_PROC_DROP_FROM in text.lower():
+                break
             out.append(f"\n### {text}\n")
         elif style == "List Bullet":
             out.append(f"- {text}")

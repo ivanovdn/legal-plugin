@@ -97,6 +97,18 @@ def test_external_comments_combines_rules_and_examples():
     assert "## Examples" in text
 
 
+def test_ai_review_procedure_drops_competing_output_schemas():
+    """Option A: keep §10.1 (behavior rules); drop §10.2/10.3/10.4 'AI output schema'
+    blocks, which conflict with the canonical output_format.md. The bundle must carry
+    a single output spec. See docs/output_format_conflict.md."""
+    _run_build()
+    text = (PLAYBOOK / "global" / "ai_review_procedure.md").read_text(encoding="utf-8")
+    assert "Mandatory AI rules" in text       # §10.1 kept
+    assert "AI output schema" not in text     # §10.2/10.3/10.4 headings dropped
+    assert "Top 5 legal risks" not in text    # §10.3 body gone
+    assert "SOW readiness" not in text        # §10.4 body gone
+
+
 def test_cross_reference_doc_exists_and_lists_canonical_sources():
     _run_build()
     text = CROSSREF.read_text(encoding="utf-8")
