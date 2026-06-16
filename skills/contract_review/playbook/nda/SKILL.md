@@ -15,8 +15,8 @@ Review one-way NDAs, mutual NDAs, confidentiality agreements, and standalone con
 Trinetix uses both one-way and mutual NDA templates. The core position is broad protection of non-public business, technical, financial, commercial, personnel, customer, software, IP, and third-party confidential information; use only for the Business Purpose; disclosure only to need-to-know personnel bound by protective duties; reasonable-care security; return or destruction on request or termination subject to legal/compliance retention; trade secrets protected for as long as they remain trade secrets; Tennessee law and AAA/Nashville dispute resolution are preferred in the templates.
 
 ## Mandatory behavior
-- Use `references/shared_operating_rules.md` for risk ratings, approval owners, output rules, and external-comment rules.
-- Use `references/no_signature_checklist.md` before the final recommendation.
+- Apply the risk ratings, approval owners, output rules, and external-comment rules in this playbook.
+- Run the No Signature Checklist in this playbook before the final recommendation.
 - Do not invent deal facts or assume missing approvals.
 - Mark unresolved factual gaps as Missing Context.
 - Treat Red and Missing Context items as signature blockers unless resolved or approved.
@@ -103,7 +103,7 @@ If all Red and Missing Context items are resolved or approved and final wording 
 **Signature may proceed, subject to normal internal signing authority and final business confirmation.**
 
 ## Required output
-Use the required final output format from `references/shared_operating_rules.md`.
+Use the required final output format in this playbook.
 
 ## Quality control checklist
 Before answering, confirm internally that you have:

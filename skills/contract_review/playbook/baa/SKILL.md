@@ -15,8 +15,8 @@ Review BAAs and HIPAA-related terms where Trinetix may act as business associate
 The Trinetix BAA template is a Business Associate Subcontractor Agreement tied to an underlying services agreement. It permits PHI use/disclosure only as necessary to perform the underlying services. It requires HIPAA safeguards, written information security program, downstream written restrictions, minimum necessary use, designated-record-set cooperation if applicable, breach/security incident notice, HHS access, return/destruction or continued protection if infeasible, cyber insurance, remediation-cost handling, and termination rights for material breach. The template contains strict provisions, so liability, indemnity, insurance, remediation costs, breach notice timing, and conflict with the underlying MSA require careful review.
 
 ## Mandatory behavior
-- Use `references/shared_operating_rules.md` for risk ratings, approval owners, output rules, and external-comment rules.
-- Use `references/no_signature_checklist.md` before the final recommendation.
+- Apply the risk ratings, approval owners, output rules, and external-comment rules in this playbook.
+- Run the No Signature Checklist in this playbook before the final recommendation.
 - Do not invent deal facts or assume missing approvals.
 - Mark unresolved factual gaps as Missing Context.
 - Treat Red and Missing Context items as signature blockers unless resolved or approved.
@@ -121,7 +121,7 @@ If all Red and Missing Context items are resolved or approved and final wording 
 **Signature may proceed, subject to normal internal signing authority and final business confirmation.**
 
 ## Required output
-Use the required final output format from `references/shared_operating_rules.md`.
+Use the required final output format in this playbook.
 
 ## Quality control checklist
 Before answering, confirm internally that you have:
