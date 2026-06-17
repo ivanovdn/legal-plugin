@@ -7,10 +7,12 @@ import re
 from pathlib import Path
 
 from langchain_ollama import ChatOllama
+from langfuse.decorators import observe
 from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.tracing import langchain_callbacks
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.extract_clauses import extract_clauses
@@ -58,10 +60,13 @@ def _revise_existing_draft(
         f"Apply the notes and return the revised draft."
     )
     try:
-        result = llm.invoke([
-            {"role": "system", "content": _REVISE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ])
+        result = llm.invoke(
+            [
+                {"role": "system", "content": _REVISE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            config={"callbacks": langchain_callbacks()},
+        )
         content = result.content if hasattr(result, "content") else str(result)
         state["llm_response"] = content
         logger.info(
@@ -101,6 +106,7 @@ def _build_agent():
     return agent
 
 
+@observe(name="contract_generation", capture_input=False, capture_output=False)
 def contract_generation(state: LegalAgentState) -> LegalAgentState:
     """Run the contract generation ReAct agent.
 
@@ -136,7 +142,10 @@ def contract_generation(state: LegalAgentState) -> LegalAgentState:
         agent = _build_agent()
         chat_history = state.get("chat_history", []) or []
         agent_messages = [*chat_history, {"role": "user", "content": user_message}]
-        result = agent.invoke({"messages": agent_messages})
+        result = agent.invoke(
+            {"messages": agent_messages},
+            config={"callbacks": langchain_callbacks()},
+        )
 
         messages = result.get("messages", [])
         if messages:

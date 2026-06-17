@@ -87,3 +87,25 @@ def test_intent_router_reports_generation_usage(monkeypatch):
 
     assert captured["usage"] == {"input": 18, "output": 4, "total": 22, "unit": "TOKENS"}
     assert captured["model"]
+
+
+def test_doc_chat_forwards_langfuse_callbacks(monkeypatch):
+    from skills import legal_research as mod
+
+    captured: dict = {}
+
+    class FakeLLM:
+        def invoke(self, messages, config=None):
+            captured["config"] = config
+            class _R:  # minimal AIMessage stand-in
+                content = "Here is the summary."
+            return _R()
+
+    monkeypatch.setattr(mod, "_build_llm", lambda: FakeLLM())
+    monkeypatch.setattr(mod, "langchain_callbacks", lambda: ["SENTINEL"])
+
+    # Shape state so _extract_uploaded_text returns non-empty (real key: uploaded_docs).
+    state = {"request": "summarize this", "uploaded_docs": [{"text": "Some contract text."}]}
+    mod.legal_research(state)
+
+    assert captured["config"] == {"callbacks": ["SENTINEL"]}
