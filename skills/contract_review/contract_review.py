@@ -17,7 +17,7 @@ import logging
 import re
 from pathlib import Path
 
-from langfuse.decorators import langfuse_context
+from langfuse.decorators import observe, langfuse_context
 
 from graph.state import LegalAgentState
 from skills.base import load_bundle
@@ -146,6 +146,7 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
     return "\n\n".join(parts)
 
 
+@observe(name="contract_review", capture_input=False, capture_output=False)
 def contract_review(state: LegalAgentState) -> LegalAgentState:
     """Prepare state for clause analysis using the per-type playbook bundle.
 

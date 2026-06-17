@@ -8,6 +8,7 @@ from langfuse.decorators import observe, langfuse_context
 
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.tracing import ollama_usage
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def _build_context(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-@observe(name="llm_caller")
+@observe(name="llm_caller", as_type="generation")
 def llm_caller(state: LegalAgentState) -> LegalAgentState:
     """Call Ollama with context + request. temperature=0.0 always."""
     if state.get("llm_response") and not state.get("messages"):
@@ -72,13 +73,15 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
             timeout=600.0,
         )
         response.raise_for_status()
-        content = response.json()["message"]["content"]
+        data = response.json()
+        content = data["message"]["content"]
         state["llm_response"] = content
 
         langfuse_context.update_current_observation(
             input=messages,
             output=content,
             model=settings.llm_model,
+            usage=ollama_usage(data),
             metadata={
                 "task_type": state.get("task_type", ""),
                 "chunks_count": len(chunks),

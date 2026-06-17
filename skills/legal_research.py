@@ -6,10 +6,12 @@ import logging
 import re
 
 from langchain_ollama import ChatOllama
+from langfuse.decorators import observe
 from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
@@ -332,7 +334,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     ]
 
     llm = _build_llm()
-    response = llm.invoke(messages)
+    response = traced_invoke(llm, messages, name="doc_chat")
     content = response.content if hasattr(response, "content") else str(response)
     edits = _extract_proposed_edits(content)
 
@@ -350,10 +352,14 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             f"Your previous prose answer (which forgot the JSON block):\n{content}\n\n"
             f"Now output the edits JSON for the change you described above."
         )
-        retry_response = json_llm.invoke([
-            {"role": "system", "content": _JSON_RETRY_SYSTEM},
-            {"role": "user", "content": retry_user},
-        ])
+        retry_response = traced_invoke(
+            json_llm,
+            [
+                {"role": "system", "content": _JSON_RETRY_SYSTEM},
+                {"role": "user", "content": retry_user},
+            ],
+            name="doc_chat_json_retry",
+        )
         retry_raw = (
             retry_response.content if hasattr(retry_response, "content") else str(retry_response)
         )
@@ -395,7 +401,7 @@ def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]
     agent = _build_agent()
     chat_history = state.get("chat_history", []) or []
     agent_messages = [*chat_history, {"role": "user", "content": user_message}]
-    result = agent.invoke({"messages": agent_messages})
+    result = traced_agent_invoke(agent, {"messages": agent_messages}, name="research_agent")
 
     messages = result.get("messages", [])
     content = ""
@@ -412,6 +418,7 @@ def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]
     return content, _extract_proposed_edits(content), source_docs
 
 
+@observe(name="legal_research", capture_input=False, capture_output=False)
 def legal_research(state: LegalAgentState) -> LegalAgentState:
     """Answer the user's request.
 
