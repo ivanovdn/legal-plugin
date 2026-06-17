@@ -11,7 +11,7 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.tracing import langchain_callbacks
+from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
@@ -334,7 +334,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     ]
 
     llm = _build_llm()
-    response = llm.invoke(messages, config={"callbacks": langchain_callbacks()})
+    response = traced_invoke(llm, messages, name="doc_chat")
     content = response.content if hasattr(response, "content") else str(response)
     edits = _extract_proposed_edits(content)
 
@@ -352,12 +352,13 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             f"Your previous prose answer (which forgot the JSON block):\n{content}\n\n"
             f"Now output the edits JSON for the change you described above."
         )
-        retry_response = json_llm.invoke(
+        retry_response = traced_invoke(
+            json_llm,
             [
                 {"role": "system", "content": _JSON_RETRY_SYSTEM},
                 {"role": "user", "content": retry_user},
             ],
-            config={"callbacks": langchain_callbacks()},
+            name="doc_chat_json_retry",
         )
         retry_raw = (
             retry_response.content if hasattr(retry_response, "content") else str(retry_response)
@@ -400,10 +401,7 @@ def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]
     agent = _build_agent()
     chat_history = state.get("chat_history", []) or []
     agent_messages = [*chat_history, {"role": "user", "content": user_message}]
-    result = agent.invoke(
-        {"messages": agent_messages},
-        config={"callbacks": langchain_callbacks()},
-    )
+    result = traced_agent_invoke(agent, {"messages": agent_messages}, name="research_agent")
 
     messages = result.get("messages", [])
     content = ""

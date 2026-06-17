@@ -12,7 +12,7 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.tracing import langchain_callbacks
+from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.extract_clauses import extract_clauses
@@ -60,12 +60,13 @@ def _revise_existing_draft(
         f"Apply the notes and return the revised draft."
     )
     try:
-        result = llm.invoke(
+        result = traced_invoke(
+            llm,
             [
                 {"role": "system", "content": _REVISE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            config={"callbacks": langchain_callbacks()},
+            name="revise_draft",
         )
         content = result.content if hasattr(result, "content") else str(result)
         state["llm_response"] = content
@@ -142,10 +143,7 @@ def contract_generation(state: LegalAgentState) -> LegalAgentState:
         agent = _build_agent()
         chat_history = state.get("chat_history", []) or []
         agent_messages = [*chat_history, {"role": "user", "content": user_message}]
-        result = agent.invoke(
-            {"messages": agent_messages},
-            config={"callbacks": langchain_callbacks()},
-        )
+        result = traced_agent_invoke(agent, {"messages": agent_messages}, name="contract_generation_agent")
 
         messages = result.get("messages", [])
         if messages:
