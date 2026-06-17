@@ -21,6 +21,7 @@ See docs/playbook_cross_reference.md for which file owns which concern.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import sys
@@ -96,6 +97,13 @@ NO_SIG_PLACEHOLDER_BLOCKER = (
 # Anchor in the team's no_signature_checklist.md "Automatic blockers" list; the new
 # blocker bullet is inserted immediately before it. Build fails loudly if it moves.
 NO_SIG_BLOCKER_ANCHOR = "- final version not checked after the latest edits."
+
+# Layer 1 validation toggle. Default ON. To regenerate the pre-Layer-1 "first
+# variant" prompt (the bundle the model saw before the placeholder cue) — e.g. to
+# A/B the cue against the live model — run:
+#     PLAYBOOK_PLACEHOLDER_CUE=0 python scripts/build_playbook.py
+# and rebuild with the default to restore. See docs/wiki.md (placeholder recall).
+LAYER1_PLACEHOLDER_CUE = os.environ.get("PLAYBOOK_PLACEHOLDER_CUE", "1") != "0"
 
 TYPES = ("nda", "msa", "sow", "baa")
 TYPE_TO_FOLDER = {
@@ -265,7 +273,7 @@ def _build_global_files(doc, sections: dict[str, str], no_sig_checklist: str) ->
         GENERATED_NOTICE
         + "# Required Final Output Format\n\n"
         + sections["Required final output format"]
-        + OUTPUT_FORMAT_COMPLETENESS
+        + (OUTPUT_FORMAT_COMPLETENESS if LAYER1_PLACEHOLDER_CUE else "")
         + "\n"
     )
 
@@ -302,15 +310,16 @@ def _build_global_files(doc, sections: dict[str, str], no_sig_checklist: str) ->
 
     # no_signature_checklist.md — canonical: team's no_signature_checklist.md (verbatim)
     # + Layer 1: insert the placeholder/sig-block blocker into the Automatic-blockers list.
-    if no_sig_checklist.count(NO_SIG_BLOCKER_ANCHOR) != 1:
-        raise SystemExit(
-            "build_playbook: no_signature_checklist Automatic-blockers anchor "
-            f"{NO_SIG_BLOCKER_ANCHOR!r} not found exactly once — update the Layer 1 "
-            "injection (NO_SIG_PLACEHOLDER_BLOCKER) to match the new source."
+    if LAYER1_PLACEHOLDER_CUE:
+        if no_sig_checklist.count(NO_SIG_BLOCKER_ANCHOR) != 1:
+            raise SystemExit(
+                "build_playbook: no_signature_checklist Automatic-blockers anchor "
+                f"{NO_SIG_BLOCKER_ANCHOR!r} not found exactly once — update the Layer 1 "
+                "injection (NO_SIG_PLACEHOLDER_BLOCKER) to match the new source."
+            )
+        no_sig_checklist = no_sig_checklist.replace(
+            NO_SIG_BLOCKER_ANCHOR, NO_SIG_PLACEHOLDER_BLOCKER + "\n" + NO_SIG_BLOCKER_ANCHOR, 1
         )
-    no_sig_checklist = no_sig_checklist.replace(
-        NO_SIG_BLOCKER_ANCHOR, NO_SIG_PLACEHOLDER_BLOCKER + "\n" + NO_SIG_BLOCKER_ANCHOR, 1
-    )
     files["no_signature_checklist.md"] = GENERATED_NOTICE + no_sig_checklist.strip() + "\n"
 
     return files
