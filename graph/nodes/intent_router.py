@@ -9,6 +9,7 @@ from langfuse.decorators import observe, langfuse_context
 
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.tracing import ollama_usage
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ Respond with JSON only: {{"task_type": "<type>"}}
 User request: {request}"""
 
 
-@observe(name="intent_router")
+@observe(name="intent_router", as_type="generation")
 def intent_router(state: LegalAgentState) -> LegalAgentState:
     """Classify task_type from request. Preserves existing task_type if valid."""
     if state.get("task_type") and state["task_type"] in VALID_TASK_TYPES:
@@ -62,7 +63,8 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
             timeout=120.0,
         )
         response.raise_for_status()
-        content = response.json()["message"]["content"]
+        data = response.json()
+        content = data["message"]["content"]
         parsed = json.loads(content)
         classified = parsed.get("task_type", "research")
         if classified in VALID_TASK_TYPES:
@@ -72,6 +74,7 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
             input=prompt,
             output=content,
             model=settings.llm_model,
+            usage=ollama_usage(data),
             metadata={"classified_as": task_type},
         )
         logger.info("[intent_router] LLM classified: %s", task_type)
