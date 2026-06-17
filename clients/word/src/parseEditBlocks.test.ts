@@ -115,6 +115,27 @@ const pass = (cond: boolean, label: string) =>
   );
 }
 
+// 7c. Stacked objects in ONE block (traces cea50c6b / f15f8a9b). The local LLM
+//     puts several edit objects in one fenced block separated by newlines, NOT
+//     a JSON array. JSON.parse rejects multiple top-level objects, so the block
+//     was dropped -> empty edits -> lossy JSON-retry -> destructive replace_all.
+{
+  const prose =
+    "I will update the blank fields.\n\n" +
+    "```json\n" +
+    '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"}\n' +
+    '{"action": "replace", "target_text": "Title: [__]", "new_text": "Title: Chief"}\n' +
+    '{"action": "replace", "target_text": "for and on behalf of [__]", "new_text": "for and on behalf of Acme"}\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 3, "stacked-objects: all 3 edits extracted");
+  pass(blocks[1].new_text === "Title: Chief", "stacked-objects: middle edit preserved");
+  pass(
+    blocks[2].new_text === "for and on behalf of Acme",
+    "stacked-objects: last edit preserved",
+  );
+}
+
 // 8. Array with mixed-validity entries — valid ones kept, invalid dropped.
 {
   const prose =

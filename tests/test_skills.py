@@ -453,6 +453,27 @@ def test_extract_proposed_edits_accepts_replace_all_action():
     assert edits[0]["action"] == "replace_all"
 
 
+def test_chat_prompt_never_demonstrates_bundled_targets():
+    """Regression guard. The doc-chat prompt must NOT show a target_text that
+    stitches table columns with a tab or otherwise bundles fields — the model
+    copies whatever the worked example demonstrates, and a tab-joined target
+    (e.g. "Signed by: [__]\\tSigned by: Boris…") can't be located by body.search,
+    so the edit fails silently with "Couldn't locate this clause."
+
+    Commit fec4085 introduced exactly such an example; 928d462 added replace_all
+    but didn't retract it, so the two contradicted and the model picked the
+    concrete (broken) example. Lock the prompt against re-introducing a tab.
+    """
+    from skills.legal_research import CHAT_SYSTEM_PROMPT
+
+    # The prompt teaches via JSON examples, so the danger is the *escape sequence*
+    # \t / \n appearing inside an example target_text (the model copies it, the
+    # parsed value becomes a real tab/newline, and body.search can't match it).
+    assert "\\t" not in CHAT_SYSTEM_PROMPT      # no tab-joined two-column targets
+    assert "\\n" not in CHAT_SYSTEM_PROMPT      # no newline-joined multi-row targets
+    assert "replace_all" in CHAT_SYSTEM_PROMPT  # the multi-occurrence path is still taught
+
+
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
     from skills.legal_research import _extract_proposed_edits
@@ -479,6 +500,31 @@ def test_extract_proposed_edits_accepts_array_inside_one_block():
     assert len(edits) == 2
     assert all(e["action"] == "replace" for e in edits)
     assert all(e["new_text"] == "Signed by: John Doe" for e in edits)
+
+
+def test_extract_proposed_edits_accepts_stacked_objects_in_one_block():
+    """Regression (traces cea50c6b / f15f8a9b): the local LLM stacks several edit
+    objects in ONE fenced block separated by newlines ({...}\\n{...}) instead of a
+    JSON array. json.loads raises on multiple top-level objects, so the whole
+    block was dropped -> empty edits -> the lossy JSON-retry fired and emitted a
+    destructive replace_all "[__]". The parser must decode each stacked object."""
+    from skills.legal_research import _extract_proposed_edits
+
+    prose = (
+        "I will update the blank fields.\n\n"
+        "```json\n"
+        '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"}\n'
+        '{"action": "replace", "target_text": "Title: [__]", "new_text": "Title: Chief"}\n'
+        '{"action": "replace", "target_text": "for and on behalf of [__]", "new_text": "for and on behalf of Acme"}\n'
+        "```"
+    )
+    edits = _extract_proposed_edits(prose)
+    assert len(edits) == 3
+    assert [e["new_text"] for e in edits] == [
+        "Signed by: Suzy Quatro",
+        "Title: Chief",
+        "for and on behalf of Acme",
+    ]
 
 
 def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():

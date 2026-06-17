@@ -65,6 +65,75 @@ function tolerantParse(raw: string): unknown | undefined {
   }
 }
 
+/** Decode one or more concatenated top-level JSON values from `raw`.
+ *  Mirrors the backend `_iter_json_values`. The local LLM frequently stacks
+ *  several edit objects in ONE fenced block, separated only by newlines
+ *  ({...}\n{...}) instead of a JSON array — which JSON.parse rejects as "extra
+ *  data", so the whole block used to be dropped (traces cea50c6b / f15f8a9b).
+ *  We first try to parse the block as a single value (object / array / wrapper);
+ *  failing that we split on balanced brace/bracket boundaries (tracking string
+ *  state) and parse each piece. Returns [] when nothing parses. */
+function iterJsonValues(raw: string): unknown[] {
+  const whole = tolerantParse(raw);
+  if (whole !== undefined) return [whole];
+
+  const s = escapeUnescapedWhitespaceInStrings(raw);
+  const values: unknown[] = [];
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  let start = -1;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") escapeNext = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{" || ch === "[") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" || ch === "]") {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          try {
+            values.push(JSON.parse(s.slice(start, i + 1)));
+          } catch {
+            // skip an unparseable fragment, keep scanning
+          }
+          start = -1;
+        }
+      }
+    }
+  }
+  return values;
+}
+
+/** Normalize decoded JSON values into a flat list of edit-object candidates.
+ *  A value may be a bare edit object, an array of edits, or a {"edits": [...]}
+ *  wrapper. */
+function flattenEditValues(values: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (const v of values) {
+    const edits = (v as { edits?: unknown })?.edits;
+    if (v && typeof v === "object" && !Array.isArray(v) && Array.isArray(edits)) {
+      out.push(...edits);
+    } else if (Array.isArray(v)) {
+      out.push(...v);
+    } else {
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 export function extractEditBlocks(prose: string): {
   cleanedProse: string;
   blocks: EditProposal[];
@@ -74,16 +143,15 @@ export function extractEditBlocks(prose: string): {
 
   for (const match of prose.matchAll(JSON_BLOCK_RE)) {
     const raw = match[1].trim();
-    const parsed = tolerantParse(raw);
-    if (parsed === undefined) {
+    // A block may hold a single edit object, an array of edits, OR several edit
+    // objects stacked one per line ({...}\n{...}) — the local LLM uses all three
+    // interchangeably. iterJsonValues decodes whichever shape is present.
+    const values = iterJsonValues(raw);
+    if (values.length === 0) {
       // Tolerant: skip malformed blocks, keep others.
       continue;
     }
-    // A block may contain a single edit object OR an array of edits — the LLM
-    // sometimes consolidates multi-location requests into one fenced block
-    // with an array (e.g. ```json [{...}, {...}] ```). Both shapes accepted.
-    const candidates: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-    for (const c of candidates) {
+    for (const c of flattenEditValues(values)) {
       if (
         c &&
         typeof c === "object" &&

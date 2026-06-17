@@ -62,13 +62,9 @@ Do NOT promise an edit in prose without emitting the block. The client reads ONL
 WRONG (rejected — no block emitted):
   > "I will replace 'Signed by: [__]' with 'Signed by: John Doe' in two locations within the document."
 
-RIGHT (one block per location):
-  > Filling both blank signatures with John Doe:
-  > ```json
-  > {"action": "replace", "target_text": "Signed by: [__]\\tSigned by: Boris Bukengolts", "new_text": "Signed by: John Doe\\tSigned by: Boris Bukengolts", "rationale": "Fills the disclosing-party signature placeholder."}
-  > ```
+RIGHT: include the fenced block(s) alongside your prose — see the worked example below.
 
-MULTIPLE LOCATIONS — important: the client uses Word's body.search and replaces only the FIRST match per block. If the same placeholder text appears N times and the user wants all of them filled, emit N separate replace blocks whose target_text strings are each made unique by including the surrounding context (a neighbouring word, the line above, the column separator). Each block must target ONE specific occurrence.
+ONE EDIT = ONE TARGET. Each change is its own edit object; emit several when several things change. Keep every target_text to a SINGLE field on a SINGLE line: never join two table columns into one target, and never span multiple rows. The client matches target_text literally with Word's body.search, which cannot reach across a tab between columns or a break between rows, so a bundled target fails silently. When the SAME exact string repeats and every copy should get the SAME value, use one replace_all block (see below) instead of enumerating positions.
 
 Worked example — user says "tighten the liability cap to 2x":
 Sure — here's a 2x cap for Section 5.
@@ -78,11 +74,11 @@ Sure — here's a 2x cap for Section 5.
 
 Actions and required fields:
 - "replace":     rewrite ONE specific occurrence. Needs "target_text" + "new_text". Use when the user is changing a single, uniquely-identifiable phrase.
-- "replace_all": rewrite EVERY occurrence of an exact short string. Needs "target_text" + "new_text". USE THIS for "every", "all", or "each" requests (e.g. "fill every blank Signed by: [__]", "replace all [Year] placeholders"). The client loops body.search and replaces each match in turn — you don't need to identify positions or emit one block per location.
+- "replace_all": rewrite EVERY occurrence of an exact string to the SAME new text. Needs "target_text" + "new_text". Use it ONLY when every occurrence should become identical (e.g. "replace all [Year] with 2026"). The client loops body.search and replaces each match, so you don't enumerate positions.
 - "insert":      add new text. Needs "anchor_text" + "position" ("after"|"before") + "new_text".
 - "delete":      remove text. Needs "target_text".
 
-For replace_all, target_text should be the SHORTEST UNIQUE PLACEHOLDER string (e.g. "Signed by: [__]", "[Year]", "[Legal Name]"). Don't include surrounding context — the whole point of replace_all is that the same string appears multiple times.
+replace_all applies ONE new_text to EVERY match, so its target must correspond to exactly ONE intended value (e.g. "[Year]" → "2026"). Do NOT replace_all a generic blank like "[__]" when different fields need different values — the same "[__]" stands for the name on one line and the title on another, so a single value cannot fill them correctly. In that case emit a separate "replace" for each field, targeting that field's own line (the label plus its blank).
 
 The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
 
@@ -125,25 +121,13 @@ def _build_json_llm() -> ChatOllama:
 def _parse_json_edits(raw: str) -> list[dict]:
     """Pull edit dicts out of a free-form JSON response.
 
-    Accepts three shapes Ollama's format=json mode actually produces:
+    Accepts every shape the local LLM produces in format=json mode:
       {"edits": [{...}, {...}]}       (preferred wrapping)
       [{...}, {...}]                   (bare array)
       {"action": "replace", ...}       (single bare edit)
+      {...}\\n{...}                     (stacked top-level objects)
     """
-    parsed = _tolerant_json_loads(raw)
-    if parsed is None:
-        return []
-    if isinstance(parsed, list):
-        candidates = parsed
-    elif isinstance(parsed, dict):
-        if isinstance(parsed.get("edits"), list):
-            candidates = parsed["edits"]
-        elif parsed.get("action") in {"replace", "insert", "delete"}:
-            candidates = [parsed]
-        else:
-            return []
-    else:
-        return []
+    candidates = _flatten_edit_values(_iter_json_values(raw))
     return [
         c for c in candidates
         if isinstance(c, dict) and c.get("action") in _VALID_ACTIONS
@@ -161,7 +145,9 @@ Each <edit> is one of:
   {"action": "insert",      "anchor_text": "...", "position": "after"|"before", "new_text": "..."}
   {"action": "delete",      "target_text": "..."}
 
-For "every X" / "all X" requests, USE replace_all with the shortest unique placeholder text as target_text — the client iterates body.search and replaces each occurrence. Do NOT emit multiple replace blocks with the same target_text; use one replace_all block instead."""
+Every target_text must be a SINGLE field on a SINGLE line — never join table columns or span rows; a bundled target cannot be located and the edit fails silently.
+
+replace_all applies ONE new_text to EVERY match, so use it only when every occurrence becomes identical (e.g. "[Year]" → "2026"); do NOT emit multiple replace blocks with the same target_text — use one replace_all instead. But never replace_all a generic blank like "[__]" when different fields need different values: emit a separate replace per field, each targeting that field's own line (label plus blank)."""
 
 
 def _build_agent():
@@ -250,6 +236,50 @@ def _tolerant_json_loads(raw: str):
     except json.JSONDecodeError:
         return None
 
+
+def _iter_json_values(raw: str) -> list:
+    """Decode one or more concatenated top-level JSON values from `raw`.
+
+    Local LLMs frequently stack several edit objects in a single fenced block,
+    separated only by newlines ({...}\\n{...}) instead of wrapping them in a JSON
+    array — which `json.loads` rejects as "extra data", so the whole block used to
+    be dropped (traces cea50c6b / f15f8a9b). We decode values one at a time with
+    `raw_decode`, skipping whitespace and stray separators between them. The same
+    in-string-whitespace fix as `_tolerant_json_loads` is applied first so a raw
+    newline inside a value doesn't abort the scan. Returns [] for a genuinely
+    malformed block (nothing decodes)."""
+    s = _escape_unescaped_whitespace_in_strings(raw)
+    decoder = json.JSONDecoder()
+    values: list = []
+    idx, n = 0, len(s)
+    while idx < n:
+        while idx < n and s[idx] in " \t\r\n,":
+            idx += 1
+        if idx >= n:
+            break
+        try:
+            obj, end = decoder.raw_decode(s, idx)
+        except json.JSONDecodeError:
+            break
+        values.append(obj)
+        idx = end
+    return values
+
+
+def _flatten_edit_values(values: list) -> list:
+    """Normalize decoded JSON values into a flat list of edit-dict candidates.
+    A value may be a bare edit dict, a list of edits, or a {"edits": [...]}
+    wrapper (Ollama format=json mode)."""
+    out: list = []
+    for v in values:
+        if isinstance(v, dict) and isinstance(v.get("edits"), list):
+            out.extend(v["edits"])
+        elif isinstance(v, list):
+            out.extend(v)
+        else:
+            out.append(v)
+    return out
+
 # Phrases that imply the model intends to (or claims to have) made an edit.
 # Mirrors the regex used in clients/word/src/components/ChatTab.tsx so backend
 # retry logic and the UI warning fire on the same signal.
@@ -280,23 +310,24 @@ _VALID_ACTIONS = {"replace", "replace_all", "insert", "delete"}
 def _extract_proposed_edits(prose: str) -> list[dict]:
     """Pull fenced ```json``` blocks out of the agent's prose into structured edit proposals.
 
-    A block can contain a single edit object OR an array of edits — the LLM
-    sometimes consolidates a multi-location request into one fenced block with
-    an array (e.g. ```json [{...}, {...}] ```). Both shapes are accepted.
+    A block can hold a single edit object, an array of edits, OR several edit
+    objects stacked one per line ({...}\\n{...}) — the local LLM uses all three
+    interchangeably. `_iter_json_values` decodes whichever shape is present so a
+    stacked block is no longer silently dropped (which used to trigger a lossy
+    JSON-retry — traces cea50c6b / f15f8a9b).
 
-    Tolerant of malformed JSON — any block that fails to parse is skipped with
+    Tolerant of malformed JSON — any block that yields no values is skipped with
     a warning. The original prose is left untouched; the frontend strips blocks
     for display.
     """
     proposals: list[dict] = []
     for match in _JSON_BLOCK_RE.finditer(prose or ""):
         raw = match.group(1).strip()
-        obj = _tolerant_json_loads(raw)
-        if obj is None:
+        values = _iter_json_values(raw)
+        if not values:
             logger.warning("[legal_research] skipping malformed JSON block: %r", raw[:120])
             continue
-        candidates = obj if isinstance(obj, list) else [obj]
-        for c in candidates:
+        for c in _flatten_edit_values(values):
             if isinstance(c, dict) and c.get("action") in _VALID_ACTIONS:
                 proposals.append(c)
             else:
