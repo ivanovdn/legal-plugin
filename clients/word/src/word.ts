@@ -41,6 +41,27 @@ export async function readBody(): Promise<string> {
 // match. We fall back to the leading run before the first such character.
 const SEARCH_SPECIAL = /[[\](){}<>?*@^~\\]/;
 
+// Word's wildcard metacharacters. body.search on Word for Mac treats these as
+// wildcards even with matchWildcards:false, so a literal needle containing them
+// (e.g. a blank field "Signed by: [__]") silently misses. The fix is to search
+// in wildcard MODE with each metacharacter backslash-escaped, which matches the
+// literal character. Exported for unit testing.
+const WORD_WILDCARD_META = /[\\[\]{}()<>?*@!]/;
+
+export function escapeWordWildcards(s: string): string {
+  return s.replace(/[\\[\]{}()<>?*@!]/g, "\\$&");
+}
+
+// A "fill this blank" placeholder with NO label — just brackets / underscores /
+// dashes / dots / spaces (e.g. "[__]", "___", "[...]"). A replace_all on a bare
+// placeholder like this would dump ONE value into every distinct blank field
+// (signatory name, title, entity), which is almost always wrong — those need
+// different values. We refuse and ask for each field. "[Year]" and
+// "Signed by: [__]" carry a label, so they are NOT bare and are allowed.
+export function isAmbiguousBlankPlaceholder(s: string): boolean {
+  return /^\[?[\s_.\-]*\]?$/.test(s.trim());
+}
+
 // Office.js body.search rejects strings over 255 chars with
 // SearchStringInvalidOrTooLong. 200 leaves a safety margin and matches the
 // existing direct-add filter below.
@@ -160,23 +181,36 @@ async function searchFirst(
   context: Word.RequestContext,
   trial: string,
 ): Promise<Word.Range | null> {
-  try {
-    const results = context.document.body.search(trial, {
-      matchCase: false,
-      matchWildcards: false,
-    });
-    results.load("items");
-    await context.sync();
-    return results.items.length > 0 ? results.items[0] : null;
-  } catch (e) {
-    // body.search itself throws on malformed candidates (>255 chars,
-    // certain wildcard-special char combinations the API rejects post-queue,
-    // etc.). Treat as "no match" so the search loop moves on to the next
-    // candidate rather than aborting the whole find/delete/redline flow.
-    // Logged at warn so it's visible in DevTools without surfacing to the UI.
-    console.warn("[word.ts] body.search rejected candidate:", trial.slice(0, 80), e);
-    return null;
+  const run = async (query: string, matchWildcards: boolean) => {
+    try {
+      const results = context.document.body.search(query, {
+        matchCase: false,
+        matchWildcards,
+      });
+      results.load("items");
+      await context.sync();
+      return results.items.length > 0 ? results.items[0] : null;
+    } catch (e) {
+      // body.search throws on malformed candidates (>255 chars, certain
+      // wildcard-char combinations the API rejects post-queue, etc.). Treat as
+      // "no match" so the search loop moves on rather than aborting the whole
+      // find/delete/redline flow. Logged at warn for DevTools visibility.
+      console.warn("[word.ts] body.search rejected candidate:", query.slice(0, 80), e);
+      return null;
+    }
+  };
+
+  const literal = await run(trial, false);
+  if (literal) return literal;
+
+  // Word for Mac mis-reads [](){}<>?* etc. as wildcards even in literal mode, so
+  // a needle with brackets (a blank "[__]" field, a "[Source: …]" tag) silently
+  // misses. Retry in wildcard mode with the metacharacters escaped, which makes
+  // body.search match the literal characters.
+  if (WORD_WILDCARD_META.test(trial)) {
+    return run(escapeWordWildcards(trial), true);
   }
+  return null;
 }
 
 /**
@@ -476,6 +510,17 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
   if (!target.trim()) return fail("Empty target text — nothing to replace.");
   if (!newText.trim()) return fail("No replacement text provided.");
 
+  // A bare, label-less blank ("[__]", "___") is the same placeholder used by
+  // several distinct fields (signatory name, title, entity). replace_all would
+  // dump ONE value into all of them — almost always wrong. Refuse and ask for
+  // each field by name instead of corrupting the others.
+  if (isAmbiguousBlankPlaceholder(target)) {
+    return fail(
+      `"${target}" is a blank with no label, so "replace all" would put the same text in every ` +
+        `field (name, title, entity). Target each field instead, e.g. "Signed by: [__]" / "Title: [__]".`,
+    );
+  }
+
   // Hard ceiling — even if body.search returns dozens of matches, never apply
   // more than this many tracked changes from a single chat turn.
   const HARD_CAP = 25;
@@ -499,12 +544,24 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
       // visible to body.search even after insertText('replace'), so any
       // re-search inside the same Word.run kept finding the same spot and
       // stacking insertions on top of one another.
-      const matches = body.search(target, {
+      let matches = body.search(target, {
         matchCase: false,
         matchWildcards: false,
       });
       matches.load("items");
       await context.sync();
+
+      // Word for Mac mis-reads bracket/paren metacharacters as wildcards in
+      // literal mode, so a target like "Signed by: [__]" finds nothing. Retry in
+      // wildcard mode with the metacharacters escaped so they match literally.
+      if (matches.items.length === 0 && WORD_WILDCARD_META.test(target)) {
+        matches = body.search(escapeWordWildcards(target), {
+          matchCase: false,
+          matchWildcards: true,
+        });
+        matches.load("items");
+        await context.sync();
+      }
 
       if (matches.items.length === 0) {
         return fail(`Couldn't find "${preview}" in the document.`);
