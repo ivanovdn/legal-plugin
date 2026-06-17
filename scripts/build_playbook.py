@@ -21,6 +21,7 @@ See docs/playbook_cross_reference.md for which file owns which concern.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import sys
@@ -68,6 +69,41 @@ AI_PROC_END = "11. Clause Bank Naming Convention"
 # ROLLBACK: delete AI_PROC_DROP_FROM and the `break` that uses it in
 # _render_ai_review_procedure() to restore §10.2/10.3/10.4 verbatim, then re-run this script.
 AI_PROC_DROP_FROM = "ai output schema"
+
+# --- Layer 1: placeholder / signature-block recall cue (2026-06-16) ----------------
+# Fix #2 dropped playbook §10.2/§10.4 to remove competing output SCHEMAS, but those
+# blocks carried the only "Open placeholders" / "Current wording" completeness CUES.
+# A faithful A/B over the live model (restoring §10.2-10.4 flipped unfilled signature-
+# block placeholders from a passing prose mention to a structured Missing-Context
+# blocker — deterministically 6/6 vs 6/6) showed that collateral loss is why unfilled
+# signature blocks stopped surfacing as blockers. We re-inject the CUES — not the
+# schema — here, in the tracked build, because the canonical source under data/ is
+# gitignored and source edits would not persist. If legal folds these into the
+# canonical .docx/source, delete these two constants + their injections in
+# _build_global_files() and rebuild. See docs/wiki.md (placeholder safety-net, Layer 1).
+OUTPUT_FORMAT_COMPLETENESS = (
+    "\n\n### Completeness and current wording\n"
+    '- In the "Issue" cell of each finding, quote the current or offending wording '
+    "from the document.\n"
+    "- Raise every unfilled placeholder, blank field, or incomplete signature / "
+    'execution block as its own Missing Context finding in "Key Findings" and "Red '
+    'and Missing Context Items"; set "Clause / section" to where it appears in the '
+    "document, and treat each as a signature blocker."
+)
+NO_SIG_PLACEHOLDER_BLOCKER = (
+    "- unresolved placeholders, blank fields, or unfilled signature / execution blocks "
+    "(for example `[__]`, `[Legal Name]`, `[Month] [Date], [Year]`, `[Address]`);"
+)
+# Anchor in the team's no_signature_checklist.md "Automatic blockers" list; the new
+# blocker bullet is inserted immediately before it. Build fails loudly if it moves.
+NO_SIG_BLOCKER_ANCHOR = "- final version not checked after the latest edits."
+
+# Layer 1 validation toggle. Default ON. To regenerate the pre-Layer-1 "first
+# variant" prompt (the bundle the model saw before the placeholder cue) — e.g. to
+# A/B the cue against the live model — run:
+#     PLAYBOOK_PLACEHOLDER_CUE=0 python scripts/build_playbook.py
+# and rebuild with the default to restore. See docs/wiki.md (placeholder recall).
+LAYER1_PLACEHOLDER_CUE = os.environ.get("PLAYBOOK_PLACEHOLDER_CUE", "1") != "0"
 
 TYPES = ("nda", "msa", "sow", "baa")
 TYPE_TO_FOLDER = {
@@ -232,10 +268,13 @@ def _build_global_files(doc, sections: dict[str, str], no_sig_checklist: str) ->
     )
 
     # output_format.md — canonical: shared_operating_rules.md
+    # + Layer 1 completeness/current-wording cue (see OUTPUT_FORMAT_COMPLETENESS).
     files["output_format.md"] = (
         GENERATED_NOTICE
         + "# Required Final Output Format\n\n"
-        + sections["Required final output format"] + "\n"
+        + sections["Required final output format"]
+        + (OUTPUT_FORMAT_COMPLETENESS if LAYER1_PLACEHOLDER_CUE else "")
+        + "\n"
     )
 
     # ai_review_procedure.md — canonical: playbook §10
@@ -270,6 +309,17 @@ def _build_global_files(doc, sections: dict[str, str], no_sig_checklist: str) ->
     )
 
     # no_signature_checklist.md — canonical: team's no_signature_checklist.md (verbatim)
+    # + Layer 1: insert the placeholder/sig-block blocker into the Automatic-blockers list.
+    if LAYER1_PLACEHOLDER_CUE:
+        if no_sig_checklist.count(NO_SIG_BLOCKER_ANCHOR) != 1:
+            raise SystemExit(
+                "build_playbook: no_signature_checklist Automatic-blockers anchor "
+                f"{NO_SIG_BLOCKER_ANCHOR!r} not found exactly once — update the Layer 1 "
+                "injection (NO_SIG_PLACEHOLDER_BLOCKER) to match the new source."
+            )
+        no_sig_checklist = no_sig_checklist.replace(
+            NO_SIG_BLOCKER_ANCHOR, NO_SIG_PLACEHOLDER_BLOCKER + "\n" + NO_SIG_BLOCKER_ANCHOR, 1
+        )
     files["no_signature_checklist.md"] = GENERATED_NOTICE + no_sig_checklist.strip() + "\n"
 
     return files
