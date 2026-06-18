@@ -51,6 +51,13 @@ def main() -> int:
         sensitivity="internal",
         collection=_COLLECTION,
     )
+    if count == 0:
+        logger.error(
+            "Ingested 0 chunks from %s — the MSA was NOT loaded (parse produced "
+            "nothing). SOW reviews will find no governing MSA.",
+            _MSA_PATH.name,
+        )
+        return 1
     logger.info("Ingested %d chunks from %s as doc_type=msa", count, _MSA_PATH.name)
     return 0
 

@@ -42,3 +42,14 @@ def test_missing_file_returns_error_code(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_MSA_PATH", tmp_path / "nope.docx")
     monkeypatch.setattr(mod, "scroll_by_filter", lambda **kw: [])
     assert mod.main() == 1
+
+
+def test_zero_chunks_ingested_returns_error_code(monkeypatch, tmp_path):
+    # A parse that yields no chunks is a silent failure for this demo-prep
+    # script — surface it as a non-zero exit, not a "success".
+    fake = tmp_path / "msa.docx"
+    fake.write_text("x")
+    monkeypatch.setattr(mod, "_MSA_PATH", fake)
+    monkeypatch.setattr(mod, "scroll_by_filter", lambda **kw: [])
+    monkeypatch.setattr(mod, "ingest_document", lambda **kw: 0)
+    assert mod.main() == 1
