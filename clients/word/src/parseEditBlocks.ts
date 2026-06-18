@@ -141,24 +141,74 @@ function flattenEditValues(values: unknown[]): unknown[] {
 const BLANK_PLACEHOLDER_RE = /\[[\s_.\-]*\]|_{3,}/;
 
 /**
- * A local LLM often collapses a whole signature block into ONE multi-line
- * `replace` whose target is several "label: [__]" lines and whose new_text fills
- * each (traces 02e41ead / ce45b899 — MSA & SOW). That target can't be applied:
- * body.search can't cross paragraph breaks, so only the first line matches and
- * the 85%-completeness guard rejects the partial match ("Couldn't find the exact
- * target text"). It would also only ever fill the FIRST block, never a repeated
- * appendix block.
- *
- * When EVERY changed line is a labeled blank fill, split into one `replace_all`
- * per field. replace_all (not replace) because: the blanks recur across blocks
- * (main + appendix) and the request is to fill them all; replaceAll snapshots
- * every match in one pass (no struck-text re-find); and each labeled target hits
- * exactly one field — never every blank (that's refused as ambiguous). Non-blank
- * prose, single-line targets, and single-diff blocks are left untouched (the
- * apply-time simplifyMultilineReplace / head+tail matcher owns those). Exported
- * for unit testing.
+ * Reduce a tab-bundled line to its single changed segment. The LLM sometimes
+ * prepends a two-column neighbour to a field — e.g. the dotted signature LINE +
+ * a tab: "………………\tSigned by: [__]" (trace 9e5b804c). body.search can't reach
+ * across a tab, so the bundled target never matches. When target and new_text
+ * have the same tab-segment count and differ on exactly ONE segment, keep only
+ * that segment ("Signed by: [__]" → "Signed by: John Doe"); the unchanged
+ * column (the dotted line / the counterparty's filled cell) is dropped. If zero
+ * or 2+ segments differ, or there's no tab, leave the pair untouched.
  */
-export function splitMultilineBlankFills(p: EditProposal): EditProposal[] {
+function reduceTabSegment(
+  target: string,
+  newText: string,
+): { target: string; newText: string } {
+  if (!target.includes("\t") || !newText.includes("\t")) return { target, newText };
+  const tSegs = target.split("\t");
+  const nSegs = newText.split("\t");
+  if (tSegs.length !== nSegs.length) return { target, newText };
+  const diffIdx: number[] = [];
+  for (let i = 0; i < tSegs.length; i++) {
+    if (tSegs[i].trim() !== nSegs[i].trim()) diffIdx.push(i);
+  }
+  if (diffIdx.length === 1) {
+    const i = diffIdx[0];
+    return { target: tSegs[i].trim(), newText: nSegs[i].trim() };
+  }
+  return { target, newText };
+}
+
+// A LABELED blank ("Signed by: [__]"): carries a blank token AND text beyond it.
+// A bare "[__]" line is NOT labeled — it can't safely become a replace_all
+// (replaceAll refuses bare blanks anyway).
+function isLabeledBlank(line: string): boolean {
+  return (
+    BLANK_PLACEHOLDER_RE.test(line) &&
+    line.replace(BLANK_PLACEHOLDER_RE, "").trim().length > 0
+  );
+}
+
+// A structured "field" line — "Label: value" (has a colon) or one carrying a
+// blank placeholder ("for and on behalf of [__]"). Signature / execution blocks
+// are made of these, each on its own paragraph. PROSE clauses are not, so they
+// stay multi-line for word.ts's head+tail span matcher (which CAN cross breaks).
+function isFieldLine(line: string): boolean {
+  return /:/.test(line) || BLANK_PLACEHOLDER_RE.test(line);
+}
+
+/**
+ * A local LLM often collapses a whole signature block into ONE multi-line
+ * `replace` — several "Label: value" lines whose new_text changes each (traces
+ * 02e41ead / ce45b899 fill blanks; 32deb028 rewrites a filled block; 9e5b804c
+ * bundles the dotted signature line). That target can't be applied: body.search
+ * can't cross paragraph breaks, so only the first line matches and the
+ * 85%-completeness guard rejects the partial match ("Couldn't find the exact
+ * target text") — and it would only ever touch the FIRST block.
+ *
+ * When EVERY changed line is a structured field, split into one edit per changed
+ * line. A labeled blank ("Signed by: [__]") becomes a `replace_all` — blanks
+ * recur across blocks (main + appendix), replaceAll snapshots every match in one
+ * pass (no struck-text re-find), and the labeled target hits one field, never
+ * every blank. A specific value ("Signed by: Boris Bukengolts") becomes a
+ * `replace` — one occurrence, not every match. (collapseDuplicateFills then folds
+ * the LLM's duplicated per-block cards into a single fill-every edit.)
+ *
+ * Multi-paragraph PROSE (no per-line colon/blank), single-line targets, and
+ * single-diff blocks are left untouched — the apply-time simplifyMultilineReplace
+ * / head+tail matcher owns those. Exported for unit testing.
+ */
+export function splitMultilineFieldEdits(p: EditProposal): EditProposal[] {
   if (p.action !== "replace" || !p.target_text || !p.new_text) return [p];
   const tLines = p.target_text.split(/\r?\n/);
   const nLines = p.new_text.split(/\r?\n/);
@@ -168,22 +218,18 @@ export function splitMultilineBlankFills(p: EditProposal): EditProposal[] {
   for (let i = 0; i < tLines.length; i++) {
     const t = tLines[i].trim();
     const n = nLines[i].trim();
-    if (t !== n) diffs.push({ target: t, newText: n });
+    if (t === n) continue;
+    // A bundled "…dotted…\tSigned by: [__]" line reduces to just the changed
+    // column so body.search (which can't cross a tab) can match it.
+    diffs.push(reduceTabSegment(t, n));
   }
   if (diffs.length < 2) return [p];
 
-  // Every changed line must be a LABELED blank ("Signed by: [__]"): it contains
-  // a blank token AND carries text beyond it. A bare "[__]" line is left alone —
-  // it can't safely become a replace_all (replaceAll refuses bare blanks anyway).
-  const allLabeledBlanks = diffs.every(
-    (d) =>
-      BLANK_PLACEHOLDER_RE.test(d.target) &&
-      d.target.replace(BLANK_PLACEHOLDER_RE, "").trim().length > 0,
-  );
-  if (!allLabeledBlanks) return [p];
+  // Only split a block of structured field lines; leave prose to the span matcher.
+  if (!diffs.every((d) => isFieldLine(d.target))) return [p];
 
   return diffs.map((d) => ({
-    action: "replace_all" as const,
+    action: (isLabeledBlank(d.target) ? "replace_all" : "replace") as EditAction,
     target_text: d.target,
     new_text: d.newText,
     rationale: p.rationale,
@@ -248,7 +294,7 @@ export function collapseDuplicateFills(blocks: EditProposal[]): EditProposal[] {
  * point of use, not only inside extractEditBlocks.
  */
 export function normalizeProposals(blocks: EditProposal[]): EditProposal[] {
-  return collapseDuplicateFills(blocks.flatMap(splitMultilineBlankFills));
+  return collapseDuplicateFills(blocks.flatMap(splitMultilineFieldEdits));
 }
 
 export function extractEditBlocks(prose: string): {
