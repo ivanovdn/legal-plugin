@@ -115,22 +115,28 @@ named in its "Clause / section". Don't include text related to other findings.
 _MSA_MAX_CHARS = 24000
 
 # Added (as the LAST system message) only when a governing MSA is attached to a
-# SOW review. Structural and model-neutral: it tells the model to USE the
-# supplied MSA and grounds the hierarchy in the playbook's own words ("SOW terms
-# prevail only for that SOW"); it does not encode legal positions (SKILL.md is
-# the ceiling). Rule 3 stops the local LLM hallucinating "the MSA says X".
+# SOW review. Deliberately STRUCTURAL and model-neutral: it orchestrates a
+# document-to-document comparison and defers ALL legal judgment to the playbook —
+# it encodes no positions of its own (SKILL.md is the ceiling). The SOW playbook
+# already REQUIRES this check (sow/SKILL.md: "conflicts with MSA"; "SOW must be
+# pursuant to and subject to the MSA. Red if SOW overrides core MSA protections
+# without Legal approval"; MSA-001 precedence rule) and names the MSA as a
+# required input — this directive just supplies that input and mirrors those
+# rules verbatim. Rule 3 stops the local LLM hallucinating "the MSA says X".
 _MSA_COMPARISON_DIRECTIVE = """GOVERNING MSA COMPARISON — this SOW is issued \
 under the Master Services Agreement included below as "GOVERNING MSA":
 
-1. The MSA is the parent framework. Per the playbook, SOW terms apply only to \
-this SOW and must not conflict with or override the MSA.
+1. The MSA is the parent framework and the SOW is pursuant to and subject to it. \
+Per the playbook, SOW-specific terms control only for that SOW; SOW deviations \
+are acceptable only if limited to that SOW and approved by the relevant owner.
 
-2. Flag, as findings, any SOW term that (a) contradicts an MSA term, (b) \
-purports to override or weaken an MSA protection, or (c) is required by the MSA \
-but missing or inconsistent in the SOW (e.g. the MSA date/version reference, \
-payment terms, IP ownership, confidentiality, liability cap). Cite the relevant \
-MSA clause in the Issue, and apply the SOW playbook's risk rating and approval \
-rules as usual.
+2. Flag, as findings, any SOW term that (a) overrides a core MSA protection \
+without approval, (b) changes the MSA's order of precedence or applies broadly \
+beyond that SOW, or (c) is required by the MSA but missing or inconsistent in \
+the SOW (e.g. the MSA date/version reference, or terms governed by the MSA such \
+as payment, IP ownership, confidentiality, or the liability cap). Cite the \
+relevant MSA clause in the Issue, and apply the SOW playbook's risk rating and \
+approval rules as usual.
 
 3. Do NOT invent MSA terms. Base every MSA-conflict finding only on text present \
 in the GOVERNING MSA below; if the MSA is silent on a point, say so rather than \

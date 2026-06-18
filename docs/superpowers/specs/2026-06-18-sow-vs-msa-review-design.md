@@ -93,24 +93,43 @@ the playbook `.docx`). Calls `ingest.pipeline.ingest_document` directly with the
 
 ## The comparison directive (verbatim intent)
 
-Structural and model-neutral — it tells the model to *use* the supplied MSA and grounds the
-hierarchy in the playbook's own words ("SOW terms prevail only for that SOW"), per hard-rule #2
-(SKILL.md is the ceiling; no improvising legal positions from pretraining):
+Structural and model-neutral — it orchestrates a document-to-document comparison and defers ALL
+legal judgment to the playbook, per hard-rule #2 (SKILL.md is the ceiling; no improvising legal
+positions from pretraining).
+
+**This does not add a new legal rule — it enables one the playbook already mandates.** The SOW
+playbook already requires the SOW-vs-MSA check and names the MSA as a required input; the system
+just never put the MSA in the model's context until now. Grounding in the actual bundle:
+- `sow/SKILL.md:6` — review must check "**conflicts with MSA**" (a required dimension).
+- `sow/SKILL.md:59` — "**SOW must be pursuant to and subject to the MSA. Red if SOW overrides core
+  MSA protections without Legal approval.**"
+- `sow/SKILL.md:28` — required input: "**MSA date and governing MSA version.**"
+- `msa/playbook_matrix.md` MSA-001 — "Use MSA as framework… SOW controls only for services under
+  that SOW… accept SOW-specific deviations if limited to that SOW and approved… *SOW overrides
+  entire MSA generally* → Red; escalate broad order-of-precedence changes."
+
+The directive mirrors those rules (note rule 1 permits scoped, approved SOW deviations, exactly as
+MSA-001 does — it does not over-assert a flat "SOW can't override the MSA"):
 
 > GOVERNING MSA COMPARISON — this SOW is issued under the Master Services Agreement included
 > below as "GOVERNING MSA":
-> 1. The MSA is the parent framework. Per the playbook, SOW terms apply only to this SOW and must
->    not conflict with or override the MSA.
-> 2. Flag, as findings, any SOW term that (a) contradicts an MSA term, (b) purports to
->    override/weaken an MSA protection, or (c) is required by the MSA but missing/inconsistent
->    (e.g. MSA date/version reference, payment, IP, confidentiality, liability cap). Cite the
+> 1. The MSA is the parent framework and the SOW is pursuant to and subject to it. Per the
+>    playbook, SOW-specific terms control only for that SOW; SOW deviations are acceptable only if
+>    limited to that SOW and approved by the relevant owner.
+> 2. Flag, as findings, any SOW term that (a) overrides a core MSA protection without approval,
+>    (b) changes the MSA's order of precedence or applies broadly beyond that SOW, or (c) is
+>    required by the MSA but missing/inconsistent (e.g. MSA date/version reference, or terms
+>    governed by the MSA such as payment, IP ownership, confidentiality, liability cap). Cite the
 >    relevant MSA clause in the Issue, and apply the SOW playbook's risk rating + approval rules
 >    as usual.
 > 3. Do not invent MSA terms. Base every MSA-conflict finding only on text present in the
 >    GOVERNING MSA below; if the MSA is silent on a point, say so rather than assuming.
 
-Rule 3 prevents hallucinated "MSA says X" findings on the local LLM. The directive lives in tracked
-code, not the gitignored `data/contract_review_skills/` source.
+Rule 2 defers risk rating/approval to the playbook; rule 3 prevents hallucinated "MSA says X"
+findings on the local LLM. Precedent: `_OUTPUT_CONSTRAINTS` is already a non-playbook structural
+directive in the same file (it constrains output *form*, not legal substance) — this is the same
+category. The directive lives in tracked code, not the gitignored `data/contract_review_skills/`
+source.
 
 ## Error handling / edge cases
 
