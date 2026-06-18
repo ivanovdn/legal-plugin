@@ -21,9 +21,17 @@ export async function readBody(): Promise<string> {
   }
   return Word.run(async (context) => {
     const body = context.document.body;
-    body.load("text");
+    // Read the document as if all tracked changes were ACCEPTED ("current"
+    // version): insertions kept, deletions dropped. Plain `body.text` includes
+    // struck-out deletions, so a placeholder filled via a tracked change
+    // ("[__]" → "Suzy Quatro") still carries the old "[__]" in the extracted
+    // text — and re-review/chat then wrongly flag it as an unfilled placeholder
+    // (the model reads exactly what we send it). getReviewedText is WordApi 1.4
+    // (Mac, Windows, web); with no tracked changes it returns the same string
+    // as body.text, so it's a safe drop-in.
+    const reviewed = body.getReviewedText(Word.ChangeTrackingVersion.current);
     await context.sync();
-    return body.text;
+    return reviewed.value;
   });
 }
 
