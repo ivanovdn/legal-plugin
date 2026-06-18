@@ -474,6 +474,24 @@ def test_chat_prompt_never_demonstrates_bundled_targets():
     assert "replace_all" in CHAT_SYSTEM_PROMPT  # the multi-occurrence path is still taught
 
 
+def test_chat_prompts_constrain_edit_scope():
+    """The doc-chat prompts must tell the model to change ONLY what was asked and
+    never overwrite an already-filled field. Without this, the local LLM
+    over-reaches — e.g. it overwrote a completed counterparty signature block
+    ("Boris Bukengolts") with the requested party's details "to ensure
+    consistency", an edit the user never asked for (trace 4b24ca1d). Model-neutral
+    correctness guidance, not a scenario-specific worked example."""
+    from skills.legal_research import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
+
+    for prompt in (CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM):
+        low = prompt.lower()
+        # Names the constraint and the "already filled" exclusion.
+        assert "scope" in low
+        assert "already" in low and "fill" in low
+        # Does not bury it in a tab/newline-bearing example (the existing guard).
+        assert "\\t" not in prompt and "\\n" not in prompt
+
+
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
     from skills.legal_research import _extract_proposed_edits

@@ -277,3 +277,94 @@ const pass = (cond: boolean, label: string) =>
   pass(out.length === 1, "single-replace: unchanged count");
   pass(out[0].action === "replace", "single-replace: stays replace");
 }
+
+// 11. Tab-bundled signature line (trace 9e5b804c). The LLM prepends the dotted
+//     signature line + a TAB to the first field ("…\tSigned by: [__]"). body.search
+//     can't cross a tab, so that card failed. The tab reduction keeps only the
+//     changed column, which then collapses with the plain "Signed by: [__]" fills.
+{
+  const dotted = "............................................";
+  const edits: EditProposal[] = [
+    {
+      action: "replace",
+      target_text: "Signed by: [__]\nTitle: [__]\nfor and on behalf of [__]",
+      new_text: "Signed by: John Doe\nTitle: CTO\nfor and on behalf of Sony company",
+    },
+    {
+      action: "replace",
+      target_text: `${dotted}\tSigned by: [__]\nTitle: [__]\nfor and on behalf of [__]`,
+      new_text: `${dotted}\tSigned by: John Doe\nTitle: CTO\nfor and on behalf of Sony company`,
+    },
+  ];
+  const out = normalizeProposals(edits);
+  pass(out.length === 3, "tab-bundled: collapsed to 3 clean fields");
+  pass(out.every((b) => b.action === "replace_all"), "tab-bundled: all replace_all");
+  pass(
+    out.every((b) => !(b.target_text ?? "").includes("\t")),
+    "tab-bundled: no tab survives in any target",
+  );
+  pass(
+    out.some((b) => b.target_text === "Signed by: [__]" && b.new_text === "Signed by: John Doe"),
+    "tab-bundled: dotted column dropped, field kept",
+  );
+}
+
+// 12. Filled signature-block REWRITE (trace 32deb028). User explicitly asked to
+//     change the Trinetix signatory (Boris → Suzy Quatro). It's a multi-line
+//     replace of FILLED values (no blanks), one line unchanged. Split into
+//     per-line `replace` (specific values, not replace_all) so each single line
+//     is matchable; the unchanged "for and on behalf of" line is not emitted.
+{
+  const out = normalizeProposals([
+    {
+      action: "replace",
+      target_text:
+        "Signed by: Boris Bukengolts\nTitle: Chief Growth Officer\nfor and on behalf of Trinetix Inc.",
+      new_text: "Signed by: Suzy Quatro\nTitle: CTO\nfor and on behalf of Trinetix Inc.",
+    },
+  ]);
+  pass(out.length === 2, "filled-rewrite: split into the 2 changed fields");
+  pass(out.every((b) => b.action === "replace"), "filled-rewrite: per-line replace, not replace_all");
+  pass(
+    out.some((b) => b.target_text === "Signed by: Boris Bukengolts" && b.new_text === "Signed by: Suzy Quatro"),
+    "filled-rewrite: signatory line",
+  );
+  pass(
+    out.some((b) => b.target_text === "Title: Chief Growth Officer" && b.new_text === "Title: CTO"),
+    "filled-rewrite: title line",
+  );
+  pass(
+    out.every((b) => !(b.target_text ?? "").includes("Trinetix Inc.")),
+    "filled-rewrite: unchanged company line not emitted",
+  );
+}
+
+// 12b. The model duplicated the filled-block rewrite card. Identical per-line
+//      edits collapse to one replace_all per changed field (fills every matching
+//      occurrence once — Boris appears once, so equivalent to replace).
+{
+  const edit = {
+    action: "replace" as const,
+    target_text:
+      "Signed by: Boris Bukengolts\nTitle: Chief Growth Officer\nfor and on behalf of Trinetix Inc.",
+    new_text: "Signed by: Suzy Quatro\nTitle: CTO\nfor and on behalf of Trinetix Inc.",
+  };
+  const out = normalizeProposals([edit, { ...edit }]);
+  pass(out.length === 2, "filled-rewrite-dup: collapsed to 2 fields");
+  pass(out.every((b) => b.action === "replace_all"), "filled-rewrite-dup: dup promoted to replace_all");
+}
+
+// 12c. Multi-paragraph PROSE rewrite — 2 changed lines, NO colon/blank field
+//      markers — stays a single multi-line replace (word.ts head+tail span
+//      matcher owns multi-paragraph clauses; splitting could mis-locate a line).
+{
+  const out = normalizeProposals([
+    {
+      action: "replace",
+      target_text: "The fee was one hundred dollars.\nPayment was due in thirty days.",
+      new_text: "The fee was two hundred dollars.\nPayment was due in sixty days.",
+    },
+  ]);
+  pass(out.length === 1, "prose-multiline: not split");
+  pass(out[0].action === "replace", "prose-multiline: stays replace");
+}

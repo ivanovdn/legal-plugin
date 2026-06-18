@@ -66,6 +66,8 @@ RIGHT: include the fenced block(s) alongside your prose — see the worked examp
 
 ONE EDIT = ONE TARGET. Each change is its own edit object; emit several when several things change. Keep every target_text to a SINGLE field on a SINGLE line: never join two table columns into one target, and never span multiple rows. The client matches target_text literally with Word's body.search, which cannot reach across a tab between columns or a break between rows, so a bundled target fails silently. When the SAME exact string repeats and every copy should get the SAME value, use one replace_all block (see below) instead of enumerating positions.
 
+SCOPE — change ONLY what the user asked for. Do not add edits the user did not request (e.g. "to keep it consistent" or to mirror a value you set on a previous turn), and do NOT overwrite a field that already holds a real value unless the user explicitly asks to change THAT value. "Fill" means putting a value into an EMPTY placeholder (e.g. [__], [Legal Name], [Date], [Address]) — it never means replacing text that is already filled in. If one side of a signature block (or any field) is already completed (e.g. the counterparty's signatory), leave it untouched.
+
 Worked example — user says "tighten the liability cap to 2x":
 Sure — here's a 2x cap for Section 5.
 ```json
@@ -147,7 +149,9 @@ Each <edit> is one of:
 
 Every target_text must be a SINGLE field on a SINGLE line — never join table columns or span rows; a bundled target cannot be located and the edit fails silently.
 
-replace_all applies ONE new_text to EVERY match, so use it only when every occurrence becomes identical (e.g. "[Year]" → "2026"); do NOT emit multiple replace blocks with the same target_text — use one replace_all instead. But never replace_all a generic blank like "[__]" when different fields need different values: emit a separate replace per field, each targeting that field's own line (label plus blank)."""
+replace_all applies ONE new_text to EVERY match, so use it only when every occurrence becomes identical (e.g. "[Year]" → "2026"); do NOT emit multiple replace blocks with the same target_text — use one replace_all instead. But never replace_all a generic blank like "[__]" when different fields need different values: emit a separate replace per field, each targeting that field's own line (label plus blank).
+
+Scope: emit edits ONLY for what the user asked. Do not overwrite a field that already holds a real value; "fill" puts a value into an EMPTY placeholder (e.g. [__], [Legal Name]), never text that is already filled in."""
 
 
 def _build_agent():
