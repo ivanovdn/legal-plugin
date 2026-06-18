@@ -1,6 +1,8 @@
 # tests/test_skills.py
 """Tests for skill implementations."""
 
+import importlib
+import sys
 from unittest.mock import patch, MagicMock
 
 from config import get_settings
@@ -1001,6 +1003,106 @@ def test_contract_review_msa_loads_msa_matrix():
     assert "# MSA Playbook Matrix" in sys_msg
     assert "MSA-001" in sys_msg
     assert "# NDA Playbook Matrix" not in sys_msg
+
+
+# --- contract_review: governing-MSA attachment (SOW-vs-MSA) ---
+
+def _patch_msa(monkeypatch, value):
+    """Patch get_parent_msa as imported into the contract_review module.
+
+    We cannot use `import skills.contract_review.contract_review as m` because
+    the package __init__ re-exports the `contract_review` function under that
+    attribute name, masking the submodule. Use importlib to force the real
+    module object, then setattr directly.
+    """
+    importlib.import_module("skills.contract_review.contract_review")
+    _cr_module = sys.modules["skills.contract_review.contract_review"]
+    monkeypatch.setattr(_cr_module, "get_parent_msa", value)
+
+
+def test_contract_review_sow_attaches_governing_msa(monkeypatch):
+    _patch_msa(monkeypatch, lambda client_id, **kw: ("Model MSA", "MSA LIABILITY CAP = 12 MONTHS FEES."))
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _SOW_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+
+    assert result["contract_type_detected"] == "sow"
+    user_msg = result["messages"][-1]["content"]
+    assert "--- GOVERNING MSA (Model MSA) ---" in user_msg
+    assert "MSA LIABILITY CAP = 12 MONTHS FEES." in user_msg
+    # The comparison directive is the LAST system message (most-recent instruction).
+    assert result["messages"][-2]["role"] == "system"
+    assert "GOVERNING MSA COMPARISON" in result["messages"][-2]["content"]
+
+
+def test_contract_review_sow_standalone_when_no_msa(monkeypatch):
+    _patch_msa(monkeypatch, lambda client_id, **kw: None)
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _SOW_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+
+    user_msg = result["messages"][-1]["content"]
+    assert "GOVERNING MSA" not in user_msg
+    sys_contents = [m["content"] for m in result["messages"] if m["role"] == "system"]
+    assert not any("GOVERNING MSA COMPARISON" in c for c in sys_contents)
+    # Standalone review still built: playbook + output constraints + user.
+    assert len(result["messages"]) == 3
+
+
+def test_contract_review_nda_does_not_attach_msa(monkeypatch):
+    called = {"n": 0}
+
+    def _spy(client_id, **kw):
+        called["n"] += 1
+        return ("X", "Y")
+
+    _patch_msa(monkeypatch, _spy)
+    state = _make_state(
+        request="Review this NDA.",
+        uploaded_docs=[{"text": _NDA_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+
+    assert called["n"] == 0  # never looked up for a non-SOW
+    assert "GOVERNING MSA" not in result["messages"][-1]["content"]
+
+
+def test_contract_review_truncates_oversized_msa(monkeypatch):
+    big = "Z" * 30000
+    _patch_msa(monkeypatch, lambda client_id, **kw: ("Big MSA", big))
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _SOW_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+
+    user_msg = result["messages"][-1]["content"]
+    assert "[MSA truncated to 24000 chars for review]" in user_msg
+    assert ("Z" * 30000) not in user_msg  # full text not injected
+
+
+def test_contract_review_msa_lookup_error_reviews_standalone(monkeypatch):
+    def _boom(client_id, **kw):
+        raise RuntimeError("qdrant down")
+
+    _patch_msa(monkeypatch, _boom)
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _SOW_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)  # must NOT raise
+
+    assert result["contract_type_detected"] == "sow"
+    assert "GOVERNING MSA" not in result["messages"][-1]["content"]
 
 
 def test_load_bundle_raises_on_unknown_type(tmp_path):
