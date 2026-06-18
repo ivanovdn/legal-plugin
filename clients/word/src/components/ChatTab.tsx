@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { chatQuery } from "../api";
-import { extractEditBlocks, type EditProposal } from "../parseEditBlocks";
+import { extractEditBlocks, normalizeProposals, type EditProposal } from "../parseEditBlocks";
 import { readBody } from "../word";
 import EditProposalCard from "./EditProposalCard";
 
@@ -72,7 +72,12 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
       // — an empty array would short-circuit to the empty backend value and
       // ignore the frontend's correctly-parsed blocks. Prefer NON-EMPTY instead.
       const backendEdits = res.data?.report?.proposed_edits ?? [];
-      const proposedEdits = backendEdits.length > 0 ? backendEdits : blocks;
+      // normalizeProposals runs again here because the backend's proposed_edits
+      // win over the frontend's `blocks` (already normalized in extractEditBlocks)
+      // — and the backend list carries the same unmatchable multi-line
+      // signature-block fills. The transform is idempotent, so re-running on the
+      // frontend `blocks` path is harmless.
+      const proposedEdits = normalizeProposals(backendEdits.length > 0 ? backendEdits : blocks);
       const finalProse = cleanedProse || rawAnswer;
       const promisedEditMissing =
         proposedEdits.length === 0 && looksLikeEditPromise(finalProse);
