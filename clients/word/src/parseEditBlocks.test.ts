@@ -1,5 +1,5 @@
 // Quick sanity check for parseEditBlocks. Run with: npx tsx src/parseEditBlocks.test.ts
-import { extractEditBlocks } from "./parseEditBlocks";
+import { extractEditBlocks, normalizeProposals, type EditProposal } from "./parseEditBlocks";
 
 const pass = (cond: boolean, label: string) =>
   console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
@@ -80,12 +80,14 @@ const pass = (cond: boolean, label: string) =>
 // 7. Array inside ONE block (the regression that broke "fill every Signed by")
 //    The local LLM consolidated two edits into a single fenced block holding
 //    an array. The old parser dropped both because it expected a single dict.
+//    (Distinct edits so the collapse step below doesn't merge them — this test
+//    is purely about array decoding.)
 {
   const prose =
-    "I will replace the placeholder in two locations.\n\n" +
+    "I will fill the two placeholders.\n\n" +
     "```json\n" +
     '[{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}, ' +
-    '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]\n' +
+    '{"action": "replace", "target_text": "Title: [__]", "new_text": "Title: CTO"}]\n' +
     "```";
   const { blocks } = extractEditBlocks(prose);
   pass(blocks.length === 2, "array-in-block: both edits extracted");
@@ -148,4 +150,130 @@ const pass = (cond: boolean, label: string) =>
   pass(blocks.length === 2, "array-mixed: 2 valid kept, 1 dropped");
   pass(blocks[0].action === "replace", "array-mixed: replace kept");
   pass(blocks[1].action === "insert", "array-mixed: insert kept");
+}
+
+// 9. Multi-line signature-block fill — the MSA/SOW regression (traces 02e41ead /
+//    ce45b899). The LLM collapses a 3-field signature block into ONE multi-line
+//    `replace` with all three lines differing. body.search can't span paragraph
+//    breaks, so it was unmatchable. Split into one labeled replace_all per field.
+{
+  const prose =
+    "I have updated the signature block.\n\n" +
+    "```json\n" +
+    '{"action": "replace", ' +
+    '"target_text": "Signed by: [__]\\nTitle: [__]\\nfor and on behalf of [__]", ' +
+    '"new_text": "Signed by: John Doe\\nTitle: CTO\\nfor and on behalf of Sony Company", ' +
+    '"rationale": "Fills the Client signature block."}\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 3, "multiline-fill: split into 3 per-field edits");
+  pass(
+    blocks.every((b) => b.action === "replace_all"),
+    "multiline-fill: every field is replace_all",
+  );
+  pass(blocks[0].target_text === "Signed by: [__]", "multiline-fill: target line 1");
+  pass(blocks[0].new_text === "Signed by: John Doe", "multiline-fill: new line 1");
+  pass(blocks[1].target_text === "Title: [__]", "multiline-fill: target line 2");
+  pass(
+    blocks[2].target_text === "for and on behalf of [__]",
+    "multiline-fill: target line 3",
+  );
+}
+
+// 9b. TWO identical multi-line blocks (main agreement + appendix) — exactly what
+//     the MSA/SOW traces emit. After splitting each into 3 fields we have 6 edits
+//     that collapse to 3 fill-every replace_all (no double-fill on apply).
+{
+  const block =
+    "```json\n" +
+    '{"action": "replace", ' +
+    '"target_text": "Signed by: [__]\\nTitle: [__]\\nfor and on behalf of [__]", ' +
+    '"new_text": "Signed by: John Doe\\nTitle: CTO\\nfor and on behalf of Sony Company", ' +
+    '"rationale": "%s"}\n' +
+    "```";
+  const prose =
+    "Updating both blocks.\n\n" +
+    block.replace("%s", "main agreement") +
+    "\n" +
+    block.replace("%s", "appendix");
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 3, "dup-blocks: collapse 2 cards into 3 unique fills");
+  pass(
+    blocks.every((b) => b.action === "replace_all"),
+    "dup-blocks: all replace_all",
+  );
+}
+
+// 9c. Multi-line PROSE rewrite (no blanks) is left untouched — not a fill.
+{
+  const prose =
+    "```json\n" +
+    '{"action": "replace", ' +
+    '"target_text": "The fee is 100.\\nPayment is net 30.", ' +
+    '"new_text": "The fee is 200.\\nPayment is net 60."}\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 1, "multiline-prose: not split");
+  pass(blocks[0].action === "replace", "multiline-prose: stays replace");
+  pass(
+    blocks[0].target_text === "The fee is 100.\nPayment is net 30.",
+    "multiline-prose: target untouched",
+  );
+}
+
+// 9d. Two identical SINGLE-LINE replaces collapse to one fill-every replace_all
+//     (a duplicate replace can't fill a second location — body.search re-finds
+//     the first match's struck original).
+{
+  const prose =
+    "```json\n" +
+    '[{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}, ' +
+    '{"action": "replace", "target_text": "Signed by: [__]", "new_text": "Signed by: John Doe"}]\n' +
+    "```";
+  const { blocks } = extractEditBlocks(prose);
+  pass(blocks.length === 1, "dup-single: collapsed to one");
+  pass(blocks[0].action === "replace_all", "dup-single: promoted to replace_all");
+  pass(blocks[0].new_text === "Signed by: John Doe", "dup-single: new_text kept");
+}
+
+// 10. normalizeProposals on a BACKEND-style flat edit list (the actual MSA/SOW
+//     bug — backend proposed_edits win over frontend extraction, so the cards
+//     come from this list, not extractEditBlocks). Two identical multi-line
+//     blocks → 3 per-field replace_all.
+{
+  const backendEdits: EditProposal[] = [
+    {
+      action: "replace",
+      target_text: "Signed by: [__]\nTitle: [__]\nfor and on behalf of [__]",
+      new_text: "Signed by: John Doe\nTitle: CTO\nfor and on behalf of Sony company",
+      rationale: "main agreement",
+    },
+    {
+      action: "replace",
+      target_text: "Signed by: [__]\nTitle: [__]\nfor and on behalf of [__]",
+      new_text: "Signed by: John Doe\nTitle: CTO\nfor and on behalf of Sony company",
+      rationale: "appendix",
+    },
+  ];
+  const out = normalizeProposals(backendEdits);
+  pass(out.length === 3, "backend-list: normalized to 3 fields");
+  pass(out.every((b) => b.action === "replace_all"), "backend-list: all replace_all");
+  pass(out[0].target_text === "Signed by: [__]", "backend-list: field 1 target");
+  pass(out[2].new_text === "for and on behalf of Sony company", "backend-list: field 3 new");
+
+  // Idempotent: re-running yields the same shape (ChatTab may normalize a list
+  // that extractEditBlocks already normalized).
+  const again = normalizeProposals(out);
+  pass(again.length === 3, "backend-list: idempotent length");
+  pass(again.every((b) => b.action === "replace_all"), "backend-list: idempotent actions");
+}
+
+// 10b. A single, ordinary replace passes through normalizeProposals untouched —
+//      we don't over-promote a lone edit to replace_all.
+{
+  const out = normalizeProposals([
+    { action: "replace", target_text: "the fees paid", new_text: "2x the fees paid" },
+  ]);
+  pass(out.length === 1, "single-replace: unchanged count");
+  pass(out[0].action === "replace", "single-replace: stays replace");
 }
