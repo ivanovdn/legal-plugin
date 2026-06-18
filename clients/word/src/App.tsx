@@ -2,6 +2,7 @@ import { useState } from "react";
 import Tabs, { type TabKey } from "./components/Tabs";
 import FindingsTab from "./components/FindingsTab";
 import ChatTab, { type ChatMessage } from "./components/ChatTab";
+import FinalizeBar from "./components/FinalizeBar";
 import type { ReviewSummary } from "./parser";
 
 export default function App() {
@@ -39,6 +40,8 @@ export default function App() {
           setMessages={setChatMessages}
         />
       </div>
+      {/* Document-level action, available regardless of the active tab. */}
+      <FinalizeBar />
     </div>
   );
 }

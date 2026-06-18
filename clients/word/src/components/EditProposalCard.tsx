@@ -130,7 +130,13 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
       </div>
 
       {status.kind === "applied" && (
-        <div className="card-status success">Applied ✓ — see Track Changes</div>
+        <>
+          <div className="card-status success">Applied as a tracked change ✓</div>
+          <div className="card-hint">
+            Not final yet — it stays in the document (including after you Save)
+            until you Accept or Reject it in Word's Review tab.
+          </div>
+        </>
       )}
       {status.kind === "error" && (
         <div className="card-status error">{status.message}</div>
