@@ -640,3 +640,81 @@ button.secondary:disabled {
   background: #f3f5f8;
   color: var(--muted);
 }
+
+/* Finalize bar — document-level "produce a clean copy" action (footer). */
+.finalize-bar {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--secondary-bg);
+}
+
+.finalize-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.finalize-label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.finalize-sub {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.finalize-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.finalize-warning {
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--yellow-bg);
+  border: 1px solid var(--yellow-fg);
+  border-radius: 3px;
+  padding: 8px;
+}
+
+.finalize-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.finalize-status {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+
+.finalize-status.success {
+  background: var(--green-bg);
+  color: var(--green-fg);
+}
+
+.finalize-status.error {
+  background: var(--red-bg);
+  color: var(--red-fg);
+}
+
+.link-button {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}

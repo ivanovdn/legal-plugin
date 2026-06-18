@@ -681,3 +681,35 @@ export async function applyEdit(proposal: EditProposal): Promise<Result<void>> {
   }
   return fail(`Unknown action: ${String((proposal as { action: unknown }).action)}`);
 }
+
+/**
+ * Finalize the document: accept EVERY tracked change and turn Track Changes
+ * off, producing a clean copy in place. The lawyer then uses Word's File →
+ * Save As to name the deliverable. Cross-OS (acceptAll + changeTrackingMode
+ * are WordApi 1.4). Returns the number of changes accepted (0 = already clean).
+ *
+ * IMPORTANT: this accepts ALL tracked changes, not only the assistant's —
+ * Office.js attributes add-in edits to the current Word user, the same as the
+ * user's own manual edits, so they can't be distinguished by author. Callers
+ * MUST gate this behind an explicit user confirmation.
+ */
+export async function finalizeDocument(): Promise<Result<number>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  try {
+    return await Word.run(async (context) => {
+      const doc = context.document;
+      const changes = doc.body.getTrackedChanges();
+      changes.load("items");
+      await context.sync();
+
+      const count = changes.items.length;
+      changes.acceptAll();
+      doc.changeTrackingMode = Word.ChangeTrackingMode.off;
+      await context.sync();
+
+      return ok(count);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
