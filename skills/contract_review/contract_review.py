@@ -21,6 +21,7 @@ from langfuse.decorators import observe, langfuse_context
 
 from graph.state import LegalAgentState
 from skills.base import load_bundle
+from rag.related_docs import get_parent_msa
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,39 @@ named in its "Clause / section". Don't include text related to other findings.
 4. A finding listed under "Key Findings" with a Yellow or Red rating, or under \
 "Red and Missing Context Items", must have at least one corresponding row in \
 "Suggested Redlines / Fallbacks"."""
+
+# Max chars of MSA text injected into a SOW review. Guards the local LLM's
+# context window so a huge MSA can't crowd out the SOW + playbook. Promote to
+# config.Settings when scaling past the one-MSA demo.
+_MSA_MAX_CHARS = 24000
+
+# Added (as the LAST system message) only when a governing MSA is attached to a
+# SOW review. Deliberately STRUCTURAL and model-neutral: it orchestrates a
+# document-to-document comparison and defers ALL legal judgment to the playbook —
+# it encodes no positions of its own (SKILL.md is the ceiling). The SOW playbook
+# already REQUIRES this check (sow/SKILL.md: "conflicts with MSA"; "SOW must be
+# pursuant to and subject to the MSA. Red if SOW overrides core MSA protections
+# without Legal approval"; MSA-001 precedence rule) and names the MSA as a
+# required input — this directive just supplies that input and mirrors those
+# rules verbatim. Rule 3 stops the local LLM hallucinating "the MSA says X".
+_MSA_COMPARISON_DIRECTIVE = """GOVERNING MSA COMPARISON — this SOW is issued \
+under the Master Services Agreement included below as "GOVERNING MSA":
+
+1. The MSA is the parent framework and the SOW is pursuant to and subject to it. \
+Per the playbook, SOW-specific terms control only for that SOW; SOW deviations \
+are acceptable only if limited to that SOW and approved by the relevant owner.
+
+2. Flag, as findings, any SOW term that (a) overrides a core MSA protection \
+without approval, (b) changes the MSA's order of precedence or applies broadly \
+beyond that SOW, or (c) is required by the MSA but missing or inconsistent in \
+the SOW (e.g. the MSA date/version reference, or terms governed by the MSA such \
+as payment, IP ownership, confidentiality, or the liability cap). Cite the \
+relevant MSA clause in the Issue, and apply the SOW playbook's risk rating and \
+approval rules as usual.
+
+3. Do NOT invent MSA terms. Base every MSA-conflict finding only on text present \
+in the GOVERNING MSA below; if the MSA is silent on a point, say so rather than \
+assuming."""
 
 
 def _detect_contract_type(text: str) -> tuple[str, bool]:
@@ -202,6 +236,48 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
         user_content = request
         state["retrieval_query"] = request
 
+    # SOW review: pull the governing MSA from Qdrant and attach it so the SOW is
+    # reviewed against its parent. Strictly additive — any failure degrades to a
+    # standalone SOW review. SOW path with an uploaded doc only.
+    msa_attached = False
+    msa_doc_title = ""
+    if contract_type == "sow" and uploaded_text:
+        client_id = (state.get("filters") or {}).get("client_id", "")
+        try:
+            parent = get_parent_msa(client_id)
+        except Exception:  # retrieval must never break the review
+            logger.exception(
+                "[contract_review] parent-MSA lookup failed — reviewing SOW standalone"
+            )
+            parent = None
+        if parent:
+            msa_doc_title, msa_text = parent
+            if len(msa_text) > _MSA_MAX_CHARS:
+                logger.warning(
+                    "[contract_review] MSA %r is %d chars — truncating to %d for review",
+                    msa_doc_title, len(msa_text), _MSA_MAX_CHARS,
+                )
+                msa_text = (
+                    msa_text[:_MSA_MAX_CHARS]
+                    + f"\n\n[MSA truncated to {_MSA_MAX_CHARS} chars for review]"
+                )
+            user_content += (
+                f"\n\n--- GOVERNING MSA ({msa_doc_title}) ---\n"
+                f"{msa_text}\n"
+                f"--- END GOVERNING MSA ---"
+            )
+            msa_attached = True
+            logger.info(
+                "[contract_review] attached governing MSA %r (%d chars)",
+                msa_doc_title, len(msa_text),
+            )
+        else:
+            logger.info(
+                "[contract_review] no governing MSA on file for client_id=%s — "
+                "reviewing SOW standalone",
+                client_id,
+            )
+
     attorney_notes = (state.get("attorney_notes") or "").strip()
     if attorney_notes:
         user_content += (
@@ -209,11 +285,21 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
             f"{attorney_notes}"
         )
 
-    state["messages"] = [
+    system_messages = [
         {"role": "system", "content": playbook},
         {"role": "system", "content": _OUTPUT_CONSTRAINTS},
-        {"role": "user", "content": user_content},
     ]
+    if msa_attached:
+        system_messages.append({"role": "system", "content": _MSA_COMPARISON_DIRECTIVE})
+    state["messages"] = system_messages + [{"role": "user", "content": user_content}]
+
+    # Surface MSA attachment on the trace (best-effort; never breaks the skill).
+    try:
+        langfuse_context.update_current_trace(
+            metadata={"msa_attached": msa_attached, "msa_doc_title": msa_doc_title},
+        )
+    except Exception:  # pragma: no cover - observability is best-effort
+        pass
 
     logger.info(
         "[contract_review] prepared: type=%s ambiguous=%s uploaded=%d chars rag=%s playbook=%d chars",

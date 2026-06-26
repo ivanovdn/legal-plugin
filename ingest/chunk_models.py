@@ -7,7 +7,7 @@ class LegalChunk(BaseModel):
     doc_id: str
     doc_title: str
     doc_filename: str
-    doc_type: str       # contract | legislation | template | policy | case_law
+    doc_type: str       # contract | legislation | template | policy | case_law | msa
     client_id: str      # "internal" for shared docs
     jurisdiction: str
     sensitivity: str    # confidential | internal | public
