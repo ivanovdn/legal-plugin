@@ -18,16 +18,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 _graph = None
+_checkpointer_active = False
 
 
 def _get_graph():
     """Lazy-init compiled graph with optional Redis checkpointer."""
-    global _graph
+    global _graph, _checkpointer_active
     if _graph is None:
         settings = get_settings()
         cp = build_checkpointer() if settings.checkpointer_enabled else None
+        _checkpointer_active = cp is not None
+        if settings.checkpointer_enabled and cp is None:
+            logger.error(
+                "Checkpointer ENABLED but unavailable — sessions are stateless this run. "
+                "Responses will report memory_degraded=True."
+            )
         _graph = build_graph(checkpointer=cp)
     return _graph
+
+
+def _memory_degraded(report: dict) -> bool:
+    """True when this turn's memory was degraded — either the report flagged it
+    (in-graph read failure) or the checkpointer is enabled but unavailable."""
+    if report.get("memory_degraded"):
+        return True
+    return get_settings().checkpointer_enabled and not _checkpointer_active
 
 
 def _payload_from_result(result: dict, session_id: str) -> dict:
@@ -55,6 +70,7 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
                 "review_iterations": value.get("review_iterations", 0),
             },
             "report": {},
+            "memory_degraded": _memory_degraded(result.get("report", {}) or {}),
         }
     if result.get("awaiting_review"):
         # Legacy / test-mocked shape — keep working for unit tests that don't use real interrupts.
@@ -69,13 +85,16 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
                 "review_iterations": result.get("review_iterations", 0),
             },
             "report": {},
+            "memory_degraded": _memory_degraded(result.get("report", {}) or {}),
         }
+    report = result.get("report", {})
     return {
         "session_id": session_id,
         "task_type": result.get("task_type", ""),
-        "report": result.get("report", {}),
+        "report": report,
         "risk_level": result.get("risk_level", ""),
         "awaiting_review": False,
+        "memory_degraded": _memory_degraded(report),
     }
 
 
