@@ -27,6 +27,7 @@ def resolve_document_id(text: str) -> str:
 
     # Find the end of the preamble by looking for the first numbered section.
     # This handles documents where the preamble ends before 800 chars.
+    # Fallback: documents without a "\n<digit>." clause (e.g. "ARTICLE"/"Section" headings) use the _PREAMBLE_CHARS prefix; edits beyond it still don't change the id.
     match = re.search(r'\n\d+\.', region)
     if match:
         region = region[:match.start()]

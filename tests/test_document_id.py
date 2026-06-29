@@ -27,3 +27,13 @@ def test_normalization_ignores_whitespace_and_case():
 def test_empty_text_returns_empty_id():
     assert resolve_document_id("") == ""
     assert resolve_document_id("   \n\t ") == ""
+
+
+def test_prefix_guarantee_for_unnumbered_headings():
+    # A document headed "ARTICLE I" (no `\n<digit>.` boundary) longer than the
+    # 800-char preamble window: edits BEYOND char 800 must not change the id.
+    head = "ARTICLE I — DEFINITIONS\n\n" + ("the parties agree as follows. " * 40)  # > 800 chars
+    assert len(head) > 800
+    a = resolve_document_id(head + "later clause version one")
+    b = resolve_document_id(head + "a completely different later clause, version two")
+    assert a == b
