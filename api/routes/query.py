@@ -120,6 +120,8 @@ def submit_query(
         "previous_draft": "",
         "requires_attorney": False,
         "interactive_review": body.interactive_review,
+        "document_id": "",
+        "memory_degraded": False,
     }
 
     graph = _get_graph()

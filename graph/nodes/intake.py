@@ -6,6 +6,7 @@ import logging
 from langfuse.decorators import observe, langfuse_context
 
 from graph.state import LegalAgentState
+from memory.document_id import resolve_document_id
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,13 @@ def intake(state: LegalAgentState) -> LegalAgentState:
         "client_id": client_id,
         **{k: v for k, v in state.get("filters", {}).items() if k != "client_id"},
     }
+
+    docs = state.get("uploaded_docs") or []
+    text = "\n\n".join(
+        (d.get("text", "") if isinstance(d, dict) else getattr(d, "text", ""))
+        for d in docs
+    )
+    state["document_id"] = resolve_document_id(text)
 
     if not state.get("retrieval_query"):
         state["retrieval_query"] = state["request"]

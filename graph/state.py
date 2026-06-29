@@ -56,3 +56,5 @@ class LegalAgentState(TypedDict):
     contract_type_detected: str            # NEW — nda | msa | sow | baa (set by contract_review when uploaded_text present)
     requires_attorney: bool                # NEW — contract_review verdict says the doc needs attorney sign-off (blocker/yellow); surfaced in report
     interactive_review: bool               # NEW — caller can handle a human_review interrupt + resume (Chainlit True; Word False)
+    document_id: str                       # NEW — stable id for the open document (review-store key)
+    memory_degraded: bool                  # NEW — True when a memory read/store was unavailable this turn
