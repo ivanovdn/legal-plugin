@@ -1176,6 +1176,17 @@ def test_doc_chat_injects_stored_review(monkeypatch):
     assert "PRIOR REVIEW" in contents
     assert "IP clause is risky" in contents
 
+    # Verify message ordering: CHAT_SYSTEM_PROMPT first, PRIOR REVIEW second,
+    # then chat_history and user message. This is load-bearing for prefix-caching.
+    msgs = captured["messages"]
+    system_indices = [i for i, m in enumerate(msgs) if m["role"] == "system"]
+    assert len(system_indices) >= 2, f"Expected at least 2 system messages, got {len(system_indices)}"
+    assert msgs[system_indices[0]]["content"] == lr.CHAT_SYSTEM_PROMPT
+    assert "PRIOR REVIEW" in msgs[system_indices[1]]["content"]
+    # All system messages precede the first non-system (chat_history / user) message.
+    first_non_system = min(i for i, m in enumerate(msgs) if m["role"] != "system")
+    assert system_indices[-1] < first_non_system
+
 
 def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
     import skills.legal_research as lr
@@ -1196,3 +1207,28 @@ def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
     out = lr.legal_research(state)
     assert out["memory_degraded"] is True
     assert out["llm_response"] == "answer"   # still answers
+
+
+def test_doc_chat_no_document_id_no_degradation(monkeypatch):
+    """When document_id is empty string, no review load occurs, no degradation flag."""
+    import skills.legal_research as lr
+
+    class FakeResp:
+        content = "answer"
+
+    called = {"load": 0}
+    def _load(db_path, document_id):
+        called["load"] += 1
+        return None
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", _load)
+
+    state = _make_state(
+        request="summarize", task_type="research",
+        uploaded_docs=[{"text": "MUTUAL NDA\n\nbody"}], document_id="",
+    )
+    out = lr.legal_research(state)
+    assert out["llm_response"] == "answer"
+    assert out.get("memory_degraded", False) is False
+    assert called["load"] == 0  # load_latest_review was not called
