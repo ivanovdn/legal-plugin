@@ -10,7 +10,9 @@ from skills.compliance_check import compliance_check
 from skills.contract_generation import contract_generation
 from skills.contract_review.contract_review import contract_review
 from skills.drafting import drafting
+from skills.grounding import detect_contract_type
 from skills.legal_research import legal_research
+import skills.grounding as _grounding_module
 
 
 def _make_state(**overrides):
@@ -912,41 +914,35 @@ _MSA_REFERENCES_SOW_SAMPLE = (
 
 
 def test_detect_contract_type_nda():
-    from skills.contract_review.contract_review import _detect_contract_type
-    t, ambig = _detect_contract_type(_NDA_SAMPLE)
+    t, ambig = detect_contract_type(_NDA_SAMPLE)
     assert t == "nda" and not ambig
 
 
 def test_detect_contract_type_msa():
-    from skills.contract_review.contract_review import _detect_contract_type
-    t, ambig = _detect_contract_type(_MSA_SAMPLE)
+    t, ambig = detect_contract_type(_MSA_SAMPLE)
     assert t == "msa" and not ambig
 
 
 def test_detect_contract_type_sow():
-    from skills.contract_review.contract_review import _detect_contract_type
-    t, ambig = _detect_contract_type(_SOW_SAMPLE)
+    t, ambig = detect_contract_type(_SOW_SAMPLE)
     assert t == "sow" and not ambig
 
 
 def test_detect_contract_type_baa():
-    from skills.contract_review.contract_review import _detect_contract_type
-    t, ambig = _detect_contract_type(_BAA_SAMPLE)
+    t, ambig = detect_contract_type(_BAA_SAMPLE)
     assert t == "baa" and not ambig
 
 
 def test_detect_contract_type_msa_with_heavy_sow_references():
     """Regression: an MSA that cites SOWs more than itself must still detect msa."""
-    from skills.contract_review.contract_review import _detect_contract_type
-    t, ambig = _detect_contract_type(_MSA_REFERENCES_SOW_SAMPLE)
+    t, ambig = detect_contract_type(_MSA_REFERENCES_SOW_SAMPLE)
     assert t == "msa", f"expected msa, got {t}"
     assert not ambig
 
 
 def test_detect_contract_type_defaults_to_nda_on_unknown():
     """No-pattern-matches doc returns (nda, ambiguous=True)."""
-    from skills.contract_review.contract_review import _detect_contract_type
-    t, ambig = _detect_contract_type("Random business text without any contract keywords.")
+    t, ambig = detect_contract_type("Random business text without any contract keywords.")
     assert t == "nda" and ambig
 
 
@@ -1008,16 +1004,8 @@ def test_contract_review_msa_loads_msa_matrix():
 # --- contract_review: governing-MSA attachment (SOW-vs-MSA) ---
 
 def _patch_msa(monkeypatch, value):
-    """Patch get_parent_msa as imported into the contract_review module.
-
-    We cannot use `import skills.contract_review.contract_review as m` because
-    the package __init__ re-exports the `contract_review` function under that
-    attribute name, masking the submodule. Use importlib to force the real
-    module object, then setattr directly.
-    """
-    importlib.import_module("skills.contract_review.contract_review")
-    _cr_module = sys.modules["skills.contract_review.contract_review"]
-    monkeypatch.setattr(_cr_module, "get_parent_msa", value)
+    """Patch get_parent_msa on the grounding module (attach_parent_msa calls it)."""
+    monkeypatch.setattr(_grounding_module, "get_parent_msa", value)
 
 
 def test_contract_review_sow_attaches_governing_msa(monkeypatch):

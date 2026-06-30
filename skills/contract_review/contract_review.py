@@ -18,8 +18,7 @@ import logging
 from langfuse.decorators import observe, langfuse_context
 
 from graph.state import LegalAgentState
-from rag.related_docs import get_parent_msa
-from skills.grounding import detect_contract_type, load_playbook_bundle
+from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +80,6 @@ approval rules as usual.
 3. Do NOT invent MSA terms. Base every MSA-conflict finding only on text present \
 in the GOVERNING MSA below; if the MSA is silent on a point, say so rather than \
 assuming."""
-
-
-def _detect_contract_type(text: str) -> tuple[str, bool]:
-    """Thin shim kept for backward compatibility with existing test imports.
-
-    Delegates entirely to `skills.grounding.detect_contract_type` — do not add
-    logic here; edit grounding.py instead.
-    """
-    return detect_contract_type(text)
 
 
 def _extract_uploaded_text(state: LegalAgentState) -> str:
@@ -170,39 +160,19 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
     if contract_type == "sow" and uploaded_text:
         client_id = (state.get("filters") or {}).get("client_id", "")
         try:
-            parent = get_parent_msa(client_id)
-        except Exception:  # retrieval must never break the review
-            logger.exception(
-                "[contract_review] parent-MSA lookup failed — reviewing SOW standalone"
-            )
+            parent = attach_parent_msa(uploaded_text, client_id, _MSA_MAX_CHARS)
+        except Exception:
+            logger.exception("[contract_review] parent-MSA lookup failed — reviewing SOW standalone")
             parent = None
         if parent:
             msa_doc_title, msa_text = parent
-            if len(msa_text) > _MSA_MAX_CHARS:
-                logger.warning(
-                    "[contract_review] MSA %r is %d chars — truncating to %d for review",
-                    msa_doc_title, len(msa_text), _MSA_MAX_CHARS,
-                )
-                msa_text = (
-                    msa_text[:_MSA_MAX_CHARS]
-                    + f"\n\n[MSA truncated to {_MSA_MAX_CHARS} chars for review]"
-                )
             user_content += (
-                f"\n\n--- GOVERNING MSA ({msa_doc_title}) ---\n"
-                f"{msa_text}\n"
-                f"--- END GOVERNING MSA ---"
+                f"\n\n--- GOVERNING MSA ({msa_doc_title}) ---\n{msa_text}\n--- END GOVERNING MSA ---"
             )
             msa_attached = True
-            logger.info(
-                "[contract_review] attached governing MSA %r (%d chars)",
-                msa_doc_title, len(msa_text),
-            )
+            logger.info("[contract_review] attached governing MSA %r (%d chars)", msa_doc_title, len(msa_text))
         else:
-            logger.info(
-                "[contract_review] no governing MSA on file for client_id=%s — "
-                "reviewing SOW standalone",
-                client_id,
-            )
+            logger.info("[contract_review] no governing MSA on file for client_id=%s — reviewing SOW standalone", client_id)
 
     attorney_notes = (state.get("attorney_notes") or "").strip()
     if attorney_notes:
