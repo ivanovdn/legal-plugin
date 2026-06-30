@@ -17,6 +17,7 @@ import logging
 
 from langfuse.decorators import observe, langfuse_context
 
+from config import get_settings
 from graph.state import LegalAgentState
 from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
 
@@ -47,11 +48,6 @@ named in its "Clause / section". Don't include text related to other findings.
 4. A finding listed under "Key Findings" with a Yellow or Red rating, or under \
 "Red and Missing Context Items", must have at least one corresponding row in \
 "Suggested Redlines / Fallbacks"."""
-
-# Max chars of MSA text injected into a SOW review. Guards the local LLM's
-# context window so a huge MSA can't crowd out the SOW + playbook. Promote to
-# config.Settings when scaling past the one-MSA demo.
-_MSA_MAX_CHARS = 24000
 
 # Added (as the LAST system message) only when a governing MSA is attached to a
 # SOW review. Deliberately STRUCTURAL and model-neutral: it orchestrates a
@@ -160,7 +156,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
     if contract_type == "sow" and uploaded_text:
         client_id = (state.get("filters") or {}).get("client_id", "")
         try:
-            parent = attach_parent_msa(uploaded_text, client_id, _MSA_MAX_CHARS)
+            parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
         except Exception:
             logger.exception("[contract_review] parent-MSA lookup failed — reviewing SOW standalone")
             parent = None

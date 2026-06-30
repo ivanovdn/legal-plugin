@@ -1285,3 +1285,42 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
     )
     lr.legal_research(state)
     assert "NDA_BUNDLE" in "\n".join(m["content"] for m in seen["messages"])
+
+
+def test_doc_chat_caps_document_not_grounding(monkeypatch):
+    import skills.legal_research as lr
+    from config import get_settings
+    monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "2000")
+    get_settings.cache_clear()
+
+    captured = {}
+
+    class FakeResp:
+        content = "answer"
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", lambda db_path, document_id: None)
+    monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("sow", False))
+    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(lr, "attach_parent_msa",
+                        lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
+
+    big_doc = "STATEMENT OF WORK\n\n" + ("clause text " * 1000)   # ~12k chars
+    state = _make_state(
+        request="summarize", task_type="research",
+        uploaded_docs=[{"text": big_doc}], filters={"client_id": "internal"},
+        document_id="doc-1",
+    )
+    lr.legal_research(state)
+    get_settings.cache_clear()
+
+    total = sum(len(m["content"]) for m in captured["messages"])
+    # CHAT_SYSTEM_PROMPT (~4370 chars) is fixed grounding that cannot be cut;
+    # the budget (2000) only controls how much document is kept. The overhead
+    # here covers CHAT_SYSTEM_PROMPT + message wrappers (~5000 fixed chars).
+    assert total <= 2000 + 5000          # within budget + fixed grounding overhead
+    joined = "\n".join(m["content"] for m in captured["messages"])
+    assert "PLAYBOOK" in joined and "MSA_BODY" in joined   # grounding preserved
+    assert "[document truncated" in joined                 # doc was the one cut

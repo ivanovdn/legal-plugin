@@ -87,9 +87,6 @@ replace_all applies ONE new_text to EVERY match, so its target must correspond t
 The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
 
 
-# Temporary module constant — Task 10 promotes this to config.
-_MSA_CHAT_MAX_CHARS = 24000
-
 # Structural, model-neutral note added when a governing MSA is attached on the
 # chat path. Mirrors the review path's directive; SKILL.md stays the ceiling.
 _CHAT_MSA_NOTE = (
@@ -385,7 +382,7 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
         playbook = load_playbook_bundle(contract_type)
         if contract_type == "sow":
             client_id = (state.get("filters") or {}).get("client_id", "")
-            parent = attach_parent_msa(uploaded_text, client_id, _MSA_CHAT_MAX_CHARS)
+            parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
             if parent:
                 title, msa_text = parent
                 msa_block = (
@@ -395,6 +392,27 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
     except Exception as e:
         logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
     return playbook, msa_block
+
+
+def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> None:
+    """If total assembled content exceeds the budget, truncate ONLY the document
+    portion of the trailing user message — never the grounding. Mutates messages
+    in place; marks + logs the truncation. Crude on purpose (Phase 3)."""
+    budget = get_settings().chat_context_max_chars
+    total = sum(len(m["content"]) for m in messages)
+    if total <= budget:
+        return
+    overflow = total - budget
+    keep = max(0, len(uploaded_text) - overflow - len("\n\n[document truncated for context budget]"))
+    truncated_doc = uploaded_text[:keep] + "\n\n[document truncated for context budget]"
+    messages[-1]["content"] = (
+        f"--- ATTACHED DOCUMENT (the source of truth — answer from this) ---\n"
+        f"{truncated_doc}\n"
+        f"--- END ATTACHED DOCUMENT ---\n\n"
+        f"User request: {request}"
+    )
+    logger.warning("[legal_research] chat context %d > budget %d — truncated document to %d chars",
+                   total, budget, keep)
 
 
 def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list[dict]]:
@@ -435,6 +453,8 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         *chat_history,
         {"role": "user", "content": user_message},   # changes → trailing tokens
     ]
+
+    _cap_chat_context(messages, uploaded_text, request)
 
     llm = _build_llm()
     response = traced_invoke(llm, messages, name="doc_chat")

@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     chat_history_trim_chars: int = 300
     max_review_iterations: int = 3
     checkpoint_ttl_seconds: int = 86400
+    chat_context_max_chars: int = 120000   # assembled chat-context budget (~30k tokens); tune via ollama_usage
+    msa_max_chars: int = 24000             # MSA cap, shared by review + chat paths
 
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
