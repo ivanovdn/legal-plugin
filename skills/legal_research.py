@@ -11,6 +11,7 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
+from memory.review_store import load_latest_review
 from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
@@ -339,6 +340,29 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
     return proposals
 
 
+def _load_prior_review_block(state: LegalAgentState) -> str:
+    """Latest stored review for this document, as a system block. Empty string
+    when none exists. On a store-read failure, flags memory_degraded and returns
+    empty — tracing/memory must never break the chat turn."""
+    document_id = state.get("document_id", "")
+    if not document_id:
+        return ""
+    try:
+        latest = load_latest_review(get_settings().sqlite_path, document_id)
+    except Exception as e:
+        logger.error("[legal_research] prior-review load failed: %s", e)
+        state["memory_degraded"] = True
+        return ""
+    if not latest:
+        return ""
+    return (
+        "--- PRIOR REVIEW (most recent, this document) ---\n"
+        "Answer recall questions from this review; do not re-derive or contradict it.\n\n"
+        f"{latest['markdown']}\n"
+        "--- END PRIOR REVIEW ---"
+    )
+
+
 def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list[dict]]:
     """In-Word chat path: direct ChatOllama with the attached doc, no tools.
 
@@ -361,9 +385,14 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             f"{attorney_notes}"
         )
 
+    review_block = _load_prior_review_block(state)
+
     chat_history = state.get("chat_history", []) or []
+    system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    if review_block:
+        system_messages.append({"role": "system", "content": review_block})
     messages: list[dict] = [
-        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        *system_messages,
         *chat_history,
         {"role": "user", "content": user_message},
     ]
