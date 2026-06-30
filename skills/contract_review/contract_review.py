@@ -2,86 +2,26 @@
 """Contract review — applies the Trinetix legal-team playbook clause-by-clause.
 
 Loads the per-type playbook bundle (skills/contract_review/playbook/) via
-`skills.base.load_bundle`. Bundle = global rules (role, principles, risk
-rating, approval matrix, output format, AI review procedure, external
+`skills.grounding.load_playbook_bundle`. Bundle = global rules (role, principles,
+risk rating, approval matrix, output format, AI review procedure, external
 comments, contract selection, clause bank, no-signature checklist) + the
 per-type SKILL.md + per-type clause matrix. See docs/playbook_cross_reference.md.
 
 Contract type is detected from the uploaded text via a cheap heading-keyword
-heuristic. When detection is ambiguous, defaults to NDA (the most-conservative
-bundle) and logs the ambiguity so a future iteration can add an LLM fallback or
-a user-facing override.
+heuristic in `skills.grounding.detect_contract_type`. When detection is ambiguous,
+defaults to NDA (the most-conservative bundle) and logs the ambiguity so a future
+iteration can add an LLM fallback or a user-facing override.
 """
 
 import logging
-import re
-from pathlib import Path
 
 from langfuse.decorators import observe, langfuse_context
 
 from graph.state import LegalAgentState
-from skills.base import load_bundle
 from rag.related_docs import get_parent_msa
+from skills.grounding import detect_contract_type, load_playbook_bundle
 
 logger = logging.getLogger(__name__)
-
-_SKILL_DIR = Path(__file__).parent
-_PLAYBOOK_DIR = _SKILL_DIR / "playbook"
-
-# Heading/keyword cues for type detection. Hits in the title region (first
-# ~200 chars) are weighted heavily; whole-document hits break ties — see
-# _detect_contract_type. All matchers are case-insensitive whole-word or
-# anchored phrases — we want strong signal, not partial matches inside random
-# sentences.
-#
-# Order matters only for breaking ties, which the heuristic should rarely hit;
-# if it does, the first type whose regex matches wins.
-_TYPE_PATTERNS: tuple[tuple[str, tuple[re.Pattern, ...]], ...] = (
-    (
-        "baa",
-        (
-            re.compile(r"\bbusiness associate agreement\b", re.I),
-            re.compile(r"\bhipaa\b", re.I),
-            re.compile(r"\bprotected health information\b", re.I),
-            re.compile(r"\bphi\b"),  # uppercase only — avoid matching "Phi" inside random words
-        ),
-    ),
-    (
-        "msa",
-        (
-            re.compile(r"\bmaster\s+services?\s+agreement\b", re.I),
-            re.compile(r"\bmsa\b", re.I),
-        ),
-    ),
-    (
-        "sow",
-        (
-            re.compile(r"\bstatement\s+of\s+work\b", re.I),
-            re.compile(r"\bwork\s+order\b", re.I),
-            re.compile(r"\bsow\b", re.I),
-        ),
-    ),
-    (
-        "nda",
-        (
-            re.compile(r"\bnon[-\s]?disclosure\s+agreement\b", re.I),
-            re.compile(r"\bmutual\s+nda\b", re.I),
-            re.compile(r"\bmnda\b", re.I),
-            re.compile(r"\bconfidentiality\s+agreement\b", re.I),
-            re.compile(r"\bnda\b", re.I),
-        ),
-    ),
-)
-
-_DEFAULT_TYPE = "nda"
-
-# Type detection weights. The document title/heading (first ~200 chars) is the
-# strongest signal and is weighted far above incidental body mentions: an MSA
-# references "SOW" throughout its body yet is titled "Master Services Agreement",
-# so a flat hit-count over the opening can wrongly pick SOW. We weight the title
-# region heavily and use whole-document body counts only as a tiebreak.
-_TITLE_REGION_CHARS = 200
-_TITLE_WEIGHT = 100
 
 # Runtime directive appended to the system message after the canonical bundle.
 # The team's required output format leaves one detail open to interpretation:
@@ -144,26 +84,12 @@ assuming."""
 
 
 def _detect_contract_type(text: str) -> tuple[str, bool]:
-    """Detect contract type from text. Returns (type, was_ambiguous).
+    """Thin shim kept for backward compatibility with existing test imports.
 
-    Score = _TITLE_WEIGHT * (hits in the title region) + (hits in the whole
-    document). The title region (first ~200 chars) dominates because the
-    document's own heading is the most reliable signal; whole-document body
-    counts only break ties. Picks the highest-scoring type; returns
-    (_DEFAULT_TYPE, True) when nothing matches.
+    Delegates entirely to `skills.grounding.detect_contract_type` — do not add
+    logic here; edit grounding.py instead.
     """
-    title = text[:_TITLE_REGION_CHARS]
-    scores: dict[str, int] = {}
-    for ctype, patterns in _TYPE_PATTERNS:
-        title_hits = sum(len(p.findall(title)) for p in patterns)
-        body_hits = sum(len(p.findall(text)) for p in patterns)
-        scores[ctype] = _TITLE_WEIGHT * title_hits + body_hits
-
-    best_type = max(scores, key=lambda t: scores[t])
-    best_score = scores[best_type]
-    if best_score == 0:
-        return _DEFAULT_TYPE, True
-    return best_type, False
+    return detect_contract_type(text)
 
 
 def _extract_uploaded_text(state: LegalAgentState) -> str:
@@ -197,7 +123,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
     # is the only signal we have (rare path — usually the Word/Chainlit flows
     # always upload). Falls back to NDA.
     detect_source = uploaded_text or request
-    contract_type, was_ambiguous = _detect_contract_type(detect_source)
+    contract_type, was_ambiguous = detect_contract_type(detect_source)
     state["contract_type_detected"] = contract_type
     if was_ambiguous:
         logger.warning(
@@ -220,7 +146,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
     except Exception:  # pragma: no cover - observability is best-effort
         pass
 
-    playbook = load_bundle(_PLAYBOOK_DIR, contract_type)
+    playbook = load_playbook_bundle(contract_type)
 
     # Build user message with contract text if available
     if uploaded_text:
