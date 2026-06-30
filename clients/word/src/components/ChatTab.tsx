@@ -61,6 +61,7 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
       const res = await chatQuery(question, docText, sessionId);
       if (res.status === "error") {
         setError((res.errors ?? ["unknown error"])[0]);
+        setMemoryDegraded(false);
         return;
       }
       setMemoryDegraded(Boolean(res.data?.memory_degraded));
