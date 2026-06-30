@@ -16,6 +16,7 @@ from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
+from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,17 @@ replace_all applies ONE new_text to EVERY match, so its target must correspond t
 
 The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
 
+
+# Temporary module constant — Task 10 promotes this to config.
+_MSA_CHAT_MAX_CHARS = 24000
+
+# Structural, model-neutral note added when a governing MSA is attached on the
+# chat path. Mirrors the review path's directive; SKILL.md stays the ceiling.
+_CHAT_MSA_NOTE = (
+    "The Master Services Agreement below GOVERNS this document. Ground any "
+    "MSA-conflict answer in its actual text; if the MSA is silent on a point, say "
+    "so rather than assuming. Do not invent MSA terms."
+)
 
 _agent_cache = {}
 _llm_cache: dict[str, ChatOllama] = {}
@@ -363,6 +375,28 @@ def _load_prior_review_block(state: LegalAgentState) -> str:
     )
 
 
+def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[str, str]:
+    """(playbook_bundle, msa_block) for the chat path. Empty strings on failure —
+    grounding must never break the chat turn. MSA only for SOWs."""
+    playbook = ""
+    msa_block = ""
+    try:
+        contract_type, _ = detect_contract_type(uploaded_text)
+        playbook = load_playbook_bundle(contract_type)
+        if contract_type == "sow":
+            client_id = (state.get("filters") or {}).get("client_id", "")
+            parent = attach_parent_msa(uploaded_text, client_id, _MSA_CHAT_MAX_CHARS)
+            if parent:
+                title, msa_text = parent
+                msa_block = (
+                    f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
+                    f"{msa_text}\n--- END GOVERNING MSA ---"
+                )
+    except Exception as e:
+        logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
+    return playbook, msa_block
+
+
 def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list[dict]]:
     """In-Word chat path: direct ChatOllama with the attached doc, no tools.
 
@@ -373,10 +407,10 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     """
     request = state["request"]
     user_message = (
-        f"User request: {request}\n\n"
         f"--- ATTACHED DOCUMENT (the source of truth — answer from this) ---\n"
         f"{uploaded_text}\n"
-        f"--- END ATTACHED DOCUMENT ---"
+        f"--- END ATTACHED DOCUMENT ---\n\n"
+        f"User request: {request}"
     )
     attorney_notes = (state.get("attorney_notes") or "").strip()
     if attorney_notes:
@@ -386,15 +420,20 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         )
 
     review_block = _load_prior_review_block(state)
+    playbook, msa_block = _build_chat_grounding(state, uploaded_text)
 
     chat_history = state.get("chat_history", []) or []
     system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    if playbook:
+        system_messages.append({"role": "system", "content": playbook})
+    if msa_block:
+        system_messages.append({"role": "system", "content": msa_block})
     if review_block:
         system_messages.append({"role": "system", "content": review_block})
     messages: list[dict] = [
-        *system_messages,
+        *system_messages,        # stable across turns → cached prefix
         *chat_history,
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": user_message},   # changes → trailing tokens
     ]
 
     llm = _build_llm()

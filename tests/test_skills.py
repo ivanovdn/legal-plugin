@@ -1164,13 +1164,17 @@ def test_doc_chat_injects_stored_review(monkeypatch):
     assert "PRIOR REVIEW" in contents
     assert "IP clause is risky" in contents
 
-    # Verify message ordering: CHAT_SYSTEM_PROMPT first, PRIOR REVIEW second,
-    # then chat_history and user message. This is load-bearing for prefix-caching.
+    # Verify message ordering: CHAT_SYSTEM_PROMPT first, PRIOR REVIEW somewhere
+    # after it (Task 9 inserts playbook between them), then chat_history and user
+    # message. This is load-bearing for prefix-caching.
     msgs = captured["messages"]
     system_indices = [i for i, m in enumerate(msgs) if m["role"] == "system"]
     assert len(system_indices) >= 2, f"Expected at least 2 system messages, got {len(system_indices)}"
     assert msgs[system_indices[0]]["content"] == lr.CHAT_SYSTEM_PROMPT
-    assert "PRIOR REVIEW" in msgs[system_indices[1]]["content"]
+    # PRIOR REVIEW must appear in some system message after CHAT_SYSTEM_PROMPT.
+    prior_review_indices = [i for i in system_indices if "PRIOR REVIEW" in msgs[i]["content"]]
+    assert prior_review_indices, "PRIOR REVIEW not found in any system message"
+    assert prior_review_indices[0] > system_indices[0], "PRIOR REVIEW must come after CHAT_SYSTEM_PROMPT"
     # All system messages precede the first non-system (chat_history / user) message.
     first_non_system = min(i for i, m in enumerate(msgs) if m["role"] != "system")
     assert system_indices[-1] < first_non_system
@@ -1220,3 +1224,64 @@ def test_doc_chat_no_document_id_no_degradation(monkeypatch):
     assert out["llm_response"] == "answer"
     assert out.get("memory_degraded", False) is False
     assert called["load"] == 0  # load_latest_review was not called
+
+
+def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
+    import skills.legal_research as lr
+
+    captured = {}
+
+    class FakeResp:
+        content = "answer"
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", lambda db_path, document_id: None)
+    monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("sow", False))
+    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "PLAYBOOK_BUNDLE_TEXT")
+    monkeypatch.setattr(lr, "attach_parent_msa",
+                        lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"))
+
+    state = _make_state(
+        request="does this SOW conflict with the MSA?", task_type="research",
+        uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}],
+        filters={"client_id": "internal"}, document_id="doc-1",
+    )
+    lr.legal_research(state)
+
+    msgs = captured["messages"]
+    joined = "\n".join(m["content"] for m in msgs)
+    assert "PLAYBOOK_BUNDLE_TEXT" in joined
+    assert "MSA_BODY_TEXT" in joined
+    # Question is LAST and the document precedes it inside that message.
+    assert msgs[-1]["role"] == "user"
+    assert msgs[-1]["content"].index("STATEMENT OF WORK") < msgs[-1]["content"].index("does this SOW conflict")
+    # Grounding precedes the user turn (cache-friendly ordering).
+    assert joined.index("PLAYBOOK_BUNDLE_TEXT") < joined.index("does this SOW conflict")
+
+
+def test_doc_chat_no_msa_for_nda(monkeypatch):
+    import skills.legal_research as lr
+
+    class FakeResp:
+        content = "answer"
+
+    seen = {}
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": seen.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", lambda db_path, document_id: None)
+    monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("nda", False))
+    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "NDA_BUNDLE")
+    def _no_msa_for_nda(text, client_id, max_chars):
+        raise AssertionError("attach_parent_msa must not be called for an NDA")
+    monkeypatch.setattr(lr, "attach_parent_msa", _no_msa_for_nda)
+
+    state = _make_state(
+        request="why is this risky?", task_type="research",
+        uploaded_docs=[{"text": "MUTUAL NDA\n\nbody"}],
+        filters={"client_id": "internal"}, document_id="doc-2",
+    )
+    lr.legal_research(state)
+    assert "NDA_BUNDLE" in "\n".join(m["content"] for m in seen["messages"])
