@@ -41,6 +41,7 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [memoryDegraded, setMemoryDegraded] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages.
@@ -62,6 +63,7 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
         setError((res.errors ?? ["unknown error"])[0]);
         return;
       }
+      setMemoryDegraded(Boolean(res.data?.memory_degraded));
       const rawAnswer =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "(no response)";
       // Strip fenced JSON blocks for display; prefer the backend's authoritative
@@ -143,6 +145,11 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
         )}
       </div>
 
+      {memoryDegraded && (
+        <div className="status warning">
+          Memory unavailable this turn — this reply and any review won't be remembered.
+        </div>
+      )}
       {error && <div className="status error">Error: {error}</div>}
 
       <div className="chat-input-row">

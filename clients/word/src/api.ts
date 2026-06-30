@@ -10,6 +10,7 @@ export interface QueryResponse {
     task_type?: string;
     risk_level?: string;
     awaiting_review?: boolean;
+    memory_degraded?: boolean;
     report?: {
       response?: string;
       sources?: unknown[];
