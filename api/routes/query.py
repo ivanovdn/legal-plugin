@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, Header
 from langfuse.decorators import observe, langfuse_context
 from langgraph.types import Command
+from redis.exceptions import RedisError
 
 from api.models import ApiResponse, QueryRequest, ResumeRequest
 from config import get_settings
@@ -19,6 +20,30 @@ router = APIRouter(prefix="/api")
 
 _graph = None
 _checkpointer_active = False
+_stateless_graph = None
+
+
+def _get_stateless_graph():
+    """A checkpointer-less graph for the degraded fallback (no Redis, no history)."""
+    global _stateless_graph
+    if _stateless_graph is None:
+        _stateless_graph = build_graph(checkpointer=None)
+    return _stateless_graph
+
+
+def _is_redis_failure(exc: BaseException) -> bool:
+    """True if exc (or a cause/context in its chain) is a Redis error, or its
+    message shows a connection failure — used to detect a mid-invoke checkpointer
+    outage so the turn can degrade instead of hard-failing."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, RedisError):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    msg = str(exc).lower()
+    return "connection refused" in msg or "connecting to" in msg
 
 
 def _get_graph():
@@ -151,6 +176,25 @@ def submit_query(
         refresh_ttl(session_id)
         return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
     except Exception as e:
+        if _checkpointer_active and _is_redis_failure(e):
+            logger.error(
+                "Checkpointer (Redis) failed mid-invoke (%s) — degrading to a stateless "
+                "run; chat_history is lost this turn (memory_degraded=True).", e,
+            )
+            try:
+                initial_state["memory_degraded"] = True
+                result = _get_stateless_graph().invoke(initial_state)
+                report = result.get("report") or {}
+                if isinstance(report, dict):
+                    report["memory_degraded"] = True
+                    result["report"] = report
+                return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
+            except Exception as e2:
+                logger.exception("Stateless fallback failed after checkpointer outage")
+                return ApiResponse(
+                    status="error",
+                    errors=[f"Session memory unavailable and fallback failed: {e2}"],
+                )
         logger.exception("Graph execution failed")
         return ApiResponse(status="error", errors=[str(e)])
 
