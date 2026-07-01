@@ -18,7 +18,8 @@ _review_db_initialized = False
 
 @observe(name="memory_writer")
 def memory_writer(state: LegalAgentState) -> dict:
-    """Write skill invocation to SQLite audit log. Returns {} (side-effect only)."""
+    """Writes the audit log; on a contract_review turn also persists the review.
+    Returns {} normally, or {'report': {...}} with review_persist_error if the review write fails."""
     global _db_initialized
     settings = get_settings()
 

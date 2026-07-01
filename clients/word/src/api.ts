@@ -17,6 +17,7 @@ export interface QueryResponse {
       notes_unincorporated?: string;
       proposed_edits?: EditProposal[];
       contract_type_detected?: string;
+      review_persist_error?: string;
     };
     interrupt_payload?: {
       task_type?: string;
