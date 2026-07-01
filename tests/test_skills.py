@@ -1324,3 +1324,35 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     joined = "\n".join(m["content"] for m in captured["messages"])
     assert "PLAYBOOK" in joined and "MSA_BODY" in joined   # grounding preserved
     assert "[document truncated" in joined                 # doc was the one cut
+
+
+# --- num_ctx wiring (context-window pin) ---
+
+
+def test_build_llm_sets_num_ctx(monkeypatch):
+    """_build_llm must forward ollama_num_ctx to ChatOllama so Ollama uses the
+    correct context window instead of its small default (~4096 tokens).
+    qwen3.6 supports 262k; we pin a project-level default of 32768."""
+    import skills.legal_research as lr
+    from config import get_settings
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "12345")
+    get_settings.cache_clear()
+    lr._llm_cache.clear()
+    llm = lr._build_llm()
+    assert getattr(llm, "num_ctx", None) == 12345
+    lr._llm_cache.clear()
+    get_settings.cache_clear()
+
+
+def test_build_json_llm_sets_num_ctx(monkeypatch):
+    """_build_json_llm must also forward ollama_num_ctx — it is the retry LLM
+    used when the main LLM emits an edit promise without a JSON block."""
+    import skills.legal_research as lr
+    from config import get_settings
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "8192")
+    get_settings.cache_clear()
+    lr._llm_cache.clear()
+    llm = lr._build_json_llm()
+    assert getattr(llm, "num_ctx", None) == 8192
+    lr._llm_cache.clear()
+    get_settings.cache_clear()

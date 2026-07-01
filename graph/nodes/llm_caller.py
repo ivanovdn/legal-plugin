@@ -68,7 +68,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
                 "model": settings.llm_model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": 0.0},
+                "options": {"temperature": 0.0, "num_ctx": settings.ollama_num_ctx},
             },
             timeout=600.0,
         )
