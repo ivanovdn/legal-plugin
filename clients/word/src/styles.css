@@ -173,6 +173,18 @@ button.secondary:disabled {
   color: var(--red-fg);
 }
 
+/* Memory-degraded banner: a filled amber box so it can't be mistaken for the
+   neutral grey status text. Mirrors the .chat-warning treatment. */
+.status.warning {
+  color: var(--yellow-fg);
+  background: var(--yellow-bg);
+  border: 1px solid var(--yellow-fg);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
 /* ---------- Findings ---------- */
 
 .summary {

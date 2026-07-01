@@ -147,8 +147,8 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
       </div>
 
       {memoryDegraded && (
-        <div className="status warning">
-          Memory unavailable this turn — this reply and any review won't be remembered.
+        <div className="status warning" role="alert">
+          ⚠ <strong>Memory unavailable this turn</strong> — this reply and any review won't be remembered.
         </div>
       )}
       {error && <div className="status error">Error: {error}</div>}
