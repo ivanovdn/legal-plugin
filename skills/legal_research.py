@@ -351,6 +351,35 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
     return proposals
 
 
+def _strip_redlines_section(markdown: str) -> str:
+    """Remove the 'Suggested Redlines / Fallbacks' section from review markdown.
+
+    Finds the first heading (any level #–##) whose text contains
+    "suggested redlines" (case-insensitive) and drops everything from that
+    heading up to (but not including) the next heading of the same or higher
+    level, or end-of-string if it is the last section. All other sections are
+    preserved unchanged.
+
+    Returns the markdown unchanged when no such section exists.
+    """
+    match = re.search(r"^(#{1,6})\s+.*suggested redlines.*$", markdown, re.IGNORECASE | re.MULTILINE)
+    if not match:
+        return markdown
+    level = len(match.group(1))          # e.g. 1 for "#", 2 for "##"
+    start = match.start()
+    # Find the next heading at the same or higher level (fewer #s).
+    next_heading = re.search(
+        r"^#{1," + str(level) + r"}\s",
+        markdown[match.end():],
+        re.MULTILINE,
+    )
+    if next_heading:
+        end = match.end() + next_heading.start()
+    else:
+        end = len(markdown)
+    return markdown[:start] + markdown[end:]
+
+
 def _load_prior_review_block(state: LegalAgentState) -> str:
     """Latest stored review for this document, as a system block. Empty string
     when none exists. On a store-read failure, flags memory_degraded and returns
@@ -366,10 +395,11 @@ def _load_prior_review_block(state: LegalAgentState) -> str:
         return ""
     if not latest:
         return ""
+    review_text = _strip_redlines_section(latest["markdown"])
     return (
         "--- PRIOR REVIEW (most recent, this document) ---\n"
         "Answer recall questions from this review; do not re-derive or contradict it.\n\n"
-        f"{latest['markdown']}\n"
+        f"{review_text}\n"
         "--- END PRIOR REVIEW ---"
     )
 

@@ -1356,3 +1356,32 @@ def test_build_json_llm_sets_num_ctx(monkeypatch):
     assert getattr(llm, "num_ctx", None) == 8192
     lr._llm_cache.clear()
     get_settings.cache_clear()
+
+
+def test_prior_review_block_strips_suggested_redlines(monkeypatch):
+    """The prior-review block injected into doc-chat must NOT include the
+    'Suggested Redlines / Fallbacks' section — carrying it forward primes the
+    model to re-propose those edits on a pure Q&A turn (smoke-test: user asked
+    "who signs for Trinetix?" and received an unsolicited signature-fill edit).
+
+    All other sections must be preserved so recall still works.
+    """
+    import skills.legal_research as lr
+
+    review_md = (
+        "# Review Summary\nOverall risky.\n\n"
+        "# Key Findings\n| IP clause | Red | ambiguous ownership |\n\n"
+        "# Suggested Redlines / Fallbacks\n"
+        '| Signature | Fill "Signed by: [__]" with the counterparty name |\n\n'
+        "# Business Questions\nWho is the client entity?\n"
+    )
+    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: {"markdown": review_md})
+    state = _make_state(uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}], document_id="doc-1")
+    block = lr._load_prior_review_block(state)
+    # Analysis kept (recall still works):
+    assert "Key Findings" in block
+    assert "IP clause" in block
+    assert "Business Questions" in block   # section AFTER redlines is preserved
+    # The edit-priming section is gone:
+    assert "Suggested Redlines" not in block
+    assert 'Fill "Signed by' not in block
