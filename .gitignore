@@ -28,3 +28,6 @@ data/
 .chainlit/translations/
 .chainlit/.langchain.db
 .files/
+
+# Subagent-driven-development orchestration scratch (briefs, reports, ledger)
+.superpowers/
