@@ -26,6 +26,7 @@ def output_formatter(state: LegalAgentState) -> LegalAgentState:
         "proposed_edits": state.get("proposed_edits", []),
         "contract_type_detected": state.get("contract_type_detected", ""),
         "requires_attorney": state.get("requires_attorney", False),
+        "memory_degraded": state.get("memory_degraded", False),
     }
     logger.info("[output_formatter] report built, task_type=%s", state["task_type"])
     return state

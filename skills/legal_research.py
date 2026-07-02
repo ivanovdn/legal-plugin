@@ -11,10 +11,12 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
+from memory.review_store import load_latest_review
 from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
+from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,14 @@ replace_all applies ONE new_text to EVERY match, so its target must correspond t
 The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
 
 
+# Structural, model-neutral note added when a governing MSA is attached on the
+# chat path. Mirrors the review path's directive; SKILL.md stays the ceiling.
+_CHAT_MSA_NOTE = (
+    "The Master Services Agreement below GOVERNS this document. Ground any "
+    "MSA-conflict answer in its actual text; if the MSA is silent on a point, say "
+    "so rather than assuming. Do not invent MSA terms."
+)
+
 _agent_cache = {}
 _llm_cache: dict[str, ChatOllama] = {}
 
@@ -98,6 +108,7 @@ def _build_llm() -> ChatOllama:
             base_url=settings.ollama_base_url,
             temperature=0.0,
             reasoning=False,
+            num_ctx=settings.ollama_num_ctx,
         )
     return _llm_cache["chat"]
 
@@ -116,6 +127,7 @@ def _build_json_llm() -> ChatOllama:
             temperature=0.0,
             reasoning=False,
             format="json",
+            num_ctx=settings.ollama_num_ctx,
         )
     return _llm_cache["json"]
 
@@ -339,6 +351,137 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
     return proposals
 
 
+def _strip_redlines_section(markdown: str) -> str:
+    """Remove the 'Suggested Redlines / Fallbacks' section from review markdown.
+
+    Finds the first heading (any level #–##) whose text contains
+    "suggested redlines" (case-insensitive) and drops everything from that
+    heading up to (but not including) the next heading of the same or higher
+    level, or end-of-string if it is the last section. All other sections are
+    preserved unchanged.
+
+    Returns the markdown unchanged when no such section exists.
+    """
+    match = re.search(r"^(#{1,6})\s+.*suggested redlines.*$", markdown, re.IGNORECASE | re.MULTILINE)
+    if not match:
+        return markdown
+    level = len(match.group(1))          # e.g. 1 for "#", 2 for "##"
+    start = match.start()
+    # Find the next heading at the same or higher level (fewer #s).
+    next_heading = re.search(
+        r"^#{1," + str(level) + r"}\s",
+        markdown[match.end():],
+        re.MULTILINE,
+    )
+    if next_heading:
+        end = match.end() + next_heading.start()
+    else:
+        end = len(markdown)
+    return markdown[:start] + markdown[end:]
+
+
+def _load_prior_review_block(state: LegalAgentState) -> str:
+    """Latest stored review for this document, as a system block. Empty string
+    when none exists. On a store-read failure, flags memory_degraded and returns
+    empty — tracing/memory must never break the chat turn."""
+    document_id = state.get("document_id", "")
+    if not document_id:
+        return ""
+    try:
+        latest = load_latest_review(get_settings().sqlite_path, document_id)
+    except Exception as e:
+        logger.error("[legal_research] prior-review load failed: %s", e)
+        state["memory_degraded"] = True
+        return ""
+    if not latest:
+        return ""
+    review_text = _strip_redlines_section(latest["markdown"])
+    return (
+        "--- PRIOR REVIEW (most recent, this document) ---\n"
+        "Answer recall questions from this review; do not re-derive or contradict it.\n\n"
+        f"{review_text}\n"
+        "--- END PRIOR REVIEW ---"
+    )
+
+
+_GROUNDING_TRIGGER_RE = re.compile(
+    r"""
+    # Edit / action stems
+    chang|edit|modif|revis|rewrit|redraft|redline|amend|soften|tighten|loosen|
+    strengthen|\bfill|insert|\badd\b|remov|delet|replac|updat|\bfix|draft|shorten|
+    extend|adjust
+    |
+    # Position / judgment stems
+    should|acceptab|standard|policy|playbook|fallback|position|\bmarket|allow|
+    complian|\bcomply|\brisk|aggressiv|unusual|favorab|unfavorab|protect|\bweak|
+    negotiat|pushback|concession|deviat
+    |
+    # Cross-doc / MSA stems
+    \bmsa\b|master\s+service|\bparent\b|governing|precedenc|conflict|inconsist|
+    overrid|incorporat|breach|subject\s+to
+    |
+    # Clause names — legal judgment calls
+    indemn|liabilit|warrant|confidential|intellectual\s+property|\bip\b|ownership|
+    terminat|jurisdiction|governing\s+law|non-compet|non-solicit|penalt|\bsla\b|
+    service\s+level|\bcap\b|limitation
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _needs_grounding(question: str) -> bool:
+    """True when a chat turn needs the firm playbook / governing MSA attached —
+    i.e. it asks for an edit/redline, a firm position/standard, a cross-document
+    (MSA) judgment, or names a clause whose treatment is a legal-judgment call.
+    Biased toward True: a plain factual extraction ('who signs?', 'what is the
+    effective date?') returns False and takes the lean, fast path. This is a
+    zero-LLM heuristic — when in doubt it attaches (never under-grounds)."""
+    return bool(_GROUNDING_TRIGGER_RE.search(question))
+
+
+def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[str, str]:
+    """(playbook_bundle, msa_block) for the chat path. Empty strings on failure —
+    grounding must never break the chat turn. MSA only for SOWs."""
+    playbook = ""
+    msa_block = ""
+    try:
+        contract_type, _ = detect_contract_type(uploaded_text)
+        playbook = load_playbook_bundle(contract_type)
+        if contract_type == "sow":
+            client_id = (state.get("filters") or {}).get("client_id", "")
+            parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
+            if parent:
+                title, msa_text = parent
+                msa_block = (
+                    f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
+                    f"{msa_text}\n--- END GOVERNING MSA ---"
+                )
+    except Exception as e:
+        logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
+    return playbook, msa_block
+
+
+def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> None:
+    """If total assembled content exceeds the budget, truncate ONLY the document
+    portion of the trailing user message — never the grounding. Mutates messages
+    in place; marks + logs the truncation. Crude on purpose (Phase 3)."""
+    budget = get_settings().chat_context_max_chars
+    total = sum(len(m["content"]) for m in messages)
+    if total <= budget:
+        return
+    overflow = total - budget
+    keep = max(0, len(uploaded_text) - overflow - len("\n\n[document truncated for context budget]"))
+    truncated_doc = uploaded_text[:keep] + "\n\n[document truncated for context budget]"
+    messages[-1]["content"] = (
+        f"--- ATTACHED DOCUMENT (the source of truth — answer from this) ---\n"
+        f"{truncated_doc}\n"
+        f"--- END ATTACHED DOCUMENT ---\n\n"
+        f"User request: {request}"
+    )
+    logger.warning("[legal_research] chat context %d > budget %d — truncated document to %d chars",
+                   total, budget, keep)
+
+
 def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list[dict]]:
     """In-Word chat path: direct ChatOllama with the attached doc, no tools.
 
@@ -349,10 +492,10 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     """
     request = state["request"]
     user_message = (
-        f"User request: {request}\n\n"
         f"--- ATTACHED DOCUMENT (the source of truth — answer from this) ---\n"
         f"{uploaded_text}\n"
-        f"--- END ATTACHED DOCUMENT ---"
+        f"--- END ATTACHED DOCUMENT ---\n\n"
+        f"User request: {request}"
     )
     attorney_notes = (state.get("attorney_notes") or "").strip()
     if attorney_notes:
@@ -361,12 +504,28 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             f"{attorney_notes}"
         )
 
+    review_block = _load_prior_review_block(state)
+    attach = (not get_settings().chat_conditional_grounding) or _needs_grounding(request)
+    if attach:
+        playbook, msa_block = _build_chat_grounding(state, uploaded_text)
+    else:
+        playbook, msa_block = "", ""
+
     chat_history = state.get("chat_history", []) or []
+    system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    if playbook:
+        system_messages.append({"role": "system", "content": playbook})
+    if msa_block:
+        system_messages.append({"role": "system", "content": msa_block})
+    if review_block:
+        system_messages.append({"role": "system", "content": review_block})
     messages: list[dict] = [
-        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        *system_messages,        # stable across turns → cached prefix
         *chat_history,
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": user_message},   # changes → trailing tokens
     ]
+
+    _cap_chat_context(messages, uploaded_text, request)
 
     llm = _build_llm()
     response = traced_invoke(llm, messages, name="doc_chat")

@@ -25,8 +25,10 @@ interface Props {
 export default function FindingsTab({ sessionId, result, setResult }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [rawResponse, setRawResponse] = useState<string>("");
+  const [persistError, setPersistError] = useState<string | null>(null);
 
   const onReview = async () => {
+    setPersistError(null);
     try {
       setStatus({ kind: "reading" });
       const text = await readBody();
@@ -57,6 +59,8 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
         parsed.contractType = detected.toUpperCase();
       }
       setResult(parsed);
+      const rpe = res.data?.report?.review_persist_error;
+      if (rpe) setPersistError(rpe);
       setStatus({ kind: "idle" });
     } catch (e) {
       setStatus({ kind: "error", message: e instanceof Error ? e.message : String(e) });
@@ -79,6 +83,11 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
         </div>
       )}
       {status.kind === "error" && <div className="status error">Error: {status.message}</div>}
+      {persistError && (
+        <div className="status error">
+          ⚠ This review could not be saved ({persistError}) — it won't be recalled in chat. Re-run the review.
+        </div>
+      )}
 
       {result && (
         <div className="findings-scroll">

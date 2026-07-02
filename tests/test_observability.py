@@ -159,3 +159,34 @@ def test_doc_chat_routes_llm_through_traced_invoke(monkeypatch):
 
     assert captured["llm"] is sentinel_llm            # the built LLM was wrapped
     assert state["llm_response"] == "Here is the summary."
+
+
+def test_llm_caller_sends_num_ctx_in_options(monkeypatch):
+    """llm_caller must include num_ctx in the options dict posted to Ollama.
+    Without it Ollama defaults to ~4096 tokens, which truncates large prompts.
+    The value comes from settings.ollama_num_ctx (default 32768)."""
+    from graph.nodes import llm_caller as mod
+    from config import get_settings
+
+    captured_json: dict = {}
+
+    class FakeResp:
+        def raise_for_status(self): ...
+        def json(self):
+            return {"message": {"content": "answer"}, "prompt_eval_count": 10, "eval_count": 5}
+
+    def fake_post(url, *, json=None, timeout=None):
+        captured_json.update(json or {})
+        return FakeResp()
+
+    monkeypatch.setattr(mod.httpx, "post", fake_post)
+    monkeypatch.setattr(mod.langfuse_context, "update_current_observation", lambda **kw: None)
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "16384")
+    get_settings.cache_clear()
+
+    state = {"request": "q", "retrieved_chunks": [], "messages": [], "task_type": "research"}
+    mod.llm_caller(state)
+
+    assert "options" in captured_json
+    assert captured_json["options"].get("num_ctx") == 16384
+    get_settings.cache_clear()
