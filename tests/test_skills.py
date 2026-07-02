@@ -1325,6 +1325,7 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     joined = "\n".join(m["content"] for m in captured["messages"])
     assert "PLAYBOOK" in joined and "MSA_BODY" in joined   # grounding preserved
     assert "[document truncated" in joined                 # doc was the one cut
+    get_settings.cache_clear()
 
 
 # --- num_ctx wiring (context-window pin) ---
@@ -1412,6 +1413,7 @@ def test_needs_grounding_negative_cases():
         "when does the project start?",
         "what is the billing model?",
         "who is signy from trinetix side?",
+        "is the billing transparent about fees?",
     ]:
         assert lr._needs_grounding(q) is False, q
 

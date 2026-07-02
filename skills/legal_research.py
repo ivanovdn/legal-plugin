@@ -417,7 +417,7 @@ _GROUNDING_TRIGGER_RE = re.compile(
     negotiat|pushback|concession|deviat
     |
     # Cross-doc / MSA stems
-    \bmsa\b|master\s+service|parent|governing|precedenc|conflict|inconsist|
+    \bmsa\b|master\s+service|\bparent\b|governing|precedenc|conflict|inconsist|
     overrid|incorporat|breach|subject\s+to
     |
     # Clause names — legal judgment calls
