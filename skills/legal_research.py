@@ -404,6 +404,41 @@ def _load_prior_review_block(state: LegalAgentState) -> str:
     )
 
 
+_GROUNDING_TRIGGER_RE = re.compile(
+    r"""
+    # Edit / action stems
+    chang|edit|modif|revis|rewrit|redraft|redline|amend|soften|tighten|loosen|
+    strengthen|\bfill|insert|\badd\b|remov|delet|replac|updat|\bfix|draft|shorten|
+    extend|adjust
+    |
+    # Position / judgment stems
+    should|acceptab|standard|policy|playbook|fallback|position|\bmarket|allow|
+    complian|\bcomply|\brisk|aggressiv|unusual|favorab|unfavorab|protect|\bweak|
+    negotiat|pushback|concession|deviat
+    |
+    # Cross-doc / MSA stems
+    \bmsa\b|master\s+service|parent|governing|precedenc|conflict|inconsist|
+    overrid|incorporat|breach|subject\s+to
+    |
+    # Clause names — legal judgment calls
+    indemn|liabilit|warrant|confidential|intellectual\s+property|\bip\b|ownership|
+    terminat|jurisdiction|governing\s+law|non-compet|non-solicit|penalt|\bsla\b|
+    service\s+level|\bcap\b|limitation
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _needs_grounding(question: str) -> bool:
+    """True when a chat turn needs the firm playbook / governing MSA attached —
+    i.e. it asks for an edit/redline, a firm position/standard, a cross-document
+    (MSA) judgment, or names a clause whose treatment is a legal-judgment call.
+    Biased toward True: a plain factual extraction ('who signs?', 'what is the
+    effective date?') returns False and takes the lean, fast path. This is a
+    zero-LLM heuristic — when in doubt it attaches (never under-grounds)."""
+    return bool(_GROUNDING_TRIGGER_RE.search(question))
+
+
 def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[str, str]:
     """(playbook_bundle, msa_block) for the chat path. Empty strings on failure —
     grounding must never break the chat turn. MSA only for SOWs."""
@@ -470,7 +505,11 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         )
 
     review_block = _load_prior_review_block(state)
-    playbook, msa_block = _build_chat_grounding(state, uploaded_text)
+    attach = (not get_settings().chat_conditional_grounding) or _needs_grounding(request)
+    if attach:
+        playbook, msa_block = _build_chat_grounding(state, uploaded_text)
+    else:
+        playbook, msa_block = "", ""
 
     chat_history = state.get("chat_history", []) or []
     system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]

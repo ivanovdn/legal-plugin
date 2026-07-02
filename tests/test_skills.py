@@ -1291,6 +1291,7 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     import skills.legal_research as lr
     from config import get_settings
     monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "2000")
+    monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
     get_settings.cache_clear()
 
     captured = {}
@@ -1385,3 +1386,106 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
     # The edit-priming section is gone:
     assert "Suggested Redlines" not in block
     assert 'Fill "Signed by' not in block
+
+
+# --- Task 12: conditional grounding gate ---
+
+
+def test_needs_grounding_positive_cases():
+    import skills.legal_research as lr
+    for q in [
+        "soften the indemnity clause",
+        "does this SOW conflict with the MSA?",
+        "why is the IP clause risky?",
+        "what is the effective date in the MSA?",
+        "rewrite the liability cap to 2x",
+        "is this termination notice period acceptable?",
+    ]:
+        assert lr._needs_grounding(q) is True, q
+
+
+def test_needs_grounding_negative_cases():
+    import skills.legal_research as lr
+    for q in [
+        "who is the signatory for Trinetix?",
+        "what is the effective date?",
+        "when does the project start?",
+        "what is the billing model?",
+        "who is signy from trinetix side?",
+    ]:
+        assert lr._needs_grounding(q) is False, q
+
+
+def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
+    import skills.legal_research as lr
+
+    captured = {}
+
+    class FakeResp:
+        content = "Boris Bukengolts signs for Trinetix."
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: {"markdown": "# Key Findings\nIP clause Red."})
+    # If grounding is (wrongly) built on the lean path, these would raise:
+    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: (_ for _ in ()).throw(AssertionError("playbook built on lean path")))
+    monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: (_ for _ in ()).throw(AssertionError("MSA built on lean path")))
+
+    state = _make_state(request="who is signy from trinetix side?", task_type="research",
+                        uploaded_docs=[{"text": "STATEMENT OF WORK\n\nSigned by: Boris Bukengolts"}],
+                        filters={"client_id": "internal"}, document_id="doc-1")
+    lr.legal_research(state)
+    joined = "\n".join(m["content"] for m in captured["messages"])
+    assert "Key Findings" in joined          # prior review STILL injected (recall preserved)
+    assert "STATEMENT OF WORK" in joined      # document still present
+    assert captured["messages"][-1]["role"] == "user"   # question still last
+
+
+def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
+    import skills.legal_research as lr
+    captured = {}
+
+    class FakeResp:
+        content = "answer"
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: None)
+    monkeypatch.setattr(lr, "detect_contract_type", lambda t: ("sow", False))
+    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
+    state = _make_state(request="does this SOW conflict with the MSA?", task_type="research",
+                        uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}],
+                        filters={"client_id": "internal"}, document_id="doc-1")
+    lr.legal_research(state)
+    joined = "\n".join(m["content"] for m in captured["messages"])
+    assert "PLAYBOOK_BUNDLE" in joined and "MSA_BODY" in joined
+
+
+def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
+    import skills.legal_research as lr
+    from config import get_settings
+    monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
+    get_settings.cache_clear()
+    captured = {}
+
+    class FakeResp:
+        content = "answer"
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: None)
+    monkeypatch.setattr(lr, "detect_contract_type", lambda t: ("sow", False))
+    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
+    # A plain factual question that would NOT trigger the gate:
+    state = _make_state(request="who signs?", task_type="research",
+                        uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}],
+                        filters={"client_id": "internal"}, document_id="doc-1")
+    lr.legal_research(state)
+    get_settings.cache_clear()
+    joined = "\n".join(m["content"] for m in captured["messages"])
+    assert "PLAYBOOK_BUNDLE" in joined   # toggle off → attached despite non-triggering question
