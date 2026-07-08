@@ -248,7 +248,7 @@ function FilterBar({
       >
         All
       </button>
-      {owners.length > 0 && (
+      {owners.some((o) => o !== "Unassigned") && (
         <select
           value={filters.owner}
           onChange={(e) => setFilters((f) => ({ ...f, owner: e.target.value }))}
@@ -292,6 +292,7 @@ function Results({ result }: { result: ReviewSummary }) {
 
   const owners = Array.from(new Set(findings.map(ownerKey))).sort();
   const visible = applyFindingFilters(findings, filters);
+  const keyOf = new Map(findings.map((f, i) => [f, `${f.issueId}-${f.clause}-${i}`]));
 
   return (
     <>
@@ -347,8 +348,8 @@ function Results({ result }: { result: ReviewSummary }) {
       )}
 
       <div className="findings">
-        {visible.map((f, i) => (
-          <FindingCard key={`${f.issueId}-${f.clause}-${i}`} finding={f} />
+        {visible.map((f) => (
+          <FindingCard key={keyOf.get(f)} finding={f} />
         ))}
       </div>
 
