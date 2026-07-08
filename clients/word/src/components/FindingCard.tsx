@@ -1,7 +1,7 @@
 import { useState } from "react";
 import RiskBadge from "./RiskBadge";
 import type { Finding } from "../parser";
-import { acceptRedline, showInDocument } from "../word";
+import { acceptRedline, goToClause, showInDocument } from "../word";
 
 type ActionState =
   | { kind: "idle" }
@@ -21,6 +21,15 @@ function buildCommentBody(f: Finding): string {
 export default function FindingCard({ finding }: { finding: Finding }) {
   const [comment, setComment] = useState<ActionState>({ kind: "idle" });
   const [redline, setRedline] = useState<ActionState>({ kind: "idle" });
+  const [jump, setJump] = useState<ActionState>({ kind: "idle" });
+
+  const onJump = async () => {
+    if (jump.kind === "running") return;
+    setJump({ kind: "running" });
+    const res = await goToClause(anchors);
+    // Success is silent — the Word selection is the feedback. Only surface errors.
+    setJump(res.ok ? { kind: "idle" } : { kind: "error", message: res.error });
+  };
 
   const anchors = finding.anchors.length > 0 ? finding.anchors : [finding.currentText];
 
@@ -49,7 +58,21 @@ export default function FindingCard({ finding }: { finding: Finding }) {
       <div className="card-header">
         <RiskBadge risk={finding.risk} />
         {finding.issueId && <span className="issue-id">{finding.issueId}</span>}
-        <div className="card-title">{finding.clause}</div>
+        <div
+          className="card-title card-title-clickable"
+          role="button"
+          tabIndex={0}
+          title="Go to this clause in the document"
+          onClick={onJump}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onJump();
+            }
+          }}
+        >
+          {finding.clause}
+        </div>
       </div>
       {finding.issue && (
         <>
@@ -91,7 +114,7 @@ export default function FindingCard({ finding }: { finding: Finding }) {
         <>
           <div className="card-actions">
             <button className="secondary" onClick={onShow} disabled={comment.kind === "running"}>
-              {comment.kind === "running" ? "Locating…" : "Show in document"}
+              {comment.kind === "running" ? "Commenting…" : "Comment in doc"}
             </button>
             {/*
               Accept redline only when the Issue cell quoted the literal current
@@ -119,6 +142,7 @@ export default function FindingCard({ finding }: { finding: Finding }) {
       {comment.kind === "error" && <div className="card-status error">{comment.message}</div>}
       {redline.kind === "done" && <div className="card-status success">{redline.message}</div>}
       {redline.kind === "error" && <div className="card-status error">{redline.message}</div>}
+      {jump.kind === "error" && <div className="card-status error">{jump.message}</div>}
     </div>
   );
 }

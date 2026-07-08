@@ -730,3 +730,17 @@ button.secondary:disabled {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Clickable finding title → go to clause (non-mutating navigation) */
+.card-title-clickable {
+  cursor: pointer;
+}
+.card-title-clickable:hover {
+  color: #0078d4;
+  text-decoration: underline;
+}
+.card-title-clickable:focus-visible {
+  outline: 2px solid #0078d4;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
