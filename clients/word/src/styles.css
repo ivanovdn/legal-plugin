@@ -744,3 +744,35 @@ button.secondary:disabled {
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+/* Findings filter / sort bar */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.filter-chip {
+  border: 1px solid #c8c6c4;
+  background: #fff;
+  border-radius: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+  color: #605e5c;
+}
+.filter-chip.active {
+  border-color: #0078d4;
+  background: #eff6fc;
+  color: #0078d4;
+  font-weight: 600;
+}
+.filter-bar select {
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.filter-count {
+  margin-left: auto;
+  color: #605e5c;
+}

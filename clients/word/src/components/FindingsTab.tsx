@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { submitReview } from "../api";
 import {
   parseContractReview,
@@ -7,6 +7,8 @@ import {
   type NoSignatureGate,
   type ReviewSummary,
 } from "../parser";
+import type { Risk } from "../parser";
+import { applyFindingFilters, ALL_RISKS, ownerKey, type FindingFilters } from "../findingFilters";
 import { readBody } from "../word";
 import FindingCard from "./FindingCard";
 
@@ -196,8 +198,100 @@ function BusinessQuestions({ questions }: { questions: BusinessQuestion[] }) {
   );
 }
 
+const RISK_LABEL: Record<Risk, string> = {
+  RED: "RED",
+  MISSING_CONTEXT: "MISSING",
+  YELLOW: "YELLOW",
+  GREEN: "GREEN",
+};
+
+function FilterBar({
+  filters,
+  setFilters,
+  owners,
+  shown,
+  total,
+}: {
+  filters: FindingFilters;
+  setFilters: React.Dispatch<React.SetStateAction<FindingFilters>>;
+  owners: string[];
+  shown: number;
+  total: number;
+}) {
+  const toggleSeverity = (r: Risk) =>
+    setFilters((f) => {
+      const severities = new Set(f.severities);
+      severities.has(r) ? severities.delete(r) : severities.add(r);
+      return { ...f, severities };
+    });
+
+  return (
+    <div className="filter-bar">
+      {ALL_RISKS.map((r) => (
+        <button
+          key={r}
+          className={`filter-chip ${filters.severities.has(r) ? "active" : ""}`}
+          onClick={() => toggleSeverity(r)}
+        >
+          {RISK_LABEL[r]}
+        </button>
+      ))}
+      <button
+        className="filter-chip"
+        onClick={() => setFilters((f) => ({ ...f, severities: new Set<Risk>(["RED", "MISSING_CONTEXT"]) }))}
+      >
+        Blockers only
+      </button>
+      <button
+        className="filter-chip"
+        onClick={() => setFilters((f) => ({ ...f, severities: new Set<Risk>(ALL_RISKS) }))}
+      >
+        All
+      </button>
+      {owners.length > 0 && (
+        <select
+          value={filters.owner}
+          onChange={(e) => setFilters((f) => ({ ...f, owner: e.target.value }))}
+        >
+          <option value="all">All owners</option>
+          {owners.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      )}
+      <select
+        value={filters.sortBy}
+        onChange={(e) => setFilters((f) => ({ ...f, sortBy: e.target.value as FindingFilters["sortBy"] }))}
+      >
+        <option value="severity">Sort: severity</option>
+        <option value="clause">Sort: clause name</option>
+      </select>
+      <span className="filter-count">
+        showing {shown} of {total}
+      </span>
+    </div>
+  );
+}
+
 function Results({ result }: { result: ReviewSummary }) {
   const { findings, blockers, businessQuestions, gate, counts, header } = result;
+
+  const [filters, setFilters] = useState<FindingFilters>({
+    severities: new Set<Risk>(ALL_RISKS),
+    owner: "all",
+    sortBy: "severity",
+  });
+
+  // Reset filters whenever a new review arrives, so a stale filter can't hide
+  // fresh findings. `result` is a new object on every parse.
+  useEffect(() => {
+    setFilters({ severities: new Set<Risk>(ALL_RISKS), owner: "all", sortBy: "severity" });
+  }, [result]);
+
+  const owners = Array.from(new Set(findings.map(ownerKey))).sort();
+  const visible = applyFindingFilters(findings, filters);
 
   return (
     <>
@@ -234,11 +328,27 @@ function Results({ result }: { result: ReviewSummary }) {
 
       <BlockerList blockers={blockers} />
 
-      {findings.length === 0 && <div className="status">No clause findings parsed from the response.</div>}
+      {findings.length === 0 && (
+        <div className="status">No clause findings parsed from the response.</div>
+      )}
+
+      {findings.length > 0 && (
+        <FilterBar
+          filters={filters}
+          setFilters={setFilters}
+          owners={owners}
+          shown={visible.length}
+          total={findings.length}
+        />
+      )}
+
+      {findings.length > 0 && visible.length === 0 && (
+        <div className="status">No findings match the current filters.</div>
+      )}
 
       <div className="findings">
-        {findings.map((f, i) => (
-          <FindingCard key={i} finding={f} />
+        {visible.map((f, i) => (
+          <FindingCard key={`${f.issueId}-${f.clause}-${i}`} finding={f} />
         ))}
       </div>
 
