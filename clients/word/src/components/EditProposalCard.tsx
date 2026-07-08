@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { EditProposal } from "../parseEditBlocks";
-import { applyEdit } from "../word";
+import { applyEdit, goToClause } from "../word";
 
 type Status =
   | { kind: "idle" }
@@ -27,6 +27,18 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
   // The lawyer can tweak new_text before applying — e.g. "2x" → "3x".
   const [draftText, setDraftText] = useState(proposal.new_text ?? "");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [jumpError, setJumpError] = useState<string | null>(null);
+
+  // For inserts, the doc location is the anchor; for replace/replace_all/delete
+  // it's the target text.
+  const jumpTarget = proposal.action === "insert" ? proposal.anchor_text : proposal.target_text;
+
+  const onJump = async () => {
+    if (!jumpTarget) return;
+    setJumpError(null);
+    const res = await goToClause(jumpTarget);
+    if (!res.ok) setJumpError(res.error);
+  };
 
   const onApply = async () => {
     if (status.kind === "running" || status.kind === "applied") return;
@@ -118,6 +130,11 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
             ? "Applied ✓"
             : "Apply with Track Changes"}
         </button>
+        {jumpTarget && (
+          <button className="secondary" onClick={onJump} disabled={status.kind === "running"}>
+            Go to
+          </button>
+        )}
         {status.kind !== "applied" && (
           <button
             className="secondary"
@@ -141,6 +158,7 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
       {status.kind === "error" && (
         <div className="card-status error">{status.message}</div>
       )}
+      {jumpError && <div className="card-status error">{jumpError}</div>}
     </div>
   );
 }
