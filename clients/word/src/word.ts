@@ -369,6 +369,31 @@ export async function showInDocument(
 }
 
 /**
+ * Scroll Word to the clause matching `target` and SELECT it — nothing else.
+ * Non-mutating navigation, unlike showInDocument (which also inserts a Word
+ * comment). Partial-prefix matches are acceptable here: navigation never
+ * writes, so there is no completeness guard (only acceptRedline guards, because
+ * it mutates). Reuses the same anchor-fallback range finder.
+ */
+export async function goToClause(target: string | string[]): Promise<Result<string>> {
+  if (!isWordAvailable()) return fail("Word is not available (open the add-in inside Word).");
+  const anchors = toAnchors(target).filter((s) => s.trim());
+  if (anchors.length === 0) return fail("Empty clause text — nothing to locate.");
+  try {
+    return await Word.run(async (context) => {
+      const range = await findClauseRangeFromAnchors(context, anchors);
+      if (!range) return fail("Couldn't locate this clause in the document.");
+      range.select();
+      range.load("text");
+      await context.sync();
+      return ok(range.text);
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
  * Replace the full clause matching `currentText` with `newText` as a tracked
  * change. Spans multiple paragraphs if needed (start of first match's
  * paragraph → end of tail match's paragraph). Saves and restores the
