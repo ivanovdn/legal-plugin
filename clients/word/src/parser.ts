@@ -95,7 +95,7 @@ export interface ReviewSummary {
   overall?: string;
 }
 
-const RISK_ORDER: Record<Risk, number> = { RED: 0, MISSING_CONTEXT: 1, YELLOW: 2, GREEN: 3 };
+export const RISK_ORDER: Record<Risk, number> = { RED: 0, MISSING_CONTEXT: 1, YELLOW: 2, GREEN: 3 };
 
 /** Normalize a section heading for matching (case-insensitive, ignore decorations). */
 function canonicalHeading(s: string): string {
