@@ -87,6 +87,14 @@ export function isAmbiguousBlankPlaceholder(s: string): boolean {
 // existing direct-add filter below.
 const SEARCH_MAX_LEN = 200;
 
+// Shown when the locator finds NO range at all (distinct from acceptRedline's
+// too-short-partial-match message). Many findings — signature/execution blocks,
+// Missing-Context items — describe a section rather than quoting it verbatim, so
+// there is genuinely nothing in the document to locate. Say that plainly instead
+// of the old blunt not-found wording, which read like a bug report.
+const NO_MATCH_MESSAGE =
+  "No exact match in the document — this finding describes a section rather than quoting it verbatim, so there's nothing to locate.";
+
 function searchCandidates(needle: string): string[] {
   const normalized = normalizeForSearch(needle);
   const candidates: string[] = [];
@@ -372,7 +380,7 @@ export async function showInDocument(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail("Couldn't locate this clause in the document.");
+      if (!range) return fail(NO_MATCH_MESSAGE);
       range.select();
       range.insertComment(commentBody);
       range.load("text");
@@ -398,7 +406,7 @@ export async function goToClause(target: string | string[]): Promise<Result<stri
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail("Couldn't locate this clause in the document.");
+      if (!range) return fail(NO_MATCH_MESSAGE);
       range.select();
       range.load("text");
       await context.sync();
@@ -429,7 +437,7 @@ export async function acceptRedline(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail("Couldn't locate this clause in the document.");
+      if (!range) return fail(NO_MATCH_MESSAGE);
 
       // Verify the matched range covers most of the intended target. searchCandidates
       // falls back to shorter prefixes when the full target isn't found verbatim —
