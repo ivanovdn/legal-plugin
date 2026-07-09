@@ -60,6 +60,18 @@ export function escapeWordWildcards(s: string): string {
   return s.replace(/[\\[\]{}()<>?*@!]/g, "\\$&");
 }
 
+// Short clause-name anchors ("Title", "Entity", "Effective Date") arrive via
+// searchCandidates' last-resort fallback. body.search is NOT whole-word by
+// default, so "Title" matches inside "en-title-d" and the jump/comment/redline
+// lands mid-word in the wrong place. For these short, last-resort anchors we
+// search whole-word-ONLY (precision over recall): a clean miss falls through to
+// the finding's next anchor — better than a silently-wrong hit. "Short" = a
+// normalized trial of <= 2 whitespace-separated words. Exported for unit testing.
+export function shouldMatchWholeWord(trial: string): boolean {
+  const words = normalizeForSearch(trial).split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 2;
+}
+
 // A "fill this blank" placeholder with NO label — just brackets / underscores /
 // dashes / dots / spaces (e.g. "[__]", "___", "[...]"). A replace_all on a bare
 // placeholder like this would dump ONE value into every distinct blank field
@@ -189,11 +201,12 @@ async function searchFirst(
   context: Word.RequestContext,
   trial: string,
 ): Promise<Word.Range | null> {
-  const run = async (query: string, matchWildcards: boolean) => {
+  const run = async (query: string, matchWildcards: boolean, matchWholeWord: boolean) => {
     try {
       const results = context.document.body.search(query, {
         matchCase: false,
         matchWildcards,
+        matchWholeWord,
       });
       results.load("items");
       await context.sync();
@@ -208,15 +221,18 @@ async function searchFirst(
     }
   };
 
-  const literal = await run(trial, false);
+  // Short clause-name anchors ("Title") search whole-word-only so they can't
+  // match mid-word ("entitled"). Longer trials keep today's substring behavior.
+  const literal = await run(trial, false, shouldMatchWholeWord(trial));
   if (literal) return literal;
 
   // Word for Mac mis-reads [](){}<>?* etc. as wildcards even in literal mode, so
   // a needle with brackets (a blank "[__]" field, a "[Source: …]" tag) silently
   // misses. Retry in wildcard mode with the metacharacters escaped, which makes
-  // body.search match the literal characters.
+  // body.search match the literal characters. Whole-word is irrelevant/ignored
+  // in wildcard mode, so pass false.
   if (WORD_WILDCARD_META.test(trial)) {
-    return run(escapeWordWildcards(trial), true);
+    return run(escapeWordWildcards(trial), true, false);
   }
   return null;
 }

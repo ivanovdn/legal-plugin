@@ -1,6 +1,6 @@
 // Pure-helper checks for word.ts. Run with: npx tsx src/word.test.ts
 // (The Office.js-dependent functions are smoke-tested by sideloading in Word.)
-import { escapeWordWildcards, isAmbiguousBlankPlaceholder } from "./word";
+import { escapeWordWildcards, isAmbiguousBlankPlaceholder, shouldMatchWholeWord } from "./word";
 
 const pass = (cond: boolean, label: string) =>
   console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
@@ -23,3 +23,13 @@ pass(!isAmbiguousBlankPlaceholder("Signed by: [__]"), "labeled: 'Signed by: [__]
 pass(!isAmbiguousBlankPlaceholder("Title: [__]"), "labeled: 'Title: [__]' allowed");
 pass(!isAmbiguousBlankPlaceholder("[Year]"), "specific: [Year] allowed");
 pass(!isAmbiguousBlankPlaceholder("[Legal Name]"), "specific: [Legal Name] allowed");
+
+// --- shouldMatchWholeWord: short clause-name anchors search whole-word-only ---
+// so "Title" can't match mid-word inside "entitled". Short = <= 2 words.
+pass(shouldMatchWholeWord("Title"), "wholeword: 1-word anchor -> true");
+pass(shouldMatchWholeWord("Effective Date"), "wholeword: 2-word anchor -> true");
+pass(shouldMatchWholeWord("Execution   Block"), "wholeword: collapses whitespace -> 2 words true");
+pass(!shouldMatchWholeWord("Limitation of Liability"), "wholeword: 3-word phrase -> false");
+pass(!shouldMatchWholeWord("The Receiving Party shall not"), "wholeword: 5-word phrase -> false");
+pass(!shouldMatchWholeWord(""), "wholeword: empty -> false");
+pass(!shouldMatchWholeWord("   "), "wholeword: whitespace-only -> false");
