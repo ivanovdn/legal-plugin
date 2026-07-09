@@ -54,11 +54,19 @@ smoke-tested.
 ### Behavior
 
 `searchFirst`'s literal search runs with Word's native **`matchWholeWord: true`** option
-**only** when the trial is short — defined as a normalized trial of **≤ 2
-whitespace-separated words**. This is exactly the `"Title"` / `"Entity"` /
-`"Effective Date"` / `"Execution Block"` class that arrives through
-`searchCandidates`' `length === 0` fallback. Longer trials (the 5/8/12-word bridging
-prefixes and full multi-paragraph clauses) keep today's behavior untouched.
+**only** when the trial is a **single word** — the `"Title"` / `"Entity"` class that
+arrives through `searchCandidates`' `length === 0` fallback and is the one that actually
+mislocates mid-word. Multi-word and longer trials keep today's substring behavior
+untouched.
+
+> **Threshold narrowed from ≤ 2 words to single-word (final-review decision,
+> 2026-07-09).** The originally-approved threshold was ≤ 2 words. The whole-branch review
+> flagged that `matchWholeWord` on a **space-containing** (2-word) query is unverified in
+> Word for Mac and can only *hurt*: a 2-word phrase realistically cannot match mid-word,
+> while whole-word would stop `"Data Room"` from matching `"Data Rooms"` (a plural/possessive
+> recall regression). A single-word query has no space, so `matchWholeWord` is well-defined
+> and reliably honored. Narrowing to single-word fully fixes the observed bug (`"Title"`,
+> `"Entity"` are both single-word) with none of that risk.
 
 - **Whole-word only for these trials — no loose fallback.** Falling back to a plain
   literal search after a whole-word miss would re-admit the `"entitled"` match and
@@ -87,8 +95,8 @@ bounded by spaces/punctuation and still matches. So:
 ### New / changed code
 
 1. **`word.ts` — new exported `shouldMatchWholeWord(trial: string): boolean`** (pure):
-   normalizes the trial (via `normalizeForSearch`) and returns `true` when it has ≤ 2
-   whitespace-separated words. Empty/whitespace → `false`.
+   normalizes the trial (via `normalizeForSearch`) and returns `true` when it is exactly
+   **one** whitespace-separated word. Empty/whitespace and multi-word → `false`.
 2. **`word.ts` — `searchFirst`** (changed): its literal `run(trial, …)` passes
    `matchWholeWord: shouldMatchWholeWord(trial)` instead of the implicit `false`. The
    escaped-wildcard retry run is unchanged.
@@ -100,8 +108,9 @@ bounded by spaces/punctuation and still matches. So:
   `"Confidentiality"`), not possessives, and a miss falls through to the next anchor.
 - **1-word long token** (`"Confidentiality"`) → whole-word matches the heading and
   cannot match a longer word (there is none); no behavior change in practice.
-- **3+ word trial** → `shouldMatchWholeWord` returns `false`; behavior identical to
-  today.
+- **2+ word trial** (`"Effective Date"`, `"Data Room"`) → `shouldMatchWholeWord` returns
+  `false`; keeps tolerant substring matching (still matches `"Data Rooms"`), behavior
+  identical to today.
 
 ---
 
@@ -150,8 +159,8 @@ and is model-neutral. Predictive suppression is deferred.
 
 - **`shouldMatchWholeWord`** — new asserts in
   [`word.test.ts`](../../../clients/word/src/word.test.ts) following the existing
-  `pass(cond, label)` pattern: 1-word `true`, 2-word `true`, 3-word `false`, extra
-  whitespace / punctuation collapses correctly, empty/whitespace `false`.
+  `pass(cond, label)` pattern: 1-word `true` (incl. whitespace-padded), 2-word `false`,
+  3-word `false`, 5-word `false`, empty/whitespace-only `false`.
 - **`tsc --noEmit`** clean (`npm run typecheck`).
 - **Smoke test (required before merge):** sideload in Word for Mac on the model NDA and
   verify —

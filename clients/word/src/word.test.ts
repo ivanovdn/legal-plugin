@@ -24,11 +24,12 @@ pass(!isAmbiguousBlankPlaceholder("Title: [__]"), "labeled: 'Title: [__]' allowe
 pass(!isAmbiguousBlankPlaceholder("[Year]"), "specific: [Year] allowed");
 pass(!isAmbiguousBlankPlaceholder("[Legal Name]"), "specific: [Legal Name] allowed");
 
-// --- shouldMatchWholeWord: short clause-name anchors search whole-word-only ---
-// so "Title" can't match mid-word inside "entitled". Short = <= 2 words.
+// --- shouldMatchWholeWord: single-word clause anchors search whole-word-only ---
+// so "Title" can't match mid-word inside "entitled". Only 1-word trials qualify:
+// matchWholeWord is unverified/harmful on space-containing (multi-word) queries.
 pass(shouldMatchWholeWord("Title"), "wholeword: 1-word anchor -> true");
-pass(shouldMatchWholeWord("Effective Date"), "wholeword: 2-word anchor -> true");
-pass(shouldMatchWholeWord("Execution   Block"), "wholeword: collapses whitespace -> 2 words true");
+pass(shouldMatchWholeWord("  Confidentiality  "), "wholeword: 1-word w/ padding -> true");
+pass(!shouldMatchWholeWord("Effective Date"), "wholeword: 2-word anchor -> false (substring-tolerant)");
 pass(!shouldMatchWholeWord("Limitation of Liability"), "wholeword: 3-word phrase -> false");
 pass(!shouldMatchWholeWord("The Receiving Party shall not"), "wholeword: 5-word phrase -> false");
 pass(!shouldMatchWholeWord(""), "wholeword: empty -> false");

@@ -60,16 +60,22 @@ export function escapeWordWildcards(s: string): string {
   return s.replace(/[\\[\]{}()<>?*@!]/g, "\\$&");
 }
 
-// Short clause-name anchors ("Title", "Entity", "Effective Date") arrive via
+// Single-word clause-name anchors ("Title", "Entity") arrive via
 // searchCandidates' last-resort fallback. body.search is NOT whole-word by
 // default, so "Title" matches inside "en-title-d" and the jump/comment/redline
-// lands mid-word in the wrong place. For these short, last-resort anchors we
-// search whole-word-ONLY (precision over recall): a clean miss falls through to
-// the finding's next anchor — better than a silently-wrong hit. "Short" = a
-// normalized trial of <= 2 whitespace-separated words. Exported for unit testing.
+// lands mid-word in the wrong place. For these single-word last-resort anchors
+// we search whole-word-ONLY (precision over recall): a clean miss falls through
+// to the finding's next anchor — better than a silently-wrong hit.
+//
+// Restricted to EXACTLY ONE word: a single-word query has no space, so Office.js
+// matchWholeWord is well-defined and reliably honored. On a MULTI-word (space-
+// containing) query matchWholeWord is unverified in Word for Mac and can only
+// hurt — a 2-word phrase realistically can't match mid-word, but whole-word would
+// stop "Data Room" from matching "Data Rooms" (plural/possessive recall loss). So
+// 2+-word anchors keep the tolerant default substring match. Exported for unit
+// testing.
 export function shouldMatchWholeWord(trial: string): boolean {
-  const words = normalizeForSearch(trial).split(/\s+/).filter(Boolean);
-  return words.length > 0 && words.length <= 2;
+  return normalizeForSearch(trial).split(/\s+/).filter(Boolean).length === 1;
 }
 
 // A "fill this blank" placeholder with NO label — just brackets / underscores /
@@ -229,8 +235,8 @@ async function searchFirst(
     }
   };
 
-  // Short clause-name anchors ("Title") search whole-word-only so they can't
-  // match mid-word ("entitled"). Longer trials keep today's substring behavior.
+  // Single-word clause-name anchors ("Title") search whole-word-only so they
+  // can't match mid-word ("entitled"). Multi-word trials keep substring behavior.
   const literal = await run(trial, false, shouldMatchWholeWord(trial));
   if (literal) return literal;
 
