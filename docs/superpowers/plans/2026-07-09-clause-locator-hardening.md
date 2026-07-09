@@ -171,7 +171,7 @@ constants (e.g. just after `SEARCH_MAX_LEN`, around line 76):
 // too-short-partial-match message). Many findings — signature/execution blocks,
 // Missing-Context items — describe a section rather than quoting it verbatim, so
 // there is genuinely nothing in the document to locate. Say that plainly instead
-// of "Couldn't locate this clause," which reads like a bug.
+// of the old blunt not-found wording, which read like a bug report.
 const NO_MATCH_MESSAGE =
   "No exact match in the document — this finding describes a section rather than quoting it verbatim, so there's nothing to locate.";
 ```
