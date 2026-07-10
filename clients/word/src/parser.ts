@@ -196,6 +196,29 @@ function extractBacktickQuoted(text: string): string {
 }
 
 /**
+ * Split a " / "-joined multi-field string into its field segments. The LLM
+ * sometimes bundles a whole signature block into one line —
+ * `Signed by: [__] / Title: [__] / for and on behalf of [__]` (seen on MSA/SOW,
+ * which have full-sentence execution blocks) — but the document keeps those
+ * fields on SEPARATE paragraphs, so `body.search` (which can't cross paragraph
+ * breaks) never matches the joined string. Splitting lets the locator land on
+ * the first real field instead of failing outright.
+ *
+ * Only splits on a slash PADDED by whitespace (so "and/or" is untouched) and
+ * only when ≥2 resulting segments look like a field (a colon label or a
+ * bracketed / underscore blank). Otherwise returns [] and the caller keeps the
+ * original anchor unchanged.
+ */
+function splitFieldSegments(s: string): string[] {
+  if (!/\s\/\s/.test(s)) return [];
+  const fields = s
+    .split(/\s+\/\s+/)
+    .map((p) => p.trim())
+    .filter((p) => p && (p.includes(":") || /\[.*?\]|_{2,}/.test(p)));
+  return fields.length >= 2 ? fields : [];
+}
+
+/**
  * Build the ordered list of anchor candidates for a finding. The first item is
  * what `currentText` becomes (used as the card's quote display); all of them
  * are passed to the Word add-in's search helpers, which try each until one
@@ -220,7 +243,14 @@ function buildAnchors(issue: string, clause: string): string[] {
   //     straight/curly quote so it becomes the primary anchor when no such quote
   //     exists; searchFirst's wildcard-escape retry then locates the [__] blank.
   const backtickQuoted = extractBacktickQuoted(issue);
-  if (backtickQuoted) push(backtickQuoted);
+  if (backtickQuoted) {
+    push(backtickQuoted);
+    // MSA/SOW execution blocks arrive bundled on one line
+    // (`Signed by: [__] / Title: [__] / for and on behalf of [__]`). That joined
+    // string isn't in the doc verbatim (separate paragraphs), so also push each
+    // field segment — the locator then lands on the first real field.
+    for (const seg of splitFieldSegments(backtickQuoted)) push(seg);
+  }
 
   // 2. The "Clause / section" path commonly looks like "Preamble / Effective Date".
   //    Each `/`-separated segment is a likely literal in the document. The

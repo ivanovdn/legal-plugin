@@ -189,6 +189,40 @@ pass(
 pass(sig1.hasQuotedText === false, "hasQuotedText stays false for backtick-only Issue (card message unchanged)");
 
 // ──────────────────────────────────────────────────────────────────────────
+// Sample 4c — MSA/SOW: a whole signature block bundled on ONE line, joined by
+// " / ". The joined string isn't in the doc verbatim (fields sit on separate
+// paragraphs), so each " / "-separated field segment must also become an anchor
+// so the locator can land on the first real field.
+// ──────────────────────────────────────────────────────────────────────────
+
+const sampleMsaSig = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| SIG-M | Signature Block (Main) | Missing Context | Current wording: \`Signed by: [__] / Title: [__] / for and on behalf of [__]\` | Complete signatory names, titles, and entity names. | Sales/Deal Lead |
+`;
+
+const rMsaSig = parseContractReview(sampleMsaSig);
+console.log("\n=== Sample 4c: MSA bundled signature block ===");
+const sigM = rMsaSig.findings.find((f) => f.issueId === "SIG-M")!;
+console.log("SIG-M anchors:", sigM.anchors);
+
+// The whole joined block is still the primary anchor (card display), but each
+// field segment is present so the locator has something matchable.
+pass(sigM.anchors[0] === "Signed by: [__] / Title: [__] / for and on behalf of [__]", "bundled block is primary anchor (SIG-M)");
+pass(sigM.anchors.includes("Signed by: [__]"), "split field segment: Signed by (SIG-M)");
+pass(sigM.anchors.includes("Title: [__]"), "split field segment: Title (SIG-M)");
+pass(sigM.anchors.includes("for and on behalf of [__]"), "split field segment: entity line (SIG-M)");
+// The matchable segment must rank BEFORE the un-locatable clause-name label.
+pass(
+  sigM.anchors.indexOf("Signed by: [__]") < sigM.anchors.indexOf("Signature Block (Main)"),
+  "split segment ranks before the clause-name label (SIG-M)",
+);
+
+// Guard: a " / " that is NOT a multi-field bundle (single-field backtick) is left
+// intact — no spurious splitting.
+pass(sig1.anchors.filter((a) => a === "Signed by: [__]").length === 1, "single-field backtick not spuriously split (SIG-1)");
+
+// ──────────────────────────────────────────────────────────────────────────
 // Sample 4 — graceful on empty / unrelated input
 // ──────────────────────────────────────────────────────────────────────────
 
