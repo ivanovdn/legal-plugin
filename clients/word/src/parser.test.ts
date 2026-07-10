@@ -222,6 +222,17 @@ pass(
 // intact — no spurious splitting.
 pass(sig1.anchors.filter((a) => a === "Signed by: [__]").length === 1, "single-field backtick not spuriously split (SIG-1)");
 
+// Guard: a padded " / " whose segments are NOT field-like (no colon label, no
+// blank placeholder) must NOT split — e.g. a bundled heading in backticks.
+const sampleNonField = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| NF-1 | Section 1 | Yellow | Current wording: \`Confidentiality / Non-Disclosure\` | Align headings. | Legal owner |
+`;
+const nf = parseContractReview(sampleNonField).findings.find((f) => f.issueId === "NF-1")!;
+pass(nf.anchors[0] === "Confidentiality / Non-Disclosure", "non-field ' / ' heading stays whole (primary anchor)");
+pass(!nf.anchors.includes("Confidentiality") && !nf.anchors.includes("Non-Disclosure"), "non-field ' / ' heading NOT split into segments");
+
 // ──────────────────────────────────────────────────────────────────────────
 // Sample 4 — graceful on empty / unrelated input
 // ──────────────────────────────────────────────────────────────────────────

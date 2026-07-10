@@ -214,7 +214,10 @@ function splitFieldSegments(s: string): string[] {
   const fields = s
     .split(/\s+\/\s+/)
     .map((p) => p.trim())
-    .filter((p) => p && (p.includes(":") || /\[.*?\]|_{2,}/.test(p)));
+    // Field-like = a colon label ("Signed by:") OR a BLANK placeholder — brackets
+    // containing only blank chars ("[__]", "[ ]") or a run of underscores. Not any
+    // bracket, so "[Confidential]" isn't mistaken for a fillable field.
+    .filter((p) => p && (p.includes(":") || /\[[\s_.\-]*\]|_{2,}/.test(p)));
   return fields.length >= 2 ? fields : [];
 }
 
