@@ -60,6 +60,24 @@ export function escapeWordWildcards(s: string): string {
   return s.replace(/[\\[\]{}()<>?*@!]/g, "\\$&");
 }
 
+// Single-word clause-name anchors ("Title", "Entity") arrive via
+// searchCandidates' last-resort fallback. body.search is NOT whole-word by
+// default, so "Title" matches inside "en-title-d" and the jump/comment/redline
+// lands mid-word in the wrong place. For these single-word last-resort anchors
+// we search whole-word-ONLY (precision over recall): a clean miss falls through
+// to the finding's next anchor — better than a silently-wrong hit.
+//
+// Restricted to EXACTLY ONE word: a single-word query has no space, so Office.js
+// matchWholeWord is well-defined and reliably honored. On a MULTI-word (space-
+// containing) query matchWholeWord is unverified in Word for Mac and can only
+// hurt — a 2-word phrase realistically can't match mid-word, but whole-word would
+// stop "Data Room" from matching "Data Rooms" (plural/possessive recall loss). So
+// 2+-word anchors keep the tolerant default substring match. Exported for unit
+// testing.
+export function shouldMatchWholeWord(trial: string): boolean {
+  return normalizeForSearch(trial).split(/\s+/).filter(Boolean).length === 1;
+}
+
 // A "fill this blank" placeholder with NO label — just brackets / underscores /
 // dashes / dots / spaces (e.g. "[__]", "___", "[...]"). A replace_all on a bare
 // placeholder like this would dump ONE value into every distinct blank field
@@ -74,6 +92,14 @@ export function isAmbiguousBlankPlaceholder(s: string): boolean {
 // SearchStringInvalidOrTooLong. 200 leaves a safety margin and matches the
 // existing direct-add filter below.
 const SEARCH_MAX_LEN = 200;
+
+// Shown when the locator finds NO range at all (distinct from acceptRedline's
+// too-short-partial-match message). Many findings — signature/execution blocks,
+// Missing-Context items — describe a section rather than quoting it verbatim, so
+// there is genuinely nothing in the document to locate. Say that plainly instead
+// of the old blunt not-found wording, which read like a bug report.
+const NO_MATCH_MESSAGE =
+  "No exact match in the document — this finding describes a section rather than quoting it verbatim, so there's nothing to locate.";
 
 function searchCandidates(needle: string): string[] {
   const normalized = normalizeForSearch(needle);
@@ -189,11 +215,12 @@ async function searchFirst(
   context: Word.RequestContext,
   trial: string,
 ): Promise<Word.Range | null> {
-  const run = async (query: string, matchWildcards: boolean) => {
+  const run = async (query: string, matchWildcards: boolean, matchWholeWord: boolean) => {
     try {
       const results = context.document.body.search(query, {
         matchCase: false,
         matchWildcards,
+        matchWholeWord,
       });
       results.load("items");
       await context.sync();
@@ -208,15 +235,18 @@ async function searchFirst(
     }
   };
 
-  const literal = await run(trial, false);
+  // Single-word clause-name anchors ("Title") search whole-word-only so they
+  // can't match mid-word ("entitled"). Multi-word trials keep substring behavior.
+  const literal = await run(trial, false, shouldMatchWholeWord(trial));
   if (literal) return literal;
 
   // Word for Mac mis-reads [](){}<>?* etc. as wildcards even in literal mode, so
   // a needle with brackets (a blank "[__]" field, a "[Source: …]" tag) silently
   // misses. Retry in wildcard mode with the metacharacters escaped, which makes
-  // body.search match the literal characters.
+  // body.search match the literal characters. Whole-word is irrelevant/ignored
+  // in wildcard mode, so pass false.
   if (WORD_WILDCARD_META.test(trial)) {
-    return run(escapeWordWildcards(trial), true);
+    return run(escapeWordWildcards(trial), true, false);
   }
   return null;
 }
@@ -356,7 +386,7 @@ export async function showInDocument(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail("Couldn't locate this clause in the document.");
+      if (!range) return fail(NO_MATCH_MESSAGE);
       range.select();
       range.insertComment(commentBody);
       range.load("text");
@@ -382,7 +412,7 @@ export async function goToClause(target: string | string[]): Promise<Result<stri
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail("Couldn't locate this clause in the document.");
+      if (!range) return fail(NO_MATCH_MESSAGE);
       range.select();
       range.load("text");
       await context.sync();
@@ -413,7 +443,7 @@ export async function acceptRedline(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail("Couldn't locate this clause in the document.");
+      if (!range) return fail(NO_MATCH_MESSAGE);
 
       // Verify the matched range covers most of the intended target. searchCandidates
       // falls back to shorter prefixes when the full target isn't found verbatim —

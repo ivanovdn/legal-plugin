@@ -153,6 +153,87 @@ pass(indem.hasQuotedText === false, "hasQuotedText=false when no quotes in Issue
 pass(term!.hasQuotedText === true, "hasQuotedText=true when Issue cell quotes current wording");
 
 // ──────────────────────────────────────────────────────────────────────────
+// Sample 4b — backtick-delimited current wording (signature-block placeholders).
+// The local LLM wraps the real doc text in `backticks`; extractQuoted (straight/
+// curly only) misses it, so before the backtick-anchor fix these findings fell
+// through to a clause-name label ("Signatory Name") that isn't in the document
+// and couldn't be located. The backtick literal must become the primary anchor.
+// ──────────────────────────────────────────────────────────────────────────
+
+const sampleSig = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| SIG-1 | Execution Block / Signatory Name | Missing Context | \`Signed by: [__]\` | Insert authorized signatory's printed name. | Counterparty |
+| SIG-2 | Execution Block / Title | Missing Context | \`Title: [__]\` | Insert authorized signatory's title. | Counterparty |
+| SIG-3 | Execution Block / Entity | Missing Context | \`for and on behalf of [__]\` | Insert counterparty legal entity name. | Counterparty |
+`;
+
+const rSig = parseContractReview(sampleSig);
+console.log("\n=== Sample 4b: backtick-delimited current wording ===");
+const sig1 = rSig.findings.find((f) => f.issueId === "SIG-1")!;
+const sig2 = rSig.findings.find((f) => f.issueId === "SIG-2")!;
+const sig3 = rSig.findings.find((f) => f.issueId === "SIG-3")!;
+console.log("SIG-1 anchors:", sig1.anchors);
+
+pass(sig1.anchors[0] === "Signed by: [__]", "backtick literal is the PRIMARY anchor (SIG-1)");
+pass(sig1.currentText === "Signed by: [__]", "currentText is the backtick literal (SIG-1)");
+pass(sig2.anchors[0] === "Title: [__]", "backtick literal is the primary anchor (SIG-2)");
+pass(sig3.anchors[0] === "for and on behalf of [__]", "backtick literal is the primary anchor (SIG-3)");
+// The backtick literal must rank BEFORE the non-existent clause-name label.
+pass(
+  sig1.anchors.indexOf("Signed by: [__]") < sig1.anchors.indexOf("Signatory Name"),
+  "backtick anchor ranks before the clause-name label",
+);
+// hasQuotedText is intentionally NOT flipped by backticks — it drives the card's
+// replace-vs-fill-manually message and reads straight/curly quotes only.
+pass(sig1.hasQuotedText === false, "hasQuotedText stays false for backtick-only Issue (card message unchanged)");
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sample 4c — MSA/SOW: a whole signature block bundled on ONE line, joined by
+// " / ". The joined string isn't in the doc verbatim (fields sit on separate
+// paragraphs), so each " / "-separated field segment must also become an anchor
+// so the locator can land on the first real field.
+// ──────────────────────────────────────────────────────────────────────────
+
+const sampleMsaSig = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| SIG-M | Signature Block (Main) | Missing Context | Current wording: \`Signed by: [__] / Title: [__] / for and on behalf of [__]\` | Complete signatory names, titles, and entity names. | Sales/Deal Lead |
+`;
+
+const rMsaSig = parseContractReview(sampleMsaSig);
+console.log("\n=== Sample 4c: MSA bundled signature block ===");
+const sigM = rMsaSig.findings.find((f) => f.issueId === "SIG-M")!;
+console.log("SIG-M anchors:", sigM.anchors);
+
+// The whole joined block is still the primary anchor (card display), but each
+// field segment is present so the locator has something matchable.
+pass(sigM.anchors[0] === "Signed by: [__] / Title: [__] / for and on behalf of [__]", "bundled block is primary anchor (SIG-M)");
+pass(sigM.anchors.includes("Signed by: [__]"), "split field segment: Signed by (SIG-M)");
+pass(sigM.anchors.includes("Title: [__]"), "split field segment: Title (SIG-M)");
+pass(sigM.anchors.includes("for and on behalf of [__]"), "split field segment: entity line (SIG-M)");
+// The matchable segment must rank BEFORE the un-locatable clause-name label.
+pass(
+  sigM.anchors.indexOf("Signed by: [__]") < sigM.anchors.indexOf("Signature Block (Main)"),
+  "split segment ranks before the clause-name label (SIG-M)",
+);
+
+// Guard: a " / " that is NOT a multi-field bundle (single-field backtick) is left
+// intact — no spurious splitting.
+pass(sig1.anchors.filter((a) => a === "Signed by: [__]").length === 1, "single-field backtick not spuriously split (SIG-1)");
+
+// Guard: a padded " / " whose segments are NOT field-like (no colon label, no
+// blank placeholder) must NOT split — e.g. a bundled heading in backticks.
+const sampleNonField = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| NF-1 | Section 1 | Yellow | Current wording: \`Confidentiality / Non-Disclosure\` | Align headings. | Legal owner |
+`;
+const nf = parseContractReview(sampleNonField).findings.find((f) => f.issueId === "NF-1")!;
+pass(nf.anchors[0] === "Confidentiality / Non-Disclosure", "non-field ' / ' heading stays whole (primary anchor)");
+pass(!nf.anchors.includes("Confidentiality") && !nf.anchors.includes("Non-Disclosure"), "non-field ' / ' heading NOT split into segments");
+
+// ──────────────────────────────────────────────────────────────────────────
 // Sample 4 — graceful on empty / unrelated input
 // ──────────────────────────────────────────────────────────────────────────
 

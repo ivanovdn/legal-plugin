@@ -15,7 +15,7 @@
 - **Never emit `.js` into `clients/word/src/`** — tsconfig is `noEmit:true`; run typecheck only.
 - **`shouldMatchWholeWord` is pure and exported** (unit-tested). The Office.js wiring around it is smoke-tested, not unit-tested.
 - **Whole-word is whole-word-ONLY for short trials** — no plain-literal fallback after a whole-word miss (that would re-admit the `"entitled"` bug). The longer bridging prefixes and multi-paragraph clauses keep today's behavior.
-- **"Short" = normalized trial with ≤ 2 whitespace-separated words**, and > 0 words (empty/whitespace → not short → `false`).
+- **"Short" = normalized trial with ≤ 2 whitespace-separated words**, and > 0 words (empty/whitespace → not short → `false`). **⚠️ SUPERSEDED (final-review, 2026-07-09): narrowed to a SINGLE word.** `matchWholeWord` on a space-containing 2-word query is unverified in Word for Mac and can only hurt recall (would stop `"Data Room"` matching `"Data Rooms"`); a single-word query is well-defined. The shipped `shouldMatchWholeWord` returns `true` iff the trial is exactly one word, and the Task-1 test flips the 2-word case to `false`. See the spec's "Threshold narrowed" note. The Task-1 code/test blocks below show the original ≤2 form for history.
 - **All three callers share the softened message** (`goToClause`, `showInDocument`, `acceptRedline`) for the null-range case. `acceptRedline`'s *separate* completeness-guard message (the `MATCH_COMPLETENESS_THRESHOLD` failure) stays exactly as-is — only the `if (!range)` message is replaced.
 - Commands run from `clients/word/`.
 
@@ -171,7 +171,7 @@ constants (e.g. just after `SEARCH_MAX_LEN`, around line 76):
 // too-short-partial-match message). Many findings — signature/execution blocks,
 // Missing-Context items — describe a section rather than quoting it verbatim, so
 // there is genuinely nothing in the document to locate. Say that plainly instead
-// of "Couldn't locate this clause," which reads like a bug.
+// of the old blunt not-found wording, which read like a bug report.
 const NO_MATCH_MESSAGE =
   "No exact match in the document — this finding describes a section rather than quoting it verbatim, so there's nothing to locate.";
 ```
