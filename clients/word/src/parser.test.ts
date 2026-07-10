@@ -153,6 +153,42 @@ pass(indem.hasQuotedText === false, "hasQuotedText=false when no quotes in Issue
 pass(term!.hasQuotedText === true, "hasQuotedText=true when Issue cell quotes current wording");
 
 // ──────────────────────────────────────────────────────────────────────────
+// Sample 4b — backtick-delimited current wording (signature-block placeholders).
+// The local LLM wraps the real doc text in `backticks`; extractQuoted (straight/
+// curly only) misses it, so before the backtick-anchor fix these findings fell
+// through to a clause-name label ("Signatory Name") that isn't in the document
+// and couldn't be located. The backtick literal must become the primary anchor.
+// ──────────────────────────────────────────────────────────────────────────
+
+const sampleSig = `# Key Findings
+| Issue ID | Clause / section | Rating | Issue | Required action | Owner |
+| --- | --- | --- | --- | --- | --- |
+| SIG-1 | Execution Block / Signatory Name | Missing Context | \`Signed by: [__]\` | Insert authorized signatory's printed name. | Counterparty |
+| SIG-2 | Execution Block / Title | Missing Context | \`Title: [__]\` | Insert authorized signatory's title. | Counterparty |
+| SIG-3 | Execution Block / Entity | Missing Context | \`for and on behalf of [__]\` | Insert counterparty legal entity name. | Counterparty |
+`;
+
+const rSig = parseContractReview(sampleSig);
+console.log("\n=== Sample 4b: backtick-delimited current wording ===");
+const sig1 = rSig.findings.find((f) => f.issueId === "SIG-1")!;
+const sig2 = rSig.findings.find((f) => f.issueId === "SIG-2")!;
+const sig3 = rSig.findings.find((f) => f.issueId === "SIG-3")!;
+console.log("SIG-1 anchors:", sig1.anchors);
+
+pass(sig1.anchors[0] === "Signed by: [__]", "backtick literal is the PRIMARY anchor (SIG-1)");
+pass(sig1.currentText === "Signed by: [__]", "currentText is the backtick literal (SIG-1)");
+pass(sig2.anchors[0] === "Title: [__]", "backtick literal is the primary anchor (SIG-2)");
+pass(sig3.anchors[0] === "for and on behalf of [__]", "backtick literal is the primary anchor (SIG-3)");
+// The backtick literal must rank BEFORE the non-existent clause-name label.
+pass(
+  sig1.anchors.indexOf("Signed by: [__]") < sig1.anchors.indexOf("Signatory Name"),
+  "backtick anchor ranks before the clause-name label",
+);
+// hasQuotedText is intentionally NOT flipped by backticks — it drives the card's
+// replace-vs-fill-manually message and reads straight/curly quotes only.
+pass(sig1.hasQuotedText === false, "hasQuotedText stays false for backtick-only Issue (card message unchanged)");
+
+// ──────────────────────────────────────────────────────────────────────────
 // Sample 4 — graceful on empty / unrelated input
 // ──────────────────────────────────────────────────────────────────────────
 
