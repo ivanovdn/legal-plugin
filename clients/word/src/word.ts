@@ -7,10 +7,16 @@
 import { normalizeForSearch } from "./normalize";
 import type { EditProposal } from "./parseEditBlocks";
 
-export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
+export type Result<T = void> =
+  | { ok: true; value: T }
+  | { ok: false; error: string; notFound?: boolean };
 
 const ok = <T>(value: T): Result<T> => ({ ok: true, value });
 const fail = (error: string): Result<never> => ({ ok: false, error });
+// A benign "there is nothing in the document to locate" outcome (a finding that
+// describes rather than quotes a section) — NOT a genuine failure. The card
+// renders these in a neutral pill instead of the red error pill.
+const notFound = (error: string): Result<never> => ({ ok: false, error, notFound: true });
 
 const isWordAvailable = (): boolean => typeof Word !== "undefined";
 
@@ -386,7 +392,7 @@ export async function showInDocument(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail(NO_MATCH_MESSAGE);
+      if (!range) return notFound(NO_MATCH_MESSAGE);
       range.select();
       range.insertComment(commentBody);
       range.load("text");
@@ -412,7 +418,7 @@ export async function goToClause(target: string | string[]): Promise<Result<stri
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail(NO_MATCH_MESSAGE);
+      if (!range) return notFound(NO_MATCH_MESSAGE);
       range.select();
       range.load("text");
       await context.sync();
@@ -443,7 +449,7 @@ export async function acceptRedline(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return fail(NO_MATCH_MESSAGE);
+      if (!range) return notFound(NO_MATCH_MESSAGE);
 
       // Verify the matched range covers most of the intended target. searchCandidates
       // falls back to shorter prefixes when the full target isn't found verbatim —

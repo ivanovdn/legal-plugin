@@ -288,6 +288,11 @@ button.secondary:disabled {
   color: var(--red-fg);
 }
 
+.card-status.info {
+  background: var(--secondary-hover-bg);
+  color: var(--muted);
+}
+
 .card-hint {
   font-size: 11px;
   color: var(--muted);
