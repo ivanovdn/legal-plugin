@@ -32,9 +32,19 @@ neutral pill; real errors stay red. Frontend-only, additive.
   `export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string; notFound?: boolean };`
 - Add a `notFound` helper beside `fail`:
   `const notFound = (error: string): Result<never> => ({ ok: false, error, notFound: true });`
-- Change the **null-range** guard in the three locator entry points from
+- Change the **null-range** guard in the two **navigation** entry points from
   `return fail(NO_MATCH_MESSAGE)` to `return notFound(NO_MATCH_MESSAGE)`:
-  `showInDocument`, `goToClause`, `acceptRedline`.
+  `showInDocument` and `goToClause`.
+  > **Correction (smoke-driven, 2026-07-13).** The original design also routed
+  > `acceptRedline`'s null-range through `notFound`. Smoke testing showed that was
+  > wrong: `acceptRedline` is a **mutation** — a null-range means the requested
+  > edit *did not apply*, which the user must act on. That is a genuine **red**
+  > error, not the benign navigation case. So `acceptRedline`'s null-range stays a
+  > `fail(...)` with an apply-appropriate message ("Couldn't find the target text
+  > in the document — there's nothing to replace here."), and only the two
+  > navigation paths use `notFound`. (Consequently `FindingCard`'s `onAccept` never
+  > sees `notFound` and always renders a redline failure red; only `onJump`/`onShow`
+  > read the flag.)
 - **Everything else stays `fail` (red):** `isWordAvailable()` failure, empty-text /
   no-redline guards, and `acceptRedline`'s **completeness-guard** message
   ("Couldn't find the exact target text… rephrase or quote the exact wording") — these

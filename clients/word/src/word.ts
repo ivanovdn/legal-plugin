@@ -449,7 +449,11 @@ export async function acceptRedline(
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return notFound(NO_MATCH_MESSAGE);
+      // A failed REPLACE is a genuine error the user must act on (their edit did
+      // not apply), NOT the benign "nothing to locate" navigation case — so this
+      // is a red fail(), not notFound(). Navigation (goToClause/showInDocument)
+      // uses notFound(NO_MATCH_MESSAGE) for the calm gray pill instead.
+      if (!range) return fail("Couldn't find the target text in the document — there's nothing to replace here.");
 
       // Verify the matched range covers most of the intended target. searchCandidates
       // falls back to shorter prefixes when the full target isn't found verbatim —
