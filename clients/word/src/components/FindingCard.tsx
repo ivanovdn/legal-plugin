@@ -7,7 +7,8 @@ type ActionState =
   | { kind: "idle" }
   | { kind: "running" }
   | { kind: "done"; message: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "notfound"; message: string };
 
 function buildCommentBody(f: Finding): string {
   const lines = [`[${f.risk.replace("_", " ")}] ${f.clause}`];
@@ -28,7 +29,7 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     setJump({ kind: "running" });
     const res = await goToClause(anchors);
     // Success is silent — the Word selection is the feedback. Only surface errors.
-    setJump(res.ok ? { kind: "idle" } : { kind: "error", message: res.error });
+    setJump(res.ok ? { kind: "idle" } : { kind: res.notFound ? "notfound" : "error", message: res.error });
   };
 
   const anchors = finding.anchors.length > 0 ? finding.anchors : [finding.currentText];
@@ -38,7 +39,7 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     setComment({ kind: "running" });
     const res = await showInDocument(anchors, buildCommentBody(finding));
     if (res.ok) setComment({ kind: "done", message: "Commented ✓" });
-    else setComment({ kind: "error", message: res.error });
+    else setComment({ kind: res.notFound ? "notfound" : "error", message: res.error });
   };
 
   const onAccept = async () => {
@@ -50,6 +51,8 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     setRedline({ kind: "running" });
     const res = await acceptRedline(anchors, finding.redline);
     if (res.ok) setRedline({ kind: "done", message: "Applied ✓ — see Track Changes" });
+    // A failed redline apply is always a genuine error (acceptRedline never
+    // returns notFound) — the calm pill is only for navigation (jump/comment).
     else setRedline({ kind: "error", message: res.error });
   };
 
@@ -140,9 +143,11 @@ export default function FindingCard({ finding }: { finding: Finding }) {
       )}
       {comment.kind === "done" && <div className="card-status success">{comment.message}</div>}
       {comment.kind === "error" && <div className="card-status error">{comment.message}</div>}
+      {comment.kind === "notfound" && <div className="card-status info">{comment.message}</div>}
       {redline.kind === "done" && <div className="card-status success">{redline.message}</div>}
       {redline.kind === "error" && <div className="card-status error">{redline.message}</div>}
       {jump.kind === "error" && <div className="card-status error">{jump.message}</div>}
+      {jump.kind === "notfound" && <div className="card-status info">{jump.message}</div>}
     </div>
   );
 }

@@ -27,7 +27,8 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
   // The lawyer can tweak new_text before applying — e.g. "2x" → "3x".
   const [draftText, setDraftText] = useState(proposal.new_text ?? "");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [jumpError, setJumpError] = useState<string | null>(null);
+  // notFound = the benign "nothing to locate" case → muted pill, not red error.
+  const [jumpMsg, setJumpMsg] = useState<{ message: string; notFound: boolean } | null>(null);
 
   // For inserts, the doc location is the anchor; for replace/replace_all/delete
   // it's the target text.
@@ -35,9 +36,9 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
 
   const onJump = async () => {
     if (!jumpTarget) return;
-    setJumpError(null);
+    setJumpMsg(null);
     const res = await goToClause(jumpTarget);
-    if (!res.ok) setJumpError(res.error);
+    if (!res.ok) setJumpMsg({ message: res.error, notFound: !!res.notFound });
   };
 
   const onApply = async () => {
@@ -158,7 +159,9 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
       {status.kind === "error" && (
         <div className="card-status error">{status.message}</div>
       )}
-      {jumpError && <div className="card-status error">{jumpError}</div>}
+      {jumpMsg && (
+        <div className={`card-status ${jumpMsg.notFound ? "info" : "error"}`}>{jumpMsg.message}</div>
+      )}
     </div>
   );
 }
