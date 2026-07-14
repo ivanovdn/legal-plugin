@@ -1,5 +1,13 @@
 # Chat persistence across pane reopen — design
 
+> **⚠️ SUPERSEDED (2026-07-14).** This localStorage approach was built and then reverted after
+> sideload smoke testing revealed (a) the preamble-hash identity drifts when the review workflow
+> fills fields in the opening block, and (b) the real deployment is multi-attorney on cloud docs
+> with a shared VM backend — for which per-machine localStorage is the wrong store. Replaced by a
+> server-side design keyed by a document-embedded UUID; see
+> `docs/superpowers/specs/2026-07-14-canonical-document-uuid-design.md` (foundation slice). Kept
+> for design history.
+
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** frontend-only, in the Word add-in. **No backend, graph, prompt, parser, or
 > LLM change** — review outputs stay byte-identical.

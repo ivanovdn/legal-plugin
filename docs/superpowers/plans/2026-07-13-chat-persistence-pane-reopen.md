@@ -1,5 +1,10 @@
 # Chat Persistence Across Pane Reopen — Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-07-14).** This plan (localStorage) was executed then reverted after smoke
+> testing — see the superseded note in
+> `docs/superpowers/specs/2026-07-13-chat-persistence-pane-reopen-design.md`. The work continues
+> under `docs/superpowers/specs/2026-07-14-canonical-document-uuid-design.md`. Kept for history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** When the Word task pane is closed and reopened on the same document, restore the chat conversation (visible bubbles + the backend `sessionId` thread) from `localStorage`.
