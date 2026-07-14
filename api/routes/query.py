@@ -164,7 +164,7 @@ def submit_query(
         "previous_draft": "",
         "requires_attorney": False,
         "interactive_review": body.interactive_review,
-        "document_id": "",
+        "document_id": body.document_uuid,
         "memory_degraded": False,
     }
 

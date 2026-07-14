@@ -2,6 +2,7 @@
 // All paths are relative — Vite's dev-server proxy rewrites /api/* to http://localhost:8000.
 
 import type { EditProposal } from "./parseEditBlocks";
+import { resolveDocumentId } from "./docIdentity";
 
 export interface QueryResponse {
   status: "ok" | "error";
@@ -44,12 +45,14 @@ async function postQuery(body: Record<string, unknown>): Promise<QueryResponse> 
 
 /** Run the contract_review skill on the doc text. */
 export async function submitReview(docText: string, sessionId: string): Promise<QueryResponse> {
+  const document_uuid = await resolveDocumentId();
   return postQuery({
     request: "Review this contract.",
     task_type: "contract_review",
     session_id: sessionId,
     filters: { client_id: "internal" },
     uploaded_text: docText,
+    document_uuid,
   });
 }
 
@@ -69,11 +72,13 @@ export async function chatQuery(
   docText: string,
   sessionId: string,
 ): Promise<QueryResponse> {
+  const document_uuid = await resolveDocumentId();
   return postQuery({
     request: question,
     task_type: "research",
     session_id: sessionId,
     filters: { client_id: "internal" },
     uploaded_text: docText,
+    document_uuid,
   });
 }
