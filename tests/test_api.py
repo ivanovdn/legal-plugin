@@ -438,3 +438,26 @@ def test_submit_query_returns_interrupt_payload_from_dunder_interrupt_key(monkey
     assert data["awaiting_review"] is True
     assert data["interrupt_payload"]["llm_response"] == "DRAFT FROM INTERRUPT"
     assert data["interrupt_payload"]["review_iterations"] == 2
+
+
+def test_submit_query_passes_document_uuid_as_document_id(monkeypatch):
+    """A client document_uuid reaches initial_state['document_id']."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    with patch("api.routes.query._get_graph") as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = _mock_graph_invoke
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        client.post(
+            "/api/query",
+            json={"request": "test", "document_uuid": "doc-uuid-abc"},
+            headers={"X-User-ID": "attorney-1"},
+        )
+
+    state_arg = mock_graph.invoke.call_args.args[0]
+    assert state_arg["document_id"] == "doc-uuid-abc"

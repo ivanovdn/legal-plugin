@@ -36,7 +36,10 @@ def intake(state: LegalAgentState) -> LegalAgentState:
         (d.get("text", "") if isinstance(d, dict) else getattr(d, "text", ""))
         for d in docs
     )
-    state["document_id"] = resolve_document_id(text)
+    # Prefer a client-supplied stable id (Office settings UUID, seeded into state
+    # by the query route); fall back to the preamble hash for callers that don't
+    # send one (Chainlit, unsaved docs).
+    state["document_id"] = state.get("document_id") or resolve_document_id(text)
 
     if not state.get("retrieval_query"):
         state["retrieval_query"] = state["request"]
