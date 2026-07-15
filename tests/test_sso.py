@@ -6,6 +6,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
 from jwt.exceptions import DecodeError, PyJWKClientConnectionError
 
 import api.auth as auth
@@ -13,6 +14,7 @@ from api.auth import (
     SSOConfigError,
     SSOValidationError,
     attorney_id_from_claims,
+    resolve_user_id,
     validate_token,
 )
 
@@ -151,3 +153,58 @@ def test_explicit_issuer_and_jwks_override_tenant():
     s = _settings(sso_issuer="https://custom/iss", sso_jwks_url="https://custom/keys")
     assert auth._issuer(s) == "https://custom/iss"
     assert auth._jwks_url(s) == "https://custom/keys"
+
+
+def test_resolve_sso_off_returns_header():
+    uid = resolve_user_id(authorization=None, x_user_id="localstorage-uuid",
+                          settings=_settings(sso_enabled=False))
+    assert uid == "localstorage-uuid"
+
+
+def test_resolve_sso_off_missing_header_is_anonymous():
+    # Byte-for-byte guard on today's Header("anonymous") default.
+    uid = resolve_user_id(authorization=None, x_user_id="anonymous",
+                          settings=_settings(sso_enabled=False))
+    assert uid == "anonymous"
+
+
+def test_resolve_sso_on_valid_token_returns_oid():
+    uid = resolve_user_id(authorization=f"Bearer {_token()}", x_user_id="ignored",
+                          settings=_settings())
+    assert uid == "attorney-oid-123"
+
+
+def test_resolve_sso_on_missing_authorization_is_401():
+    with pytest.raises(HTTPException) as ei:
+        resolve_user_id(authorization=None, x_user_id="spoofed", settings=_settings())
+    assert ei.value.status_code == 401
+
+
+def test_resolve_sso_on_non_bearer_scheme_is_401():
+    with pytest.raises(HTTPException) as ei:
+        resolve_user_id(authorization="Basic abc123", x_user_id="x", settings=_settings())
+    assert ei.value.status_code == 401
+
+
+def test_resolve_sso_on_invalid_token_is_401():
+    with pytest.raises(HTTPException) as ei:
+        resolve_user_id(authorization=f"Bearer {_token(aud='wrong')}",
+                        x_user_id="x", settings=_settings())
+    assert ei.value.status_code == 401
+
+
+def test_resolve_sso_on_token_without_oid_is_401():
+    with pytest.raises(HTTPException) as ei:
+        resolve_user_id(authorization=f"Bearer {_token(oid=None)}",
+                        x_user_id="x", settings=_settings())
+    assert ei.value.status_code == 401
+
+
+def test_resolve_sso_on_jwks_down_is_503(monkeypatch):
+    monkeypatch.setattr(
+        auth, "_jwks_client",
+        lambda url: _FakeJWKClient(raise_exc=PyJWKClientConnectionError("dns fail", url)))
+    with pytest.raises(HTTPException) as ei:
+        resolve_user_id(authorization=f"Bearer {_token()}", x_user_id="x",
+                        settings=_settings())
+    assert ei.value.status_code == 503

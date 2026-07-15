@@ -10,8 +10,11 @@ import functools
 import logging
 
 import jwt
+from fastapi import Depends, Header, HTTPException
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError, PyJWTError
+
+from config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -79,3 +82,33 @@ def attorney_id_from_claims(claims: dict) -> str:
     if not oid:
         raise SSOValidationError("token has no 'oid' claim")
     return oid
+
+
+def resolve_user_id(
+    authorization: str | None = Header(None),
+    x_user_id: str = Header("anonymous", alias="X-User-ID"),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Resolve the attorney id for this request.
+
+    SSO off (default): return the X-User-ID header, exactly as before.
+    SSO on: require a valid Bearer token and return its `oid`; 401 on a
+    missing/invalid token, 503 when the JWKS endpoint is unreachable.
+    """
+    if not settings.sso_enabled:
+        return x_user_id
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        logger.warning("[auth] SSO on but request has no Bearer token")
+        raise HTTPException(status_code=401, detail="authentication required")
+
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        claims = validate_token(token, settings)
+        return attorney_id_from_claims(claims)
+    except SSOValidationError as e:
+        logger.warning("[auth] token rejected: %s", e)
+        raise HTTPException(status_code=401, detail="invalid token") from e
+    except SSOConfigError as e:
+        logger.error("[auth] cannot validate token (infra/config): %s", e)
+        raise HTTPException(status_code=503, detail="authentication temporarily unavailable") from e
