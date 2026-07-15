@@ -11,6 +11,7 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
+from memory.conversation_store import load_recent
 from memory.review_store import load_latest_review
 from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
@@ -404,6 +405,28 @@ def _load_prior_review_block(state: LegalAgentState) -> str:
     )
 
 
+def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
+    """Durable per-(document, attorney) chat history for the doc-chat prompt.
+    Empty when disabled, keys missing, or on a store-read failure (which flags
+    memory_degraded) — memory must never break the chat turn."""
+    settings = get_settings()
+    if not settings.conversation_store_enabled:
+        return []
+    document_id = state.get("document_id", "")
+    attorney_id = state.get("user_id", "")
+    if not document_id or not attorney_id:
+        return []
+    try:
+        return load_recent(
+            settings.sqlite_path, document_id, attorney_id,
+            settings.conversation_max_messages,
+        )
+    except Exception as e:
+        logger.error("[legal_research] prior-conversation load failed: %s", e)
+        state["memory_degraded"] = True
+        return []
+
+
 _GROUNDING_TRIGGER_RE = re.compile(
     r"""
     # Edit / action stems
@@ -511,7 +534,9 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     else:
         playbook, msa_block = "", ""
 
-    chat_history = state.get("chat_history", []) or []
+    chat_history = _load_prior_conversation(state)
+    if not chat_history:
+        chat_history = state.get("chat_history", []) or []
     system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     if playbook:
         system_messages.append({"role": "system", "content": playbook})
