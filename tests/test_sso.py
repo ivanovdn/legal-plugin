@@ -1,4 +1,5 @@
 """O365 SSO token validation — fully offline (in-test RSA keypair, mocked JWKS)."""
+import json
 import time
 from types import SimpleNamespace
 
@@ -208,3 +209,30 @@ def test_resolve_sso_on_jwks_down_is_503(monkeypatch):
         resolve_user_id(authorization=f"Bearer {_token()}", x_user_id="x",
                         settings=_settings())
     assert ei.value.status_code == 503
+
+
+def test_hs256_token_rejected():
+    # RS256 allow-list must reject an HS256-signed token even though the
+    # (fake) JWKS lookup succeeds and reaches jwt.decode(algorithms=["RS256"]).
+    now = int(time.time())
+    payload = dict(oid="attorney-oid-123", aud=CLIENT_ID, iss=ISSUER,
+                   exp=now + 3600, iat=now)
+    token = jwt.encode(payload, "shared-secret-at-least-32-bytes-long!!", algorithm="HS256")
+    with pytest.raises(SSOValidationError):
+        validate_token(token, _settings())
+
+
+def test_alg_none_token_rejected():
+    # An unsigned alg:none token must also be rejected by the RS256 allow-list.
+    now = int(time.time())
+    payload = dict(oid="attorney-oid-123", aud=CLIENT_ID, iss=ISSUER,
+                   exp=now + 3600, iat=now)
+    try:
+        token = jwt.encode(payload, key=None, algorithm="none")
+    except (TypeError, NotImplementedError, jwt.exceptions.InvalidKeyError):
+        # PyJWT may refuse to encode with key=None — build the token by hand.
+        header = jwt.utils.base64url_encode(b'{"alg":"none","typ":"JWT"}').decode()
+        body = jwt.utils.base64url_encode(json.dumps(payload).encode()).decode()
+        token = f"{header}.{body}."
+    with pytest.raises(SSOValidationError):
+        validate_token(token, _settings())

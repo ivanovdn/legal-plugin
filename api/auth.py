@@ -12,7 +12,7 @@ import logging
 import jwt
 from fastapi import Depends, Header, HTTPException
 from jwt import PyJWKClient
-from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError, PyJWTError
+from jwt.exceptions import PyJWKClientConnectionError, PyJWTError
 
 from config import Settings, get_settings
 
@@ -52,16 +52,21 @@ def validate_token(token: str, settings) -> dict:
     Raises SSOValidationError on any token defect, SSOConfigError on missing
     config or an unreachable JWKS endpoint.
     """
-    if not settings.sso_client_id or not (settings.sso_tenant_id or settings.sso_issuer):
-        raise SSOConfigError("SSO enabled but sso_client_id / sso_tenant_id not configured")
+    if not (settings.sso_client_id and (settings.sso_tenant_id or (settings.sso_issuer and settings.sso_jwks_url))):
+        raise SSOConfigError(
+            "SSO enabled but sso_client_id / sso_tenant_id (or sso_issuer + sso_jwks_url) not configured"
+        )
 
     try:
         signing_key = _jwks_client(_jwks_url(settings)).get_signing_key_from_jwt(token)
     except PyJWKClientConnectionError as e:
         raise SSOConfigError("JWKS endpoint unreachable") from e
-    except (PyJWKClientError, PyJWTError) as e:
+    except PyJWTError as e:
         # malformed token / no matching kid — reject the token
         raise SSOValidationError(f"cannot resolve signing key: {e.__class__.__name__}") from e
+    except Exception as e:
+        # e.g. JWKS returned HTTP 200 with a non-JSON body — infra/config failure
+        raise SSOConfigError(f"JWKS key resolution failed: {e.__class__.__name__}") from e
 
     try:
         return jwt.decode(
@@ -99,7 +104,7 @@ def resolve_user_id(
         return x_user_id
 
     if not authorization or not authorization.lower().startswith("bearer "):
-        logger.warning("[auth] SSO on but request has no Bearer token")
+        logger.warning("[auth] SSO on but request has no valid Bearer token")
         raise HTTPException(status_code=401, detail="authentication required")
 
     token = authorization.split(" ", 1)[1].strip()

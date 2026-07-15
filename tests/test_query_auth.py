@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+import api.auth
 from config import get_settings
 
 
@@ -67,3 +68,22 @@ def test_sso_on_without_token_is_401_and_graph_not_invoked(monkeypatch):
                            json={"request": "who signs?", "task_type": "research"})
     assert resp.status_code == 401
     graph_mock.invoke.assert_not_called()
+
+
+def test_sso_on_valid_token_returns_oid_in_state(monkeypatch):
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setattr(get_settings(), "sso_enabled", True, raising=False)
+    # Patch the crypto boundary only — attorney_id_from_claims still runs for real.
+    monkeypatch.setattr(api.auth, "validate_token",
+                        lambda token, settings: {"oid": "attorney-oid-xyz"})
+    captured = {}
+    with patch("api.routes.query._get_graph", return_value=_fake_graph(captured)), \
+         patch("api.routes.query.refresh_ttl", lambda s: None):
+        from api.main import app  # deferred by design — see module docstring
+        client = TestClient(app)
+        resp = client.post("/api/query",
+                           headers={"Authorization": "Bearer dummy"},
+                           json={"request": "who signs?", "task_type": "research"})
+    assert resp.status_code == 200
+    assert captured["state"]["user_id"] == "attorney-oid-xyz"
