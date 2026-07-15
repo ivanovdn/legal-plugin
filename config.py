@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     conversation_store_enabled: bool = True   # durable per-(document,attorney) chat store; False = Redis-only history
     conversation_max_messages: int = 20       # messages injected from the durable store (~10 turns); store retains all
 
+    # O365 SSO (slice 3) — dormant until sso_enabled; False = trust X-User-ID (today)
+    sso_enabled: bool = False
+    sso_tenant_id: str = ""      # Azure AD tenant (directory) id
+    sso_client_id: str = ""      # app (client) id — expected token audience
+    sso_issuer: str = ""         # expected iss; derived from tenant id when empty
+    sso_jwks_url: str = ""       # JWKS endpoint; derived from tenant id when empty
+
     # Langfuse
     langfuse_host: str = "http://localhost:3000"
     langfuse_public_key: str = "pk-lf-local"
