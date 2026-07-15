@@ -33,6 +33,10 @@ def test_does_not_persist_for_non_review_turn(monkeypatch):
     monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
     monkeypatch.setattr(mod, "init_audit_db", lambda p: None)
     monkeypatch.setattr(mod, "init_review_db", lambda p: None)
+    # A research turn now triggers the conversation-store write path — mock it so
+    # this test can't do a live write to the real sqlite_path (data/legal.db).
+    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
+    monkeypatch.setattr(mod, "append_turn", lambda **kw: None)
     called = {"n": 0}
     monkeypatch.setattr(mod, "save_review", lambda **kw: called.__setitem__("n", called["n"] + 1))
     mod.memory_writer(_state(task_type="research"))
