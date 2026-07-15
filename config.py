@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     chat_context_max_chars: int = 100000   # assembled chat-context budget; must stay below ollama_num_ctx (in tokens ≈ chars/4) with answer headroom — at 32768 tokens that is ~100k chars plus ~7k tokens answer room.
     chat_conditional_grounding: bool = True   # gate playbook/MSA on _needs_grounding; False = always attach (A/B + future cloud path)
     msa_max_chars: int = 24000             # MSA cap, shared by review + chat paths
+    conversation_store_enabled: bool = True   # durable per-(document,attorney) chat store; False = Redis-only history
+    conversation_max_messages: int = 20       # messages injected from the durable store (~10 turns); store retains all
 
     # Langfuse
     langfuse_host: str = "http://localhost:3000"

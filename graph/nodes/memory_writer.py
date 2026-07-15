@@ -8,12 +8,14 @@ from langfuse.decorators import observe
 
 from graph.state import LegalAgentState
 from memory.audit import init_audit_db, write_audit_log
+from memory.conversation_store import init_conversation_db, append_turn
 from memory.review_store import init_review_db, save_review
 
 logger = logging.getLogger(__name__)
 
 _db_initialized = False
 _review_db_initialized = False
+_conversation_db_initialized = False
 
 
 @observe(name="memory_writer")
@@ -63,5 +65,28 @@ def memory_writer(state: LegalAgentState) -> dict:
             logger.error("[memory_writer] FAILED to persist review: %s", e)
             report = {**(state.get("report") or {}), "review_persist_error": str(e)}
             return {"report": report}
+
+    # Persist the doc-chat conversation, keyed to (document, attorney). Best-effort:
+    # a lost turn is a convenience loss, not a legal record — never fail the turn.
+    if state.get("task_type") == "research" and settings.conversation_store_enabled:
+        document_id = state.get("document_id", "")
+        attorney_id = state.get("user_id", "")
+        if document_id and attorney_id and state.get("llm_response"):
+            global _conversation_db_initialized
+            try:
+                if not _conversation_db_initialized:
+                    init_conversation_db(settings.sqlite_path)
+                    _conversation_db_initialized = True
+                append_turn(
+                    db_path=settings.sqlite_path,
+                    document_id=document_id,
+                    attorney_id=attorney_id,
+                    user_text=state.get("request", ""),
+                    assistant_text=state.get("llm_response", ""),
+                )
+            except Exception as e:
+                logger.error(
+                    "[memory_writer] conversation append failed (non-fatal): %s", e
+                )
 
     return {}
