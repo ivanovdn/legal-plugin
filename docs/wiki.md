@@ -52,7 +52,7 @@ CUAD dataset (510 real contracts) also available at `data/cuad/`.
 ## Architecture
 
 ```
-Attorney → Chainlit (:8080) → FastAPI (:8000) → LangGraph graph
+Attorney → Chainlit (:8080) / Word add-in (:3001) → FastAPI (:8000) → LangGraph graph
                                                     ├── Skills (5 capabilities)
                                                     ├── RAG layer → Qdrant
                                                     ├── LLM → Ollama
@@ -64,7 +64,7 @@ Attorney → Chainlit (:8080) → FastAPI (:8000) → LangGraph graph
 
 **Two-process model:**
 - **Backend** (FastAPI, port 8000) — owns all business logic, graph execution, RAG, LLM calls, audit
-- **Frontend** (Chainlit, port 8080) — thin client, talks to backend via HTTP
+- **Frontends** — Chainlit (:8080) and the Word add-in (:3001, Office.js task pane); both thin clients calling the backend over HTTP (`POST /api/query`)
 
 ---
 
@@ -423,9 +423,15 @@ retrieval_query, retrieved_chunks, filters, messages,
 llm_response, risk_level, risk_flags, awaiting_review,
 attorney_notes, report, session_id, checkpoint_ref, trace_id,
 chat_history,                  # within-session memory (capped at 2N entries via idempotent reducer)
-review_iterations,             # number of loop-backs from human_review (capped by MAX_REVIEW_ITERATIONS)
+review_iterations,             # loop-backs from human_review (capped by max_review_iterations)
 report_notes_unincorporated,   # attorney notes that couldn't be applied (set on iteration cap)
-previous_draft                 # llm_response from prior iteration, preserved across loop-back for revise-not-regenerate
+previous_draft,                # llm_response from prior iteration, preserved across loop-back for revise-not-regenerate
+proposed_edits,                # structured edit proposals parsed from chat skill output
+contract_type_detected,        # nda | msa | sow | baa (set by contract_review when uploaded text present)
+requires_attorney,             # server verdict: doc needs attorney sign-off (blocker / yellow)
+interactive_review,            # caller can handle a human_review interrupt + resume (Chainlit True, Word False)
+document_id,                   # stable doc id — client Office-settings UUID, preamble-hash fallback (review + conversation store key)
+memory_degraded                # True when a memory read/store was unavailable this turn
 ```
 
 ---
@@ -475,10 +481,10 @@ Key settings:
 
 ## Tests
 
-121 tests across 17 files, run in ~2 seconds:
+291 backend tests + 157 Word-add-in frontend asserts, run in a few seconds:
 
 ```bash
-source .venv/bin/activate && python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 Coverage includes: graph compilation + routing + audit, end-to-end interrupt/resume/loop/cap with `MemorySaver`, Redis checkpointer factory, FastAPI endpoints (submit + resume + interrupt detection via `__interrupt__` key), all five skills with mocked agents, RAG layer (embeddings, vector store, BM25, hybrid search, reranker), DOCX/PDF parsers, ingest pipeline, and config loading.
@@ -554,7 +560,7 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 | O365 SSO attorney identity | Medium | Slice 3. Real `attorney_id` for per-attorney threads via Office SSO (`getAccessToken`); today `attorney_id` is a per-install `localStorage` UUID sent via `X-User-ID` (`clients/word/src/attorneyIdentity.ts`), not yet tied to an O365 identity. Stub locally until scale. |
 | Chat: reconcile a recalled review against the current doc (stale-recall) | Medium | Surfaced by the canonical-UUID smoke (2026-07-14). Now that review recall is **durable** across edits, chat faithfully recalls the *last* review — a point-in-time snapshot — so a field you resolved *after* reviewing (e.g. filled `[Legal Name]`→`Sony`) is still reported as a placeholder until you re-review. Workflow answer today: re-review after material edits (`load_latest_review` returns the newest). Better: have `_run_doc_chat` reconcile the recalled review against the current `uploaded_text` (note fields since filled) and/or nudge a re-review when the doc changed since the review timestamp. This is a property of the pre-existing review-recall grounding, made visible by durable recall — not the identity slice. |
 | Conversation retention / pruning policy | Low | `conversation_store` grows unbounded; only the injected window (`conversation_max_messages`) is capped. Revisit if `data/legal.db` size grows. |
-| Word add-in: chat history persistence across pane reopen | Medium | Chat is per-pane-lifetime today; persist messages + `session_id` to `localStorage` keyed by doc so reopening the pane restores the conversation. |
+| ~~Word add-in: chat history persistence across pane reopen~~ | ~~Medium~~ | **DONE (adapted)** — superseded by the server-side conversation store (`feat/conversation-store`, slice 2): chat persists per `(document_id, attorney_id)` in SQLite and `_run_doc_chat` recalls it, so reopening the pane (fresh `session_id`) restores the conversation from the durable store. Server-side realization, replacing the originally-sketched `localStorage` approach (prototyped and reverted). |
 | Word add-in: bulk actions ("Apply all RED") | Medium | Findings tab — one click to track-change every RED finding, plus a stale-findings banner after the doc is edited. (Filter/sort pills **shipped** in `feat/word-addin-quick-ux`; click-to-jump navigation shipped there too.) |
 | ~~Clause-locator hardening for placeholder / short anchors~~ | ~~Medium~~ | **DONE** — shipped in `feat/clause-locator-hardening` (2026-07-09; smoke-confirm pending). Fixed the (b) mislocation half: new pure `shouldMatchWholeWord()` makes `searchFirst` whole-word-only for short (≤ 2-word) anchors, so "Title" no longer matches inside "entitled" — shared by `goToClause`/`showInDocument`/`acceptRedline`. Null-range failures now show a calm `NO_MATCH_MESSAGE` instead of "Couldn't locate this clause." The wildcard-retry this follow-up called for was already live in `searchFirst`. **Deferred (not in this fix):** `[__]` first-occurrence disambiguation (which of several identical blanks a label-only finding should anchor on), and predictive suppression of label-only Missing-Context findings with no literal doc text (they still attempt a locate and fall through to `NO_MATCH_MESSAGE` today). |
 | ~~Red error-pill styling on the now-calm no-match box~~ | ~~Low~~ | **DONE** — shipped in `feat/calm-notfound-styling` (sideload-smoke-confirmed 2026-07-13). Noted during the `feat/clause-locator-hardening` sideload smoke test (2026-07-10): that branch softened the copy to `NO_MATCH_MESSAGE`, but the box still rendered in the red `.card-status.error` pill, reading like a genuine failure. Fixed by tagging the benign case in the **data** (new optional `Result.notFound` flag on the two navigation null-range guards — `goToClause`/`showInDocument`; `acceptRedline`'s failed-replace stays a red error — not string-matching) and rendering it via a new neutral `.card-status.info` pill in `FindingCard.tsx` — and, after the whole-branch review flagged the inconsistency, in the Chat tab's `EditProposalCard.tsx` "Go to" too. Genuine errors (Word unavailable, empty text, `acceptRedline`'s completeness-guard) are unchanged and stay red. Frontend-only, review outputs byte-identical, no new asserts (154 total, unchanged). |
@@ -564,7 +570,7 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 | Admin API endpoints (sessions, skills, reviews, audit) | Medium | Deferred until a UI consumes them |
 | Long-term memory (Qdrant `memory` collection) | Medium | Cross-session attorney preferences; implement when usage patterns emerge |
 | DOCX output generation | Medium | PDF works; DOCX needed for Word add-in round-tripping (attorney edits doc in Word → exports back as DOCX) |
-| Real authentication | Medium | Simple `X-User-ID` header today; needed before multi-user Linux VM |
+| Real authentication | Medium | `X-User-ID` today carries a per-install attorney UUID (partitioning key, not auth); real auth needed before the multi-user VM. The Word path is tracked as **O365 SSO attorney identity** (slice 3) above. |
 | Remaining skills as folders | Low | `compliance_check`, `legal_research`, `drafting` still flat files |
 | MCP tools integration | Low | Architecture supports it — tools plug into agent registries |
 | Langfuse prompt versioning | Low | Prompts logged per-call; formal versioning not set up |
