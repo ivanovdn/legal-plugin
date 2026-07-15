@@ -147,9 +147,14 @@ SSO lands.
 conversation append, guarded to the doc-chat path, mirroring the review block:
 
 - Only when `task_type == "research"` and `conversation_store_enabled`.
-- Only when `document_id` **and** `user_id` **and** `llm_response` are present
-  (a no-doc research turn has no `document_id` → skipped; general Chainlit
-  research is not persisted here, by design).
+- Only when `document_id` **and** `user_id` **and** `llm_response` are present.
+  A no-doc research turn has no `document_id` → skipped (Chainlit KB research,
+  scripts). NOTE: `intake.py` backfills a preamble-hash `document_id` when no
+  client UUID is sent, so a *doc-attached* Chainlit research turn IS persisted
+  — safely isolated by `(document_id, attorney_id)`, but keyed by the fragile
+  preamble hash (slice-1's accepted limitation) rather than the stable Office
+  UUID the Word client sends. This is intended and harmless: continuity for any
+  doc-attached chat, per attorney, with no cross-tenant risk.
 - Lazy `init_conversation_db` once (module flag, like `_review_db_initialized`).
 - **Best-effort:** wrap `append_turn` in `try/except`, log on failure, **never
   raise and never fail the turn**. (Contrast the review write, which surfaces
