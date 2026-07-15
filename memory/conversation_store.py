@@ -75,7 +75,7 @@ def load_recent(
     db_path: str, document_id: str, attorney_id: str, max_messages: int
 ) -> list[dict]:
     """Up to max_messages most-recent messages for the pair, chronological (oldest first)."""
-    if not document_id or not attorney_id:
+    if not document_id or not attorney_id or max_messages <= 0:
         return []
     conn = sqlite3.connect(db_path)
     try:

@@ -66,6 +66,13 @@ def test_load_recent_unknown_key_returns_empty(tmp_path):
     assert load_recent(db, "no-doc", "no-atty", 20) == []
 
 
+def test_load_recent_nonpositive_max_returns_empty(tmp_path):
+    db = _db(tmp_path)
+    append_turn(db, "doc-1", "atty-1", "q", "a")
+    assert load_recent(db, "doc-1", "atty-1", 0) == []
+    assert load_recent(db, "doc-1", "atty-1", -1) == []
+
+
 def test_append_raises_loudly_on_bad_path():
     # Parent dir does not exist -> cannot open -> must raise, never silent.
     with pytest.raises(Exception):

@@ -1,7 +1,8 @@
 // Per-install attorney identity. Stored in localStorage (per add-in origin, so
 // it is the SAME id across all of this attorney's documents — unlike
-// document.settings, which is per-document). Confirmed to survive the Word-for-Mac
-// task-pane teardown. Sent as the X-User-ID header; O365 SSO (slice 3) will
+// document.settings, which is per-document). Observed to survive the Word-for-Mac
+// task-pane teardown in slice-1 smoke (re-confirmed by this feature's sideload check).
+// Sent as the X-User-ID header; O365 SSO (slice 3) will
 // overwrite this value at the same seam.
 const KEY = "legalTriageAttorneyId";
 
