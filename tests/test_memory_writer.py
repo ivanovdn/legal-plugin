@@ -49,3 +49,71 @@ def test_write_failure_is_surfaced_in_report(monkeypatch):
     out = mod.memory_writer(_state())
     assert "review_persist_error" in out["report"]
     assert "disk full" in out["report"]["review_persist_error"]
+
+
+def test_persists_conversation_for_research_turn(monkeypatch):
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
+    monkeypatch.setattr(mod, "init_audit_db", lambda p: None)
+    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
+    saved = {}
+    monkeypatch.setattr(
+        mod, "append_turn",
+        lambda db_path, document_id, attorney_id, user_text, assistant_text:
+        saved.update(document_id=document_id, attorney_id=attorney_id,
+                     user_text=user_text, assistant_text=assistant_text),
+    )
+    mod.memory_writer(_state(
+        task_type="research", user_id="atty-1",
+        request="who signs?", llm_response="Boris signs.",
+    ))
+    assert saved == {
+        "document_id": "doc-1", "attorney_id": "atty-1",
+        "user_text": "who signs?", "assistant_text": "Boris signs.",
+    }
+
+
+def test_does_not_persist_conversation_for_review_turn(monkeypatch):
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
+    monkeypatch.setattr(mod, "init_audit_db", lambda p: None)
+    monkeypatch.setattr(mod, "init_review_db", lambda p: None)
+    monkeypatch.setattr(mod, "save_review", lambda **kw: None)
+    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
+    called = {"n": 0}
+    monkeypatch.setattr(mod, "append_turn",
+                        lambda **kw: called.__setitem__("n", called["n"] + 1))
+    mod.memory_writer(_state(task_type="contract_review"))
+    assert called["n"] == 0
+
+
+def test_skips_conversation_when_no_document_id(monkeypatch):
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
+    monkeypatch.setattr(mod, "init_audit_db", lambda p: None)
+    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
+    called = {"n": 0}
+    monkeypatch.setattr(mod, "append_turn",
+                        lambda **kw: called.__setitem__("n", called["n"] + 1))
+    mod.memory_writer(_state(task_type="research", user_id="atty-1", document_id=""))
+    assert called["n"] == 0
+
+
+def test_conversation_write_failure_is_non_fatal(monkeypatch):
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
+    monkeypatch.setattr(mod, "init_audit_db", lambda p: None)
+    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
+    def _boom(**kw):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(mod, "append_turn", _boom)
+    out = mod.memory_writer(_state(task_type="research", user_id="atty-1"))
+    assert "review_persist_error" not in (out.get("report") or {})
+
+
+def test_conversation_init_failure_is_non_fatal(monkeypatch):
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
+    monkeypatch.setattr(mod, "init_audit_db", lambda p: None)
+    monkeypatch.setattr(mod, "append_turn", lambda **kw: None)
+    def _boom(p):
+        raise RuntimeError("cannot open db")
+    monkeypatch.setattr(mod, "init_conversation_db", _boom)
+    mod._conversation_db_initialized = False  # force an init attempt
+    out = mod.memory_writer(_state(task_type="research", user_id="atty-1"))
+    assert "review_persist_error" not in (out.get("report") or {})
