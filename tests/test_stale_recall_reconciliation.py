@@ -121,6 +121,31 @@ def test_load_prior_review_block_survives_reconcile_error(monkeypatch):
         raise ValueError("reconcile bug")
 
     monkeypatch.setattr(lr, "_reconcile_review_with_doc", _boom)
-    block = lr._load_prior_review_block({"document_id": "d1"}, "Signed by: Suzy Quatro\n")
+    state = {"document_id": "d1"}
+    block = lr._load_prior_review_block(state, "Signed by: Suzy Quatro\n")
     assert "PRIOR REVIEW" in block
     assert "MC-1" in block                # falls back to the raw review, unchanged
+    assert "memory_degraded" not in state   # a reconcile error must NOT flag memory degraded
+
+
+def test_multi_marker_bundled_span_not_dropped_when_partially_filled():
+    review = (
+        "# Red and Missing Context Items\n"
+        "| MC-1 | Sig | `Signed by: [__] / Title: [__] / for and on behalf of [__]` unfilled | Missing Context |\n"
+    )
+    doc = "Signed by: John Smith / Title: [__] / for and on behalf of [__]\n"  # only 'Signed by' filled
+    out, filled = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" in out          # bundled multi-field span left intact (conservative)
+    assert filled == []           # nothing dropped
+
+
+def test_note_lists_only_tokens_whose_rows_were_dropped():
+    review = (
+        "# Red and Missing Context Items\n"
+        "| MC-1 | Both | `Signed by: [__]` and `Witness: [__]` unfilled | Missing Context |\n"
+    )
+    doc = "Signed by: Suzy Quatro\nWitness: [__]\n"  # signed filled, witness still blank -> row KEPT
+    out, filled = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" in out                  # row kept (witness still blank)
+    assert filled == []                   # nothing dropped -> no over-claim
+    assert "Auto-reconciled" not in out   # no note when nothing was dropped

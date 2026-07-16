@@ -421,7 +421,11 @@ def _placeholder_candidates(review_markdown: str) -> list[str]:
 
     for m in re.finditer(r"`([^`]+)`", review_markdown):      # full field context
         span = m.group(1)
-        if _MARKER_IN_SPAN_RE.search(span):
+        # Only single-marker spans are droppable. A span bundling >=2 markers
+        # (the MSA/SOW `Signed by: [__] / Title: [__] / ...` shape) can't be
+        # reconciled atomically — a partial fill would make the whole span vanish
+        # from the doc and wrongly drop a still-live blocker. Leave those intact.
+        if len(_MARKER_IN_SPAN_RE.findall(span)) == 1:
             _add(span)
     for m in _BARE_LABEL_RE.finditer(review_markdown):        # bare labeled tokens
         _add(m.group(0))
@@ -431,11 +435,14 @@ def _placeholder_candidates(review_markdown: str) -> list[str]:
 def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str, list[str]]:
     """Drop placeholder findings the current doc proves are filled.
 
-    Returns (reconciled_markdown, filled_tokens). A candidate is 'filled' when its
-    normalized form is no longer a substring of the normalized document. A line is
-    dropped only when EVERY placeholder it references is filled (a line still
-    holding a live placeholder is kept); section headings are never dropped. When
-    nothing is stale the input is returned unchanged with an empty list.
+    Returns (reconciled_markdown, dropped_tokens) — the tokens whose finding rows
+    were actually removed (drives the reconciliation note; empty when nothing was
+    dropped, in which case the input is returned unchanged). A candidate is 'filled'
+    when its normalized form is no longer a substring of the normalized document. A
+    line is dropped only when EVERY placeholder it references is filled (a line still
+    holding a live placeholder is kept); section headings are never dropped. Only
+    single-marker backtick spans are droppable — a span bundling several markers is
+    left intact, so a partial fill can never drop a still-live blocker.
     """
     if not review_markdown or not doc_text:
         return review_markdown, []
@@ -450,6 +457,8 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
     filled_set = set(filled)
 
     kept: list[str] = []
+    dropped_tokens: list[str] = []
+    seen_dropped: set[str] = set()
     for line in review_markdown.splitlines():
         if line.lstrip().startswith("#"):        # never drop section headings
             kept.append(line)
@@ -471,17 +480,24 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
             )
         ]
         if specific and all(c in filled_set for c in specific):
-            continue                             # every placeholder here is filled -> drop
+            for c in specific:                   # every placeholder here is filled -> drop
+                if c not in seen_dropped:
+                    seen_dropped.add(c)
+                    dropped_tokens.append(c)
+            continue
         kept.append(line)
 
+    if not dropped_tokens:                        # filled candidates but no row removed
+        return review_markdown, []                # -> no change, no over-claiming note
+
     note = (
-        f"> **Auto-reconciled:** {len(filled)} placeholder(s) flagged in the prior "
-        f"review were filled in the document afterward and have been removed from the "
-        f"recalled findings: {', '.join('`' + c + '`' for c in filled)}. If these were "
-        f"the only signature-block blockers, re-review to confirm the No-Signature gate "
-        f"now passes.\n\n"
+        f"> **Auto-reconciled:** {len(dropped_tokens)} placeholder(s) flagged in the "
+        f"prior review were filled in the document afterward and have been removed from "
+        f"the recalled findings: {', '.join('`' + c + '`' for c in dropped_tokens)}. If "
+        f"these were the only signature-block blockers, re-review to confirm the "
+        f"No-Signature gate now passes.\n\n"
     )
-    return note + "\n".join(kept), filled
+    return note + "\n".join(kept), dropped_tokens
 
 
 def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
