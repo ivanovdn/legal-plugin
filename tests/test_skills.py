@@ -1379,7 +1379,7 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
     )
     monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: {"markdown": review_md})
     state = _make_state(uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}], document_id="doc-1")
-    block = lr._load_prior_review_block(state)
+    block = lr._load_prior_review_block(state, "STATEMENT OF WORK\n\nbody")
     # Analysis kept (recall still works):
     assert "Key Findings" in block
     assert "IP clause" in block

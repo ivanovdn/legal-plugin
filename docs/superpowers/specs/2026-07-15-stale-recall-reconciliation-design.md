@@ -165,14 +165,37 @@ All tests offline. Full suite must stay green (currently 317 backend).
 
 ## Risks & mitigations
 
-- **False drop (removing a still-relevant finding):** mitigated by whole-quoted-string matching +
-  normalization; a token must be genuinely absent from the current doc to be dropped.
+- **False drop (removing a still-live finding):** the dangerous direction. Mitigated by
+  whole-quoted-string matching + normalization; the "most-specific-wins per line" rule (a bare
+  label can't out-vote its own filled span); and — added after the final review — **only
+  single-marker backtick spans are droppable**, so a span bundling several markers
+  (`Signed by: [__] / Title: [__] / …`, the MSA/SOW shape) is left intact and a partial fill can
+  never vanish a still-live blocker.
 - **Under-reconciliation (a stale finding the heuristic misses):** acceptable — the fallback is
   today's behavior (the finding stays). No regression vs. current state.
 - **Gate/summary contradiction** (placeholder rows dropped but the gate line still says
   "unfilled"): mitigated by the reconciliation note; full gate recomputation deferred to a
   follow-up if it proves necessary.
 - **Reconcile bug breaking chat:** mitigated by try/except → inject review unchanged.
+
+### Known limitations (accepted — heuristic quote-vs-doc matching)
+
+Reconciliation is a verbatim, normalized substring match of a quoted token against the current
+document. Two low-probability over-drop cases fall out of that and are **accepted**, not fixed, in
+v1 (both need the review to *bracket* text and the doc to differ verbatim — uncommon, since review
+quotes are usually offending prose, and the failure only ever removes a finding, never invents one):
+
+- **Bracketed defined term in a substantive finding.** A capitalized bracketed term like
+  `[Confidential Information]` matches the bare-label pattern; if the body uses it *unbracketed*,
+  the quote is "absent" → classed filled → that (possibly substantive) row is dropped. Qualifies
+  the "substantive findings are never dropped" claim to "unless a substantive finding quotes a
+  bracketed term the doc renders unbracketed."
+- **Quote drift.** If a still-blank field is *relabeled* more verbosely in the doc
+  (`Party: [Legal Name]` → `Party: [Legal Name of Counterparty]`), the exact quote is absent →
+  the still-unfilled row is dropped.
+
+Both are candidates for the future tightening "only treat a bare labeled bracket as a placeholder
+when it also appears inside a backtick current-wording quote" (deferred; not needed for v1).
 
 ## Follow-ups (out of scope)
 
