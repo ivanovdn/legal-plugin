@@ -484,10 +484,16 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
     return note + "\n".join(kept), filled
 
 
-def _load_prior_review_block(state: LegalAgentState) -> str:
+def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
     """Latest stored review for this document, as a system block. Empty string
     when none exists. On a store-read failure, flags memory_degraded and returns
-    empty — tracing/memory must never break the chat turn."""
+    empty — tracing/memory must never break the chat turn.
+
+    Reconciles the recalled review against the current document (uploaded_text):
+    placeholder findings the document proves were filled after the review are
+    dropped, so chat does not report an already-filled field as unfilled. A
+    reconciliation error injects the review unchanged (never fails the turn) and
+    does NOT flag memory_degraded — that is reserved for real store failures."""
     document_id = state.get("document_id", "")
     if not document_id:
         return ""
@@ -500,6 +506,13 @@ def _load_prior_review_block(state: LegalAgentState) -> str:
     if not latest:
         return ""
     review_text = _strip_redlines_section(latest["markdown"])
+    if uploaded_text:
+        try:
+            review_text, _filled = _reconcile_review_with_doc(review_text, uploaded_text)
+        except Exception as e:
+            logger.warning(
+                "[legal_research] review reconciliation failed: %s — injecting review unchanged", e
+            )
     return (
         "--- PRIOR REVIEW (most recent, this document) ---\n"
         "Answer recall questions from this review; do not re-derive or contradict it.\n\n"
@@ -630,7 +643,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             f"{attorney_notes}"
         )
 
-    review_block = _load_prior_review_block(state)
+    review_block = _load_prior_review_block(state, uploaded_text)
     attach = (not get_settings().chat_conditional_grounding) or _needs_grounding(request)
     if attach:
         playbook, msa_block = _build_chat_grounding(state, uploaded_text)

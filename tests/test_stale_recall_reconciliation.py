@@ -1,4 +1,5 @@
 """Stale-recall reconciliation: drop placeholder findings the current doc proves are filled."""
+import skills.legal_research as lr
 from skills.legal_research import _reconcile_review_with_doc
 
 
@@ -93,3 +94,33 @@ def test_recurring_label_across_contexts_drops_only_filled():
     assert "MC-1" not in out          # landlord filled -> dropped
     assert "MC-2" in out              # tenant blank -> kept
     assert filled == ["Landlord: [Legal Name]"]
+
+
+_REVIEW_MD = (
+    "# Red and Missing Context Items\n"
+    "| MC-1 | Sig | `Signed by: [__]` unfilled | Missing Context |\n"
+)
+
+
+def _fake_latest(_db, _doc_id):
+    return {"markdown": _REVIEW_MD, "timestamp": "t", "session_id": "s", "contract_type": "nda"}
+
+
+def test_load_prior_review_block_injects_reconciled(monkeypatch):
+    monkeypatch.setattr(lr, "load_latest_review", _fake_latest)
+    block = lr._load_prior_review_block({"document_id": "d1"}, "Signed by: Suzy Quatro\n")
+    assert "PRIOR REVIEW" in block
+    assert "MC-1" not in block            # stale finding reconciled out
+    assert "Auto-reconciled" in block
+
+
+def test_load_prior_review_block_survives_reconcile_error(monkeypatch):
+    monkeypatch.setattr(lr, "load_latest_review", _fake_latest)
+
+    def _boom(_review, _doc):
+        raise ValueError("reconcile bug")
+
+    monkeypatch.setattr(lr, "_reconcile_review_with_doc", _boom)
+    block = lr._load_prior_review_block({"document_id": "d1"}, "Signed by: Suzy Quatro\n")
+    assert "PRIOR REVIEW" in block
+    assert "MC-1" in block                # falls back to the raw review, unchanged
