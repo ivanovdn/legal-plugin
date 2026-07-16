@@ -80,3 +80,16 @@ def test_malformed_markdown_does_not_crash():
     out, filled = _reconcile_review_with_doc(review, doc)
     assert isinstance(out, str)
     assert isinstance(filled, list)
+
+
+def test_recurring_label_across_contexts_drops_only_filled():
+    review = (
+        "# Red and Missing Context Items\n"
+        "| MC-1 | Landlord | `Landlord: [Legal Name]` blank | Missing Context |\n"
+        "| MC-2 | Tenant | `Tenant: [Legal Name]` blank | Missing Context |\n"
+    )
+    doc = "Landlord: Acme Corp\nTenant: [Legal Name]\n"   # landlord filled, tenant blank
+    out, filled = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" not in out          # landlord filled -> dropped
+    assert "MC-2" in out              # tenant blank -> kept
+    assert filled == ["Landlord: [Legal Name]"]

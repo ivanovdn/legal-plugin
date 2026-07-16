@@ -456,7 +456,21 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
             continue
         norm_line = _normalize_for_match(line)
         refs = [c for c in candidates if norm_cand[c] in norm_line]
-        if refs and all(c in filled_set for c in refs):
+        # Most-specific-wins on a line: ignore a ref that is a proper substring of
+        # another ref present on the same line, so a bare label ([Legal Name]) can't
+        # out-vote its own filled span (`Landlord: [Legal Name]`) and keep a row that
+        # was in fact filled. Without this, a label recurring across two contexts
+        # (two parties / two signature blocks) would never reconcile.
+        specific = [
+            c for c in refs
+            if not any(
+                c != other
+                and norm_cand[c] != norm_cand[other]
+                and norm_cand[c] in norm_cand[other]
+                for other in refs
+            )
+        ]
+        if specific and all(c in filled_set for c in specific):
             continue                             # every placeholder here is filled -> drop
         kept.append(line)
 
