@@ -4,6 +4,7 @@
 import json
 import logging
 import re
+import unicodedata
 
 from langchain_ollama import ChatOllama
 from langfuse.decorators import observe
@@ -379,6 +380,94 @@ def _strip_redlines_section(markdown: str) -> str:
     else:
         end = len(markdown)
     return markdown[:start] + markdown[end:]
+
+
+# Placeholder reconciliation ---------------------------------------------------
+# A backtick span qualifies as a placeholder quote if it contains any bracket
+# token or underscore blank. A BARE bracket token is only treated as a
+# placeholder when it is LABELED (starts with an uppercase letter, e.g.
+# "[Legal Name]", "[Date]") — a generic blank like "[__]" is ambiguous across
+# fields, so it is only ever considered inside its full backtick context.
+_MARKER_IN_SPAN_RE = re.compile(r"\[[^\]]{0,40}\]|_{2,}")
+_BARE_LABEL_RE = re.compile(r"\[[A-Z][^\]]{0,38}\]")
+_SOURCE_TAG_RE = re.compile(r"\[\s*source\s*:", re.IGNORECASE)
+
+
+def _normalize_for_match(text: str) -> str:
+    """NFC + curly->straight quotes + nbsp/whitespace collapse, for tolerant
+    substring matching between a review quote and the current document."""
+    text = unicodedata.normalize("NFC", text)
+    text = (
+        text.replace("’", "'").replace("‘", "'")   # curly single quotes
+        .replace("“", '"').replace("”", '"')       # curly double quotes
+        .replace(" ", " ")                              # non-breaking space
+    )
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _placeholder_candidates(review_markdown: str) -> list[str]:
+    """Distinct placeholder strings quoted in the review: full backtick spans that
+    carry a marker (e.g. `Signed by: [__]`) plus bare LABELED bracket tokens
+    (e.g. [Legal Name]). Excludes generated-draft [Source: id] tags."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: str) -> None:
+        s = raw.strip()
+        if not s or s in seen or _SOURCE_TAG_RE.search(s):
+            return
+        seen.add(s)
+        candidates.append(s)
+
+    for m in re.finditer(r"`([^`]+)`", review_markdown):      # full field context
+        span = m.group(1)
+        if _MARKER_IN_SPAN_RE.search(span):
+            _add(span)
+    for m in _BARE_LABEL_RE.finditer(review_markdown):        # bare labeled tokens
+        _add(m.group(0))
+    return candidates
+
+
+def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str, list[str]]:
+    """Drop placeholder findings the current doc proves are filled.
+
+    Returns (reconciled_markdown, filled_tokens). A candidate is 'filled' when its
+    normalized form is no longer a substring of the normalized document. A line is
+    dropped only when EVERY placeholder it references is filled (a line still
+    holding a live placeholder is kept); section headings are never dropped. When
+    nothing is stale the input is returned unchanged with an empty list.
+    """
+    if not review_markdown or not doc_text:
+        return review_markdown, []
+    candidates = _placeholder_candidates(review_markdown)
+    if not candidates:
+        return review_markdown, []
+    norm_doc = _normalize_for_match(doc_text)
+    norm_cand = {c: _normalize_for_match(c) for c in candidates}
+    filled = [c for c in candidates if norm_cand[c] not in norm_doc]
+    if not filled:
+        return review_markdown, []
+    filled_set = set(filled)
+
+    kept: list[str] = []
+    for line in review_markdown.splitlines():
+        if line.lstrip().startswith("#"):        # never drop section headings
+            kept.append(line)
+            continue
+        norm_line = _normalize_for_match(line)
+        refs = [c for c in candidates if norm_cand[c] in norm_line]
+        if refs and all(c in filled_set for c in refs):
+            continue                             # every placeholder here is filled -> drop
+        kept.append(line)
+
+    note = (
+        f"> **Auto-reconciled:** {len(filled)} placeholder(s) flagged in the prior "
+        f"review were filled in the document afterward and have been removed from the "
+        f"recalled findings: {', '.join('`' + c + '`' for c in filled)}. If these were "
+        f"the only signature-block blockers, re-review to confirm the No-Signature gate "
+        f"now passes.\n\n"
+    )
+    return note + "\n".join(kept), filled
 
 
 def _load_prior_review_block(state: LegalAgentState) -> str:
