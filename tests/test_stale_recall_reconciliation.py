@@ -327,4 +327,36 @@ def test_reconcile_end_to_end_annotates_when_blocker_survives():
     assert "R-1" in out                             # substantive Red finding kept
     assert "Do not send for signature" in out       # verdict retained (blocker survives)
     assert "PENDING RE-REVIEW" not in out
+
+
+def test_surviving_blocker_count_strips_rating_emphasis():
+    md = (
+        "# Key Findings\n"
+        "| ID | Rating | Issue |\n"
+        "| -- | -- | -- |\n"
+        "| A | **Red** | bold red |\n"
+        "| B | `Missing Context` | backtick mc |\n"
+        "| C | missing_context | underscore spelling still counts |\n"
+        "| D | *Yellow* | italic non-blocker |\n"
+    )
+    assert lr._surviving_blocker_count(md) == 3   # A, B, C blockers; D (Yellow) not
+
+
+def test_end_to_end_bold_rating_blocker_prevents_neutralize():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Clause / section | Rating | Issue | Required action | Owner |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| R-1 | Indemnity | **Red** | uncapped indemnity | Escalate | Legal |\n"
+        "| MC-1 | Signature | Missing Context | `Signed by: [__]` unfilled | Fill | Legal |\n"
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"
+    )
+    doc = "Signed by: Suzy Quatro\n"
+    out, dropped = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" not in out                       # placeholder dropped
+    assert "R-1" in out                            # bold Red survives
+    assert "Do not send for signature" in out      # verdict retained (real blocker present)
+    assert "PENDING RE-REVIEW" not in out          # NOT neutralized despite bold rating
     assert "Reconciled:" in out                      # gate annotated

@@ -461,7 +461,7 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
     seen_dropped: set[str] = set()
     in_gate = False
     for line in review_markdown.splitlines():
-        if line.lstrip().startswith("#"):        # never drop section headings
+        if _HEADING_RE.match(line):        # never drop section headings
             in_gate = bool(_GATE_HEADING_RE.match(line))  # gate owned by _reconcile_gate_verdict
             kept.append(line)
             continue
@@ -510,6 +510,7 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
 # structured Key Findings table (the source of truth for blockers, mirroring the
 # Word parser's deriveBlockers) to decide whether any substantive blocker remains.
 _KEY_FINDINGS_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*key\s+findings\s*$", re.IGNORECASE)
+_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")   # any GFM heading (section boundary)
 _BLOCKER_RATINGS = {"red", "missing context", "missing-context", "missing_context"}
 
 
@@ -528,7 +529,7 @@ def _surviving_blocker_count(review_markdown: str) -> int | None:
         return None
     rows: list[str] = []
     for line in lines[start:]:
-        if re.match(r"^\s{0,3}#{1,6}\s", line):          # next section heading -> stop
+        if _HEADING_RE.match(line):          # next section heading -> stop
             break
         if line.strip().startswith("|"):
             rows.append(line)
@@ -543,7 +544,10 @@ def _surviving_blocker_count(review_markdown: str) -> int | None:
         cells = [c.strip() for c in row.strip().strip("|").split("|")]
         if len(cells) <= rating_idx:
             continue
-        cell = cells[rating_idx].lower()
+        # Strip emphasis markup (**Red**, `Red`) before matching, like the Word
+        # parser's normalizeRisk. Do NOT strip '_' — it would collapse the
+        # "missing_context" spelling in _BLOCKER_RATINGS to "missingcontext".
+        cell = cells[rating_idx].lower().replace("*", "").replace("`", "").strip()
         if not cell or set(cell) <= {"-", ":", " "}:     # separator row (---, :---:)
             continue
         if cell in _BLOCKER_RATINGS:
@@ -578,7 +582,7 @@ def _reconcile_gate_verdict(review_markdown: str, dropped_tokens: list[str]) -> 
         return review_markdown
     gate_end = len(lines)
     for j in range(gate_start + 1, len(lines)):
-        if re.match(r"^\s{0,3}#{1,6}\s", lines[j]):      # next section heading
+        if _HEADING_RE.match(lines[j]):      # next section heading
             gate_end = j
             break
     norm_body = _normalize_for_match("\n".join(lines[gate_start + 1:gate_end]))
