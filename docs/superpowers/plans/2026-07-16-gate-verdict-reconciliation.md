@@ -492,3 +492,19 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **2. Placeholder scan:** No "TBD"/"TODO"/"handle edge cases"/"similar to". Every code step shows complete code; every run step shows exact command + expected output. ✅
 
 **3. Type consistency:** `_surviving_blocker_count(str) -> int | None` defined in Task 1, consumed in Task 2 via `_surviving_blocker_count(review_markdown) == 0` (None == 0 is False → annotate — correct). `_reconcile_gate_verdict(str, list[str]) -> str` defined Task 2, called as `_reconcile_gate_verdict("\n".join(kept), dropped_tokens)` — types match. `_normalize_for_match(str) -> str` and `_GATE_HEADING_RE` reused consistently across the loop and the reconciler. ✅
+
+---
+
+## Post-implementation notes (plan ≡ code)
+
+The shipped code differs from the plan's literal blocks in three reviewed, intentional ways — recorded here so the plan matches the branch:
+
+1. **Task 2 end-to-end fixtures (column swap fix).** In `test_reconcile_end_to_end_neutralizes_gate` and `test_reconcile_end_to_end_annotates_when_blocker_survives`, the plan's Key Findings rows had the `Issue` and `Rating` cells transposed (e.g. `| R-1 | Indemnity | Broad indemnity | Red | … |`), so the `Rating` column held prose and the row wasn't recognized as a blocker — the annotate-only test would have failed against correct code. The implementer corrected the rows to header order (`Rating` = `Red` / `Missing Context`); the assertions were unchanged. Verified by the Task-2 reviewer (empirically reproduced the failure with the original fixture).
+
+2. **Final-review fix — rating-cell emphasis strip (commit `ac40c42`).** `_surviving_blocker_count` now strips `*` and backtick from the rating cell before the blocker-set check (`cells[rating_idx].lower().replace("*","").replace("`","").strip()`), so a bolded `**Red**` is still counted — without it a live blocker was missed and the gate wrongly neutralized (the dangerous direction). `_` is deliberately **not** stripped (would break the `missing_context` spelling). Added `test_surviving_blocker_count_strips_rating_emphasis` + `test_end_to_end_bold_rating_blocker_prevents_neutralize`.
+
+3. **Final-review fix — shared `_HEADING_RE` (commit `ac40c42`).** Generic heading/section-boundary detection is unified on one module constant `_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")`, used by the row-drop loop (was `line.lstrip().startswith("#")`), `_surviving_blocker_count`, and `_reconcile_gate_verdict`. The specific `_KEY_FINDINGS_HEADING_RE` / `_GATE_HEADING_RE` matchers are unchanged.
+
+4. **Final-review re-review follow-up — underscore-italic emphasis (commit in the fix range).** The opus re-review found `_Red_` (underscore-italic) ratings still slipped past the `*`/backtick strip. Completed with `.strip("_")` (surrounding underscores only, so internal `missing_context` survives) + `test_surviving_blocker_count_strips_underscore_italic_rating`. Closes the rating-markup class in the dangerous direction.
+
+Final suite: **347** backend tests (330 prior + 14 tasks + 3 fix-wave). Two documented residual undercount risks + the "never-green-lights applies to generated text" invariant caveat live in the spec's Risks section.

@@ -217,7 +217,13 @@ All tests offline. Full suite must stay green (currently 330 backend → ~341).
 - **Under-stating a real blocker (the dangerous direction):** neutralize fires only when the
   structured Key Findings table has **zero** surviving Red/Missing-Context rows; any doubt
   (unparseable table, missing status line, mixed blockers) falls back to annotate-only with the
-  DO-NOT-SEND verdict intact. `Blocking items:` text is never deleted.
+  DO-NOT-SEND verdict intact. `Blocking items:` text is never deleted. **The rating cell is stripped
+  of emphasis markup before the blocker match** — `*`/backtick globally, plus `.strip("_")` for
+  *surrounding* underscores (italic wraps like `_Red_`) — added after the final review, where a
+  bolded `**Red**` (and, on re-review, an italic `_Red_`) was being missed, dropping a live blocker
+  from the count and wrongly neutralizing the gate. Only *surrounding* underscores are stripped, so
+  the `missing_context` spelling (internal `_`) is preserved (a global `_` strip, as the Word
+  parser's `normalizeRisk` does, would collapse it to `missingcontext`).
 - **Over-annotating:** the note only appears when the gate actually references a dropped token, so a
   gate about unrelated blockers is left alone.
 - **Gate blocker present only in gate prose, not in Key Findings (LLM non-conformance):** rare;
@@ -226,11 +232,26 @@ All tests offline. Full suite must stay green (currently 330 backend → ~341).
 - **Reconcile bug breaking chat:** covered by the existing `_load_prior_review_block` try/except →
   inject review unchanged.
 
-### Known limitations (accepted)
+### Known limitations (accepted — documented, not fixed)
 
 - Stale "unfilled" language in `# Review Summary` / `# Business Questions` is not reconciled — only
   the `# No Signature Checklist Result` verdict is. Candidate for a future extension if it proves to
   mislead chat in practice.
+- **Co-located substantive reason in a dropped placeholder row.** If a single Key Findings row bundles
+  a real substantive blocker *and* the only placeholder it references is later filled, the shipped
+  row-drop pass removes the whole row, so `_surviving_blocker_count` under-counts and the gate may be
+  neutralized while a real reason existed. Bounded by the safety net (never emits a pass; `Blocking
+  items:` text preserved). Same family as "blocker only in gate prose"; low-probability (well-formed
+  reviews give each blocker its own row).
+- **Empty rating cell in a genuine data row** is skipped like a separator row → not counted. An
+  unrated row is not a machine-detectable blocker (the Word `deriveBlockers` wouldn't count it
+  either); bounded by the same safety net.
+- **"Never green-lights" is guaranteed for text the code *generates*.** The neutral status string and
+  notes contain neither forbidden phrase. Two *echo* edges require pathological/non-conformant input
+  and are not the code asserting a pass: a placeholder token that literally contains "ready for
+  signature" (e.g. a `[Ready for signature]` label) echoed in a note, and an LLM that leaves the
+  unfilled slash-template gate line (`Overall status: Ready for signature / Do not send for
+  signature`) verbatim on the annotate-only path.
 
 ## Follow-ups (out of scope)
 
