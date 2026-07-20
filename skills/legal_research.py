@@ -544,10 +544,12 @@ def _surviving_blocker_count(review_markdown: str) -> int | None:
         cells = [c.strip() for c in row.strip().strip("|").split("|")]
         if len(cells) <= rating_idx:
             continue
-        # Strip emphasis markup (**Red**, `Red`) before matching, like the Word
-        # parser's normalizeRisk. Do NOT strip '_' — it would collapse the
-        # "missing_context" spelling in _BLOCKER_RATINGS to "missingcontext".
-        cell = cells[rating_idx].lower().replace("*", "").replace("`", "").strip()
+        # Strip emphasis markup (**Red**, `Red`, _Red_) before matching, like the
+        # Word parser's normalizeRisk. `.strip("_")` removes only SURROUNDING
+        # underscores (italic wraps) — internal ones survive, so the
+        # "missing_context" spelling in _BLOCKER_RATINGS is preserved (a naive
+        # .replace("_","") would collapse it to "missingcontext").
+        cell = cells[rating_idx].lower().replace("*", "").replace("`", "").strip().strip("_")
         if not cell or set(cell) <= {"-", ":", " "}:     # separator row (---, :---:)
             continue
         if cell in _BLOCKER_RATINGS:

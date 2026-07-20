@@ -342,6 +342,19 @@ def test_surviving_blocker_count_strips_rating_emphasis():
     assert lr._surviving_blocker_count(md) == 3   # A, B, C blockers; D (Yellow) not
 
 
+def test_surviving_blocker_count_strips_underscore_italic_rating():
+    md = (
+        "# Key Findings\n"
+        "| ID | Rating | Issue |\n"
+        "| -- | -- | -- |\n"
+        "| A | _Red_ | italic red |\n"
+        "| B | _Missing Context_ | italic mc |\n"
+        "| C | missing_context | internal underscore still counts |\n"
+    )
+    # Surrounding underscores stripped (_Red_ -> red); internal preserved.
+    assert lr._surviving_blocker_count(md) == 3
+
+
 def test_end_to_end_bold_rating_blocker_prevents_neutralize():
     review = (
         "# Key Findings\n"
