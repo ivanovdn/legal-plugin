@@ -459,8 +459,13 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
     kept: list[str] = []
     dropped_tokens: list[str] = []
     seen_dropped: set[str] = set()
+    in_gate = False
     for line in review_markdown.splitlines():
         if line.lstrip().startswith("#"):        # never drop section headings
+            in_gate = bool(_GATE_HEADING_RE.match(line))  # gate owned by _reconcile_gate_verdict
+            kept.append(line)
+            continue
+        if in_gate:                              # gate reconciled separately; never row-drop it
             kept.append(line)
             continue
         norm_line = _normalize_for_match(line)
@@ -490,14 +495,13 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
     if not dropped_tokens:                        # filled candidates but no row removed
         return review_markdown, []                # -> no change, no over-claiming note
 
+    body = _reconcile_gate_verdict("\n".join(kept), dropped_tokens)
     note = (
         f"> **Auto-reconciled:** {len(dropped_tokens)} placeholder(s) flagged in the "
         f"prior review were filled in the document afterward and have been removed from "
-        f"the recalled findings: {', '.join('`' + c + '`' for c in dropped_tokens)}. If "
-        f"these were the only signature-block blockers, re-review to confirm the "
-        f"No-Signature gate now passes.\n\n"
+        f"the recalled findings: {', '.join('`' + c + '`' for c in dropped_tokens)}.\n\n"
     )
-    return note + "\n".join(kept), dropped_tokens
+    return note + body, dropped_tokens
 
 
 # Gate-verdict reconciliation --------------------------------------------------
@@ -545,6 +549,58 @@ def _surviving_blocker_count(review_markdown: str) -> int | None:
         if cell in _BLOCKER_RATINGS:
             count += 1
     return count
+
+
+_GATE_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*no[\s-]*signature\s+checklist", re.IGNORECASE)
+_OVERALL_STATUS_RE = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?\s*overall status\s*:?", re.IGNORECASE)
+_GATE_NEUTRAL_STATUS = (
+    "Overall status: PENDING RE-REVIEW — the placeholder blockers recorded here were "
+    "filled after this review and no other blockers remain; re-review to confirm "
+    "signature readiness. (Do not treat as approved for signature.)"
+)
+
+
+def _reconcile_gate_verdict(review_markdown: str, dropped_tokens: list[str]) -> str:
+    """Reconcile the No-Signature gate section after placeholder rows were dropped.
+
+    Gate absent, or citing none of the dropped tokens -> unchanged. Otherwise insert
+    a correction note naming the filled tokens (annotate), and — ONLY when zero Key
+    Findings rows survive rated Red/Missing Context — rewrite 'Overall status:' to
+    PENDING RE-REVIEW (neutralize). Never writes a signature go-ahead; never deletes
+    the Blocking items text."""
+    if not dropped_tokens:
+        return review_markdown
+    lines = review_markdown.splitlines()
+    gate_start = next(
+        (i for i, ln in enumerate(lines) if _GATE_HEADING_RE.match(ln)), None
+    )
+    if gate_start is None:
+        return review_markdown
+    gate_end = len(lines)
+    for j in range(gate_start + 1, len(lines)):
+        if re.match(r"^\s{0,3}#{1,6}\s", lines[j]):      # next section heading
+            gate_end = j
+            break
+    norm_body = _normalize_for_match("\n".join(lines[gate_start + 1:gate_end]))
+    cited = [t for t in dropped_tokens if _normalize_for_match(t) in norm_body]
+    if not cited:
+        return review_markdown
+
+    neutralize = _surviving_blocker_count(review_markdown) == 0
+    note = (
+        "> **Reconciled:** placeholder blocker(s) cited in this gate — "
+        + ", ".join("`" + t + "`" for t in cited)
+        + " — were filled in the current document after this review; treat them as "
+        "resolved. The current document governs the gate."
+    )
+    section = lines[gate_start:gate_end]
+    if neutralize:
+        for k in range(1, len(section)):
+            if _OVERALL_STATUS_RE.match(section[k]):
+                section[k] = _GATE_NEUTRAL_STATUS
+                break
+    section = [section[0], note] + section[1:]
+    return "\n".join(lines[:gate_start] + section + lines[gate_end:])
 
 
 def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:

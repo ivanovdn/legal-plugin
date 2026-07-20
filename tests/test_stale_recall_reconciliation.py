@@ -187,3 +187,144 @@ def test_surviving_blocker_count_none_when_no_rating_column():
         "| A | Indemnity | broad |\n"
     )
     assert lr._surviving_blocker_count(md) is None
+
+
+# --- _reconcile_gate_verdict (unit) ---
+
+def test_gate_neutralized_when_no_blockers_survive():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Clause / section | Rating | Issue | Required action | Owner |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| Y-1 | Term | Yellow | auto-renew 3y | Flag | Legal |\n"   # non-blocker survivor
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled; `[Legal Name]` blank\n"
+    )
+    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]", "[Legal Name]"])
+    assert "PENDING RE-REVIEW" in out
+    assert "Do not send for signature" not in out          # verdict rewritten
+    assert "Reconciled:" in out                            # correction note added
+    assert "ready for signature" not in out.lower()        # never green-lights
+    assert "signature may proceed" not in out.lower()
+    assert "Blocking items:" in out                        # blocking text preserved
+
+
+def test_gate_annotated_only_when_blocker_survives():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Clause / section | Rating | Issue | Required action | Owner |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| R-1 | Indemnity | Red | broad indemnity | Escalate | Legal |\n"  # surviving blocker
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"
+    )
+    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    assert "Reconciled:" in out                            # note added
+    assert "Do not send for signature" in out             # verdict retained
+    assert "PENDING RE-REVIEW" not in out                  # not downgraded
+
+
+def test_gate_unchanged_when_not_citing_dropped_token():
+    review = (
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Effective Date: [__]` blank\n"
+    )
+    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])  # token not in gate
+    assert out == review
+
+
+def test_gate_unchanged_when_no_gate_section():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Rating |\n| --- | --- |\n| R-1 | Red |\n"
+    )
+    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    assert out == review
+
+
+def test_gate_annotate_when_neutralize_eligible_but_no_status_line():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Rating |\n| --- | --- |\n| G-1 | Green |\n"   # 0 blockers -> eligible
+        "# No Signature Checklist Result\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"             # no 'Overall status:' line
+    )
+    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    assert "Reconciled:" in out                            # note inserted
+    assert "PENDING RE-REVIEW" not in out                  # nothing to downgrade -> annotate
+
+
+def test_gate_no_downgrade_when_key_findings_absent():
+    review = (
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"
+    )
+    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    assert "Reconciled:" in out
+    assert "Do not send for signature" in out             # None count -> conservative
+    assert "PENDING RE-REVIEW" not in out
+
+
+def test_gate_empty_dropped_tokens_byte_identical():
+    review = "# No Signature Checklist Result\nOverall status: Do not send for signature\n"
+    assert lr._reconcile_gate_verdict(review, []) == review
+
+
+# --- _reconcile_review_with_doc (end-to-end) ---
+
+def test_gate_blocking_items_line_survives_row_drop():
+    review = (
+        "# Red and Missing Context Items\n"
+        "| MC-1 | Signature | `Signed by: [__]` unfilled | Missing Context |\n"
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"
+    )
+    doc = "Signed by: Suzy Quatro\n"
+    out, dropped = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" not in out                                       # finding row dropped
+    assert "Blocking items: `Signed by: [__]`" in out             # gate line NOT row-dropped
+    assert dropped == ["Signed by: [__]"]
+
+
+def test_reconcile_end_to_end_neutralizes_gate():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Clause / section | Rating | Issue | Required action | Owner |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| MC-1 | Signature | Missing Context | `Signed by: [__]` unfilled | Fill | Legal |\n"
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"
+    )
+    doc = "Signed by: Suzy Quatro\n"
+    out, dropped = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" not in out                       # Key Findings placeholder row dropped
+    assert "Auto-reconciled" in out                # top note present
+    assert "PENDING RE-REVIEW" in out              # gate neutralized (0 blockers survive)
+    assert "ready for signature" not in out.lower()
+    assert "signature may proceed" not in out.lower()
+
+
+def test_reconcile_end_to_end_annotates_when_blocker_survives():
+    review = (
+        "# Key Findings\n"
+        "| Issue ID | Clause / section | Rating | Issue | Required action | Owner |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| R-1 | Indemnity | Red | broad indemnity | Escalate | Legal |\n"
+        "| MC-1 | Signature | Missing Context | `Signed by: [__]` unfilled | Fill | Legal |\n"
+        "# No Signature Checklist Result\n"
+        "Overall status: Do not send for signature\n"
+        "Blocking items: `Signed by: [__]` unfilled\n"
+    )
+    doc = "Signed by: Suzy Quatro\n"
+    out, dropped = _reconcile_review_with_doc(review, doc)
+    assert "MC-1" not in out                        # placeholder finding dropped
+    assert "R-1" in out                             # substantive Red finding kept
+    assert "Do not send for signature" in out       # verdict retained (blocker survives)
+    assert "PENDING RE-REVIEW" not in out
+    assert "Reconciled:" in out                      # gate annotated
