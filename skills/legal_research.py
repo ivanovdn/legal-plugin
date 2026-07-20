@@ -500,6 +500,53 @@ def _reconcile_review_with_doc(review_markdown: str, doc_text: str) -> tuple[str
     return note + "\n".join(kept), dropped_tokens
 
 
+# Gate-verdict reconciliation --------------------------------------------------
+# After placeholder rows are dropped, the "No Signature Checklist Result" gate can
+# still cite the now-filled placeholders. _surviving_blocker_count reads the
+# structured Key Findings table (the source of truth for blockers, mirroring the
+# Word parser's deriveBlockers) to decide whether any substantive blocker remains.
+_KEY_FINDINGS_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*key\s+findings\s*$", re.IGNORECASE)
+_BLOCKER_RATINGS = {"red", "missing context", "missing-context", "missing_context"}
+
+
+def _surviving_blocker_count(review_markdown: str) -> int | None:
+    """Count Key Findings rows rated Red or Missing Context. Returns None when the
+    Key Findings table or its rating column can't be located/parsed — callers treat
+    None as 'blockers may remain' (conservative: no gate downgrade). Runs on the
+    row-reconciled markdown, so already-dropped placeholder rows never inflate it."""
+    lines = review_markdown.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if _KEY_FINDINGS_HEADING_RE.match(line):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    rows: list[str] = []
+    for line in lines[start:]:
+        if re.match(r"^\s{0,3}#{1,6}\s", line):          # next section heading -> stop
+            break
+        if line.strip().startswith("|"):
+            rows.append(line)
+    if not rows:
+        return None
+    header = [c.strip().lower() for c in rows[0].strip().strip("|").split("|")]
+    rating_idx = next((i for i, c in enumerate(header) if c in ("rating", "risk")), None)
+    if rating_idx is None:
+        return None
+    count = 0
+    for row in rows[1:]:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if len(cells) <= rating_idx:
+            continue
+        cell = cells[rating_idx].lower()
+        if not cell or set(cell) <= {"-", ":", " "}:     # separator row (---, :---:)
+            continue
+        if cell in _BLOCKER_RATINGS:
+            count += 1
+    return count
+
+
 def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
     """Latest stored review for this document, as a system block. Empty string
     when none exists. On a store-read failure, flags memory_degraded and returns

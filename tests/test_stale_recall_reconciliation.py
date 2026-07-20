@@ -149,3 +149,41 @@ def test_note_lists_only_tokens_whose_rows_were_dropped():
     assert "MC-1" in out                  # row kept (witness still blank)
     assert filled == []                   # nothing dropped -> no over-claim
     assert "Auto-reconciled" not in out   # no note when nothing was dropped
+
+
+def test_surviving_blocker_count_counts_red_and_missing_context():
+    md = (
+        "# Key Findings\n"
+        "| Issue ID | Clause | Rating | Issue |\n"
+        "| --- | --- | --- | --- |\n"
+        "| R-1 | Indemnity | Red | broad indemnity |\n"
+        "| MC-1 | Signature | Missing Context | block blank |\n"
+        "| Y-1 | Term | Yellow | auto-renew |\n"
+        "| G-1 | Law | Green | fine |\n"
+    )
+    assert lr._surviving_blocker_count(md) == 2   # Red + Missing Context only
+
+
+def test_surviving_blocker_count_accepts_risk_header_and_mc_spellings():
+    md = (
+        "# Key Findings\n"
+        "| ID | Risk | Issue |\n"
+        "| -- | -- | -- |\n"
+        "| A | missing-context | x |\n"
+        "| B | RED | y |\n"
+    )
+    assert lr._surviving_blocker_count(md) == 2   # "Risk" header + odd MC spelling + case
+
+
+def test_surviving_blocker_count_none_when_no_key_findings():
+    assert lr._surviving_blocker_count("# Review Summary\nAll clear.\n") is None
+
+
+def test_surviving_blocker_count_none_when_no_rating_column():
+    md = (
+        "# Key Findings\n"
+        "| Issue ID | Clause | Issue |\n"
+        "| -- | -- | -- |\n"
+        "| A | Indemnity | broad |\n"
+    )
+    assert lr._surviving_blocker_count(md) is None
