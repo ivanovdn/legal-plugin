@@ -2,6 +2,7 @@ import { useState } from "react";
 import Tabs, { type TabKey } from "./components/Tabs";
 import FindingsTab from "./components/FindingsTab";
 import ChatTab, { type ChatMessage } from "./components/ChatTab";
+import PreferencesTab from "./components/PreferencesTab";
 import FinalizeBar from "./components/FinalizeBar";
 import type { ReviewSummary } from "./parser";
 
@@ -17,6 +18,8 @@ export default function App() {
   // All persistent tab state is lifted here so toggling tabs doesn't reset it.
   const [findingsResult, setFindingsResult] = useState<ReviewSummary | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [prefMarkdown, setPrefMarkdown] = useState<string>("");
+  const [prefLoaded, setPrefLoaded] = useState<boolean>(false);
 
   return (
     <div className="app">
@@ -38,6 +41,14 @@ export default function App() {
           sessionId={sessionId}
           messages={chatMessages}
           setMessages={setChatMessages}
+        />
+      </div>
+      <div className={`tab-pane ${tab === "preferences" ? "" : "hidden"}`}>
+        <PreferencesTab
+          markdown={prefMarkdown}
+          setMarkdown={setPrefMarkdown}
+          loaded={prefLoaded}
+          setLoaded={setPrefLoaded}
         />
       </div>
       {/* Document-level action, available regardless of the active tab. */}

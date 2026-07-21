@@ -1,4 +1,4 @@
-export type TabKey = "findings" | "chat";
+export type TabKey = "findings" | "chat" | "preferences";
 
 interface Props {
   active: TabKey;
@@ -8,6 +8,7 @@ interface Props {
 const TABS: { key: TabKey; label: string }[] = [
   { key: "findings", label: "Findings" },
   { key: "chat", label: "Chat" },
+  { key: "preferences", label: "Preferences" },
 ];
 
 export default function Tabs({ active, onChange }: Props) {
