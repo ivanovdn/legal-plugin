@@ -30,7 +30,7 @@ def test_two_attorneys_isolated(tmp_path):
     assert load_preferences(str(tmp_path), "b") == "beta"
 
 
-@pytest.mark.parametrize("bad", ["../escape", "a/b", "..", "", "with space", "semi;colon"])
+@pytest.mark.parametrize("bad", ["../escape", "a/b", "..", "", "with space", "semi;colon", "trailing\n"])
 def test_unsafe_attorney_id_rejected(tmp_path, bad):
     with pytest.raises(ValueError):
         load_preferences(str(tmp_path), bad)

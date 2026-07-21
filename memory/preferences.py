@@ -32,7 +32,7 @@ def _safe_attorney_id(attorney_id: str) -> str:
     never escape base_dir (no '..', no '/', no spaces). It is a UUID / oid in
     practice.
     """
-    if not attorney_id or not _SAFE_ID_RE.match(attorney_id):
+    if not attorney_id or not _SAFE_ID_RE.fullmatch(attorney_id):
         raise ValueError(f"unsafe attorney_id: {attorney_id!r}")
     return attorney_id
 

@@ -4,8 +4,6 @@
 Keyed by attorney_id (resolve_user_id → X-User-ID today, O365 oid when SSO on).
 Stage 1 of the self-improving harness; storage in memory/preferences.py.
 """
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import resolve_user_id
@@ -16,8 +14,6 @@ from memory.preferences import (
     load_preferences,
     save_preferences,
 )
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
