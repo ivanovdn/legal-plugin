@@ -41,6 +41,7 @@ export default function App() {
           sessionId={sessionId}
           messages={chatMessages}
           setMessages={setChatMessages}
+          onPreferenceAdded={() => setPrefLoaded(false)}
         />
       </div>
       <div className={`tab-pane ${tab === "preferences" ? "" : "hidden"}`}>

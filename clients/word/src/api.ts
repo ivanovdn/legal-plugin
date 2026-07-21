@@ -18,6 +18,7 @@ export interface QueryResponse {
       sources?: unknown[];
       notes_unincorporated?: string;
       proposed_edits?: EditProposal[];
+      proposed_preferences?: string[];
       contract_type_detected?: string;
       review_persist_error?: string;
     };
