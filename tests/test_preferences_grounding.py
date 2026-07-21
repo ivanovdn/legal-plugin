@@ -23,7 +23,7 @@ def test_block_truncates(tmp_path):
     save_preferences(str(tmp_path), "atty-x", "y" * 500)
     block = load_attorney_preferences_block("atty-x", str(tmp_path), 100)
     assert "truncated to 100" in block
-    assert block.count("y") >= 100
+    assert "y" * 101 not in block   # truncation sliced content — no run longer than the 100-char cap
 
 
 def test_block_empty_on_load_error(monkeypatch, tmp_path):
