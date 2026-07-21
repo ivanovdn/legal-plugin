@@ -19,7 +19,12 @@ from langfuse.decorators import observe, langfuse_context
 
 from config import get_settings
 from graph.state import LegalAgentState
-from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
+from skills.grounding import (
+    attach_parent_msa,
+    detect_contract_type,
+    load_playbook_bundle,
+    preferences_block_for_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,10 +182,11 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
             f"{attorney_notes}"
         )
 
-    system_messages = [
-        {"role": "system", "content": playbook},
-        {"role": "system", "content": _OUTPUT_CONSTRAINTS},
-    ]
+    system_messages = [{"role": "system", "content": playbook}]
+    prefs_block = preferences_block_for_state(state)
+    if prefs_block:                 # after playbook, before output constraints — never last
+        system_messages.append({"role": "system", "content": prefs_block})
+    system_messages.append({"role": "system", "content": _OUTPUT_CONSTRAINTS})
     if msa_attached:
         system_messages.append({"role": "system", "content": _MSA_COMPARISON_DIRECTIVE})
     state["messages"] = system_messages + [{"role": "user", "content": user_content}]
