@@ -18,7 +18,12 @@ from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
-from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
+from skills.grounding import (
+    attach_parent_msa,
+    detect_contract_type,
+    load_playbook_bundle,
+    preferences_block_for_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -779,6 +784,9 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     if not chat_history:
         chat_history = state.get("chat_history", []) or []
     system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    prefs_block = preferences_block_for_state(state)
+    if prefs_block:                     # early → subordinate to playbook/review (ceiling intact)
+        system_messages.append({"role": "system", "content": prefs_block})
     if playbook:
         system_messages.append({"role": "system", "content": playbook})
     if msa_block:
