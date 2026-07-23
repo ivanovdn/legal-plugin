@@ -31,3 +31,6 @@ data/
 
 # Subagent-driven-development orchestration scratch (briefs, reports, ledger)
 .superpowers/
+
+# Generated per-deploy from manifest.template.xml (scripts/build_manifest.py) — not tracked
+clients/word/manifest.prod.xml
