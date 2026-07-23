@@ -1,5 +1,5 @@
 # graph/nodes/memory_writer.py
-"""Memory writer — persists audit log to SQLite."""
+"""Memory writer — persists audit log + review to Postgres; conversation turns to Postgres (best-effort)."""
 
 import logging
 

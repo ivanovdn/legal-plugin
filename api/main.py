@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init observability, audit DB."""
+    """Startup: init observability; init_db() creates all Postgres store tables (audit, review, conversation)."""
     settings = get_settings()
 
     init_observability()
