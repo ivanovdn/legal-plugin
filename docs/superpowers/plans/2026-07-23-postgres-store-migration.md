@@ -103,12 +103,12 @@ Run: `uv pip install -r requirements.txt`
 
 - [ ] **Step 2: Update `tests/test_config.py` (write the config expectation first)**
 
-At line 40 replace the SQLite env with the DB URL, and at line 70 replace the assertion:
+Additive — KEEP the existing `SQLITE_PATH` env (line 40) and `sqlite_path` assertion (line 70); they are removed later in Task 5. ADD, alongside them, a `DATABASE_URL` env and a `database_url` assertion in `test_config_loads_from_env`:
 
 ```python
-# line 40 (inside test_config_loads_from_env, among the other setenv calls):
+# among the other setenv calls (near line 40):
     monkeypatch.setenv("DATABASE_URL", "postgresql://legal:legal@localhost:5434/legal")
-# line 70 (the matching assertion):
+# among the assertions (near line 70):
     assert settings.database_url == "postgresql://legal:legal@localhost:5434/legal"
 ```
 
@@ -119,13 +119,14 @@ Expected: FAIL — `AttributeError: 'Settings' object has no attribute 'database
 
 - [ ] **Step 4: Update `config.py`**
 
-Replace line 89:
+Additive — ADD `database_url` next to the existing `sqlite_path` line (line 89); KEEP `sqlite_path` (it is still used by the unported stores/callers until Task 5 removes it):
 
 ```python
+    sqlite_path: str = "data/legal.db"
     database_url: str = "postgresql://legal:legal@localhost:5434/legal"
 ```
 
-(Remove the `sqlite_path` line.) The config test now passes; the rest of the suite is intentionally still on `sqlite_path`-free `config` but unaffected because stores still take `db_path` explicitly.
+The config test now passes; the rest of the suite is unaffected — the stores still take `db_path` (SQLite) and `sqlite_path` still resolves.
 
 Run: `uv run pytest tests/test_config.py::test_config_loads_from_env -v`
 Expected: PASS.
@@ -1115,17 +1116,14 @@ All callers are off `sqlite_path`. Remove it, sweep for any `sqlite3`/`sqlite_pa
 - Modify: `docs/wiki.md`
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Confirm `sqlite_path` and `sqlite3` are gone from app code**
+- [ ] **Step 1: Remove `sqlite_path` from `config.py` and `tests/test_config.py`**
+
+By now all callers are off `sqlite_path` (Tasks 2-4). Delete the `sqlite_path: str = "data/legal.db"` line from `config.py` (keep `database_url`). In `tests/test_config.py` delete the `monkeypatch.setenv("SQLITE_PATH", "data/legal.db")` line and the `assert settings.sqlite_path == "data/legal.db"` line (the `DATABASE_URL` env + `database_url` assertion added in Task 1 stay).
+
+- [ ] **Step 2: Confirm `sqlite_path` and `sqlite3` are gone from app code**
 
 Run: `grep -rn "sqlite_path\|import sqlite3\|sqlite3\." --include="*.py" config.py api/ graph/ memory/ skills/ tests/`
 Expected: no matches. (If any remain, fix them — they are dangling references.)
-
-- [ ] **Step 2: Confirm `config.py` has no `sqlite_path`**
-
-`config.py` line 89 should already be `database_url` (Task 1). If a stray `sqlite_path` attribute remains anywhere, delete it.
-
-Run: `grep -rn "sqlite" config.py`
-Expected: no matches.
 
 - [ ] **Step 3: Run the full test suite**
 
