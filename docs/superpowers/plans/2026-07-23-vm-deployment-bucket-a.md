@@ -425,7 +425,9 @@ Note: if the backend fails to start without the Langfuse stack, its observabilit
 - [ ] **Step 7: Tear down + clean the smoke env**
 
 ```bash
-docker compose --env-file .env.smoke -f docker-compose.yml -f docker-compose.remote.yml down
+# Tear down ONLY the added services — a bare `down` would also stop any
+# pre-existing dev infra (redis/app-db/qdrant/langfuse) that was already running.
+docker compose -f docker-compose.yml -f docker-compose.remote.yml rm -sf backend caddy
 rm -f .env.smoke
 ```
 
