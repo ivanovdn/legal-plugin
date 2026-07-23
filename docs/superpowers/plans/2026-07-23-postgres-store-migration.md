@@ -287,12 +287,12 @@ import os
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+import memory.db as db
+from config import get_settings
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _pg_container():
-    import memory.db as db
-    from config import get_settings
-
     with PostgresContainer("postgres:17") as pg:
         # testcontainers defaults to the psycopg2 driver in the URL; psycopg 3
         # wants a plain postgresql:// DSN.
@@ -308,7 +308,6 @@ def _pg_container():
 
 @pytest.fixture(autouse=True)
 def _clean_tables(_pg_container):
-    import memory.db as db
     with db.get_pool().connection() as conn:
         conn.execute(
             "TRUNCATE audit_log, review_store, conversation_store RESTART IDENTITY"
@@ -316,18 +315,21 @@ def _clean_tables(_pg_container):
     yield
 ```
 
+(Imports at module top — CLAUDE.md hard rule #1, no function-local imports. Importing `memory.db` at top is safe: `get_pool()` opens the pool lazily on first call, and `get_settings` is `lru_cache`'d.)
+
 - [ ] **Step 9: Create `tests/test_db.py`**
 
 ```python
 # tests/test_db.py
+from memory.db import get_pool
+
+
 def test_pool_roundtrips_a_query():
-    from memory.db import get_pool
     with get_pool().connection() as conn:
         assert conn.execute("SELECT 1").fetchone()[0] == 1
 
 
 def test_init_db_creates_all_tables():
-    from memory.db import get_pool
     with get_pool().connection() as conn:
         for table in ("audit_log", "review_store", "conversation_store"):
             row = conn.execute("SELECT to_regclass(%s)", (table,)).fetchone()
@@ -521,20 +523,9 @@ Expected: PASS (this test still monkeypatches `init_review_db`/`save_review`, un
   - `mw._db_initialized = True`  (delete)
   Keep any `get_settings.cache_clear()` (still needed for other env like `LLM_MODEL`).
   There are 14 `init_audit_db(` call sites (grep to find them all). Also delete the local `from memory.audit import init_audit_db` imports inside individual test functions.
-- **The one audit-read test** (around line 355, currently reading via `sqlite3`): replace
+- **The one audit-read test** (around line 355, currently reading via `sqlite3`): add `from memory.db import get_pool` to the **top-level imports** of `tests/test_graph.py` (with the other module-top imports — no function-local imports, per hard rule #1), delete the local `import sqlite3`, and replace the read body:
 
 ```python
-    import sqlite3
-    conn = sqlite3.connect(db_path)
-    rows = conn.execute("SELECT * FROM audit_log").fetchall()
-    conn.close()
-    assert len(rows) >= 1
-```
-
-with
-
-```python
-    from memory.db import get_pool
     with get_pool().connection() as conn:
         rows = conn.execute("SELECT * FROM audit_log").fetchall()
     assert len(rows) >= 1
@@ -1118,7 +1109,7 @@ All callers are off `sqlite_path`. Remove it, sweep for any `sqlite3`/`sqlite_pa
 
 - [ ] **Step 1: Remove `sqlite_path` from `config.py` and `tests/test_config.py`**
 
-By now all callers are off `sqlite_path` (Tasks 2-4). Delete the `sqlite_path: str = "data/legal.db"` line from `config.py` (keep `database_url`). In `tests/test_config.py` delete the `monkeypatch.setenv("SQLITE_PATH", "data/legal.db")` line and the `assert settings.sqlite_path == "data/legal.db"` line (the `DATABASE_URL` env + `database_url` assertion added in Task 1 stay).
+By now all callers are off `sqlite_path` (Tasks 2-4). Delete the `sqlite_path: str = "data/legal.db"` line from `config.py` (keep `database_url`). In `tests/test_config.py` delete the `monkeypatch.setenv("SQLITE_PATH", "data/legal.db")` line and the `assert settings.sqlite_path == "data/legal.db"` line (the `DATABASE_URL` env + `database_url` assertion added in Task 1 stay). Also delete the `SQLITE_PATH=data/legal.db` line from `.env.example` (it was intentionally kept through the migration).
 
 - [ ] **Step 2: Confirm `sqlite_path` and `sqlite3` are gone from app code**
 
