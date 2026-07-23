@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import { getHttpsServerOptions } from "office-addin-dev-certs";
@@ -43,6 +44,12 @@ export default defineConfig(async () => {
     build: {
       outDir: "../dist",
       emptyOutDir: true,
+      rollupOptions: {
+        // Vite's default entry lookup is "<root>/index.html"; this add-in only
+        // ships taskpane.html, so the production build needs an explicit entry
+        // (the dev server doesn't need this — it serves taskpane.html directly).
+        input: fileURLToPath(new URL("./src/taskpane.html", import.meta.url)),
+      },
     },
   };
 });

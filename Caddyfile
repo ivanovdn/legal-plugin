@@ -1,0 +1,15 @@
+{$ADDIN_ORIGIN_HOST:localhost} {
+	encode gzip
+
+	# Backend API — keep the /api prefix (backend routes are /api/*)
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else = the built task pane (fallback to taskpane.html)
+	handle {
+		root * /srv
+		try_files {path} /taskpane.html
+		file_server
+	}
+}

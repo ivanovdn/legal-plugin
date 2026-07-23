@@ -1,0 +1,44 @@
+services:
+  backend:
+    build: .
+    image: legal-plugin-backend:latest
+    env_file:
+      - .env
+    environment:
+      # In-network service discovery (overrides the localhost defaults from config.py;
+      # `environment` takes precedence over env_file).
+      - REDIS_URL=redis://:myredissecret@redis:6379
+      - QDRANT_URL=http://qdrant:6333
+      - DATABASE_URL=postgresql://legal:${APP_DB_PASSWORD:-legal}@app-db:5432/legal
+      - LANGFUSE_HOST=http://langfuse-web:3000
+      # OLLAMA_BASE_URL is supplied by .env (the Spark box: http://172.20.0.22:11434)
+    volumes:
+      - ./data/attorneys:/app/data/attorneys   # attorney USER.md preferences persist
+    depends_on:
+      redis:
+        condition: service_healthy
+      app-db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - ADDIN_ORIGIN_HOST=${ADDIN_ORIGIN_HOST:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./clients/word/dist:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
