@@ -9,12 +9,12 @@ import os
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+import memory.db as db
+from config import get_settings
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _pg_container():
-    import memory.db as db
-    from config import get_settings
-
     with PostgresContainer("postgres:17") as pg:
         # testcontainers defaults to the psycopg2 driver in the URL; psycopg 3
         # wants a plain postgresql:// DSN.
@@ -30,7 +30,6 @@ def _pg_container():
 
 @pytest.fixture(autouse=True)
 def _clean_tables(_pg_container):
-    import memory.db as db
     with db.get_pool().connection() as conn:
         conn.execute(
             "TRUNCATE audit_log, review_store, conversation_store RESTART IDENTITY"
