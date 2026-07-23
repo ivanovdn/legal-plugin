@@ -7,7 +7,7 @@ from langgraph.types import Command
 from config import get_settings
 from graph.graph import build_graph, route_review
 from graph.state import LegalAgentState
-from memory.audit import init_audit_db
+from memory.db import get_pool
 
 
 def test_legal_agent_state_can_be_created():
@@ -109,8 +109,6 @@ def _fake_agent():
 
 def test_graph_end_to_end_research(tmp_path, monkeypatch):
     """A research request flows through real nodes to END."""
-    db_path = str(tmp_path / "test.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
@@ -118,12 +116,6 @@ def test_graph_end_to_end_research(tmp_path, monkeypatch):
 
     from config import get_settings
     get_settings.cache_clear()
-
-    from memory.audit import init_audit_db
-    init_audit_db(db_path)
-
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -144,8 +136,6 @@ def test_graph_end_to_end_research(tmp_path, monkeypatch):
 
 def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch):
     """Contract generation always routes through human_review."""
-    db_path = str(tmp_path / "test.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
@@ -153,12 +143,6 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
 
     from config import get_settings
     get_settings.cache_clear()
-
-    from memory.audit import init_audit_db
-    init_audit_db(db_path)
-
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -181,8 +165,6 @@ def test_graph_contract_generation_routes_to_human_review(tmp_path, monkeypatch)
 
 def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
     """Drafting always routes through human_review."""
-    db_path = str(tmp_path / "test.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
@@ -190,12 +172,6 @@ def test_graph_drafting_routes_to_human_review(tmp_path, monkeypatch):
 
     from config import get_settings
     get_settings.cache_clear()
-
-    from memory.audit import init_audit_db
-    init_audit_db(db_path)
-
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -245,18 +221,12 @@ def _fake_ollama_review_blocker(url, **kwargs):
 
 def test_graph_contract_review_blocker_interactive_pauses(tmp_path, monkeypatch):
     """A blocker review from an interactive caller (Chainlit) pauses at human_review."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     monkeypatch.setenv("INTERRUPT_ENABLED", "true")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_review_blocker), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_review_blocker), \
@@ -281,18 +251,12 @@ def test_graph_contract_review_blocker_interactive_pauses(tmp_path, monkeypatch)
 def test_graph_contract_review_blocker_noninteractive_completes(tmp_path, monkeypatch):
     """A blocker review from a non-interactive caller (Word) does NOT interrupt;
     it completes through output_formatter and carries report.requires_attorney."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     monkeypatch.setenv("INTERRUPT_ENABLED", "true")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_review_blocker), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_review_blocker), \
@@ -319,8 +283,6 @@ def test_graph_contract_review_blocker_noninteractive_completes(tmp_path, monkey
 
 def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     """Full graph flow: intake -> ... -> memory_writer writes audit log."""
-    db_path = str(tmp_path / "test_legal.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
@@ -328,12 +290,6 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
 
     from config import get_settings
     get_settings.cache_clear()
-
-    from memory.audit import init_audit_db
-    init_audit_db(db_path)
-
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -352,10 +308,8 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     assert result["llm_response"] != ""
     assert "response" in result["report"]
 
-    import sqlite3
-    conn = sqlite3.connect(db_path)
-    rows = conn.execute("SELECT * FROM audit_log").fetchall()
-    conn.close()
+    with get_pool().connection() as conn:
+        rows = conn.execute("SELECT * FROM audit_log").fetchall()
     assert len(rows) >= 1
 
 
@@ -367,17 +321,11 @@ def test_graph_includes_history_appender_node():
 
 def test_graph_history_appender_runs_before_memory_writer(tmp_path, monkeypatch):
     """In a full graph invocation, history_appender produces chat_history before memory_writer."""
-    db_path = str(tmp_path / "test.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -397,17 +345,11 @@ def test_graph_history_appender_runs_before_memory_writer(tmp_path, monkeypatch)
 
 def test_graph_with_checkpointer_persists_chat_history_across_invocations(tmp_path, monkeypatch):
     """Two invocations with the same thread_id: turn 2's LLM prompt contains turn 1's messages."""
-    db_path = str(tmp_path / "test.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     captured_llm_inputs = []
 
@@ -464,17 +406,11 @@ def test_graph_with_checkpointer_persists_chat_history_across_invocations(tmp_pa
 
 def test_graph_without_checkpointer_still_works(tmp_path, monkeypatch):
     """Regression: graph compiled with checkpointer=None still runs end-to-end."""
-    db_path = str(tmp_path / "test.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -503,18 +439,12 @@ def test_route_review_returns_output_formatter_when_llm_response_set():
 
 def test_graph_interrupts_and_returns_partial_state_with_memory_saver(tmp_path, monkeypatch):
     """First invoke pauses at human_review; result has awaiting_review=True."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     monkeypatch.setenv("INTERRUPT_ENABLED", "true")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -544,18 +474,12 @@ def test_graph_interrupts_and_returns_partial_state_with_memory_saver(tmp_path, 
 
 def test_graph_resume_with_approved_completes(tmp_path, monkeypatch):
     """After pause, resume with approved=True → final result, awaiting_review=False."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     monkeypatch.setenv("INTERRUPT_ENABLED", "true")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
@@ -582,8 +506,6 @@ def test_graph_resume_with_approved_completes(tmp_path, monkeypatch):
 
 def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatch):
     """Resume with notes-only → graph loops back, regenerates, pauses again at higher iter."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
@@ -591,10 +513,6 @@ def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatc
     monkeypatch.setenv("INTERRUPT_ENABLED", "true")
     monkeypatch.setenv("MAX_REVIEW_ITERATIONS", "3")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     # Track agent (first gen) and direct LLM (revision) invocations separately.
     # On loop-back, contract_generation bypasses the ReAct agent and does a
@@ -662,8 +580,6 @@ def test_graph_resume_with_notes_loops_back_and_regenerates(tmp_path, monkeypatc
 
 def test_graph_resume_iteration_cap_terminates(tmp_path, monkeypatch):
     """3 successive notes-only resumes → 4th resume terminates with unincorporated notes in report."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
@@ -671,10 +587,6 @@ def test_graph_resume_iteration_cap_terminates(tmp_path, monkeypatch):
     monkeypatch.setenv("INTERRUPT_ENABLED", "true")
     monkeypatch.setenv("MAX_REVIEW_ITERATIONS", "3")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     def _fake_revise_llm(*_args, **_kwargs):
         llm = MagicMock()
@@ -724,18 +636,12 @@ def test_graph_resume_iteration_cap_terminates(tmp_path, monkeypatch):
 
 def test_graph_without_checkpointer_still_completes_in_one_shot(tmp_path, monkeypatch):
     """Regression: with no checkpointer + interrupt disabled, graph completes as before."""
-    db_path = str(tmp_path / "t.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("RERANKER_ENABLED", "false")
     monkeypatch.setenv("BM25_ENABLED", "false")
     monkeypatch.setenv("INTERRUPT_ENABLED", "false")
     get_settings.cache_clear()
-
-    init_audit_db(db_path)
-    import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \

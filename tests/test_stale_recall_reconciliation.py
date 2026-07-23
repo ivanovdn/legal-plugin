@@ -102,7 +102,7 @@ _REVIEW_MD = (
 )
 
 
-def _fake_latest(_db, _doc_id):
+def _fake_latest(_doc_id):
     return {"markdown": _REVIEW_MD, "timestamp": "t", "session_id": "s", "contract_type": "nda"}
 
 

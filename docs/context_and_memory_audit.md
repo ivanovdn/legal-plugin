@@ -9,9 +9,13 @@
 >
 > **What changed since the 2026-06-26 audit:** the chat tab is no longer a "300-char stub" of
 > memory. Three things landed: (a) the **chat path is grounded** — it attaches the playbook bundle
-> and (for SOWs) the governing MSA, via the shared `skills/grounding.py`; (b) two **durable SQLite
-> stores** — the review store and the per-attorney conversation store — now persist findings and
+> and (for SOWs) the governing MSA, via the shared `skills/grounding.py`; (b) two **durable stores**
+> — the review store and the per-attorney conversation store — now persist findings and
 > full chat turns across sessions/machines; (c) memory failure is now **loud** (`memory_degraded`).
+>
+> **Since 2026-07-23:** the three relational stores (audit log, review store, conversation store)
+> moved off the single SQLite file onto a dedicated Postgres `app-db` (via `memory/db.py`'s pooled
+> connection) — see §5 and §8 below. Redis, Qdrant, and the `USER.md` preference files are unchanged.
 > The old audit's headline claims ("MSA is Findings-tab only", "chat memory is a 300-char stub",
 > "reopening the pane resets chat") are all **superseded** — see the relevant sections.
 
@@ -20,7 +24,7 @@
 ## TL;DR
 
 The system now has **nine distinct context/memory stores** across four backing services
-(Redis, SQLite, Qdrant, Langfuse) plus filesystem stores (the generated playbook and, since
+(Redis, Postgres, Qdrant, Langfuse) plus filesystem stores (the generated playbook and, since
 2026-07-23, per-attorney `USER.md` preference files). They are easy to conflate — the table is the map:
 
 | # | Store | Backing | What it holds | Key / scope | Lifetime | Fed to the LLM? |
@@ -28,9 +32,9 @@ The system now has **nine distinct context/memory stores** across four backing s
 | 1 | **Open document** (`uploaded_docs`) | — (in request) | Full current doc text | Re-sent fresh **every turn** by the client | not retained backend-side | ✅ inlined in the user message |
 | 2 | **`chat_history`** | Redis | Prior (user, assistant) turns | `thread_id = session_id` | cap **10 msgs (5 turns)**, assistant trimmed **300 chars**, TTL 24 h | ✅ **fallback only** now (see #4) |
 | 3 | **Checkpointer** | Redis | Full `LegalAgentState` snapshot | `thread_id = session_id`, TTL 24 h (refreshed each call) | 24 h | indirectly — it restores #2 |
-| 4 | **Conversation store** | SQLite | **Full** per-turn chat (untrimmed) | `(document_id, attorney_id)` | **permanent** (unbounded); injects last **20 msgs** | ✅ **primary** chat history (prefers this over #2) |
-| 5 | **Review store** | SQLite | **Full markdown** contract review | `(document_id, session_id)`, list-shaped | **permanent** | ✅ latest review injected into chat (redlines stripped) |
-| 6 | **Audit log** | SQLite | One row per skill invocation | `session_id` / `user_id` | **permanent** | ❌ never fed back |
+| 4 | **Conversation store** | Postgres (`app-db`) | **Full** per-turn chat (untrimmed) | `(document_id, attorney_id)` | **permanent** (unbounded); injects last **20 msgs** | ✅ **primary** chat history (prefers this over #2) |
+| 5 | **Review store** | Postgres (`app-db`) | **Full markdown** contract review | `(document_id, session_id)`, list-shaped | **permanent** | ✅ latest review injected into chat (redlines stripped) |
+| 6 | **Audit log** | Postgres (`app-db`) | One row per skill invocation | `session_id` / `user_id` | **permanent** | ❌ never fed back |
 | 7 | **Qdrant** (`legal_docs`) | Qdrant | RAG corpus + governing MSA + (indirect) playbook source | `client_id` filter | long-lived | ✅ MSA on SOW paths; RAG only when no doc attached |
 | 8 | **Langfuse** | Postgres | Traces, token usage | — | observability | ❌ never fed back |
 | 9 | **Attorney preferences** (`USER.md`) | Filesystem | Per-attorney standing preferences (plain markdown) | `attorney_id` → `data/attorneys/<id>/USER.md` | **permanent** (human-owned; **read fresh each turn, no cache**) | ✅ injected as an **early** system block on chat + review, subordinate to the playbook |
@@ -50,8 +54,10 @@ prompt: the chat system prompt, (conditionally) the **playbook** + **governing M
 `(document_id, attorney_id)` — falling back to Redis `chat_history` only when the durable store is
 empty. The document is *resupplied* each turn; the conversation and review are *remembered durably*.
 
-**Second most important fact:** the three durable stores all live in **one SQLite file**,
-`data/legal.db` (`config.sqlite_path`) — see [§8, "How to inspect each store"](#8-how-to-inspect-each-store).
+**Second most important fact:** the three durable stores all live in one dedicated **Postgres
+database**, the `app-db` docker-compose service (host port 5434, db/user `legal`), accessed via a
+pooled connection in `memory/db.py` (`config.database_url`) — see [§8, "How to inspect each
+store"](#8-how-to-inspect-each-store).
 
 ---
 
@@ -116,7 +122,7 @@ durable memory (`document_uuid`, `X-User-ID`) ride alongside it.
 > **How does prior history survive if the input sets `chat_history: []`?** The Redis checkpointer
 > loads the prior checkpoint for `thread_id` and applies `_history_reducer` (`graph/state.py:10-29`):
 > `(old + [])[-2N:] == old`. The empty input is a no-op merge, not a reset. (This only feeds the
-> *fallback* now — the primary history comes from the SQLite conversation store, §4.)
+> *fallback* now — the primary history comes from the Postgres conversation store, §4.)
 
 Graph path for `task_type="research"` (`graph/graph.py`):
 
@@ -176,7 +182,7 @@ prefix-cache reuse across turns. In practice that reuse **does not engage** (see
   so chat recalls findings without re-proposing fills. Directive: "answer recall questions from this
   review; do not re-derive or contradict it."
 - **Durable conversation** (`_load_prior_conversation`, `:408`) — `load_recent(document_id,
-  attorney_id, conversation_max_messages=20)` from SQLite; falls back to Redis `chat_history` only
+  attorney_id, conversation_max_messages=20)` from Postgres; falls back to Redis `chat_history` only
   when the durable store returns empty (`:537-539`). This is what makes "Legal name the same we
   filled recently" resolve across a fresh session.
 - **Context cap** (`_cap_chat_context`, `:487`) — if the assembled content exceeds
@@ -191,10 +197,13 @@ prefix-cache reuse across turns. In practice that reuse **does not engage** (see
 
 ---
 
-## 5. The persistence stores in detail (SQLite)
+## 5. The persistence stores in detail (Postgres)
 
-All three live in one file: **`data/legal.db`** (`config.sqlite_path`). Tables are created lazily
-on first write (module-level `_*_initialized` guards in `memory_writer.py`).
+All three live in one Postgres database: the `app-db` docker-compose service (`config.database_url`,
+default `postgresql://legal:legal@localhost:5434/legal`), reached through an autocommit psycopg3
+connection pool in `memory/db.py` (`get_pool()`). Tables + indexes are created **eagerly** by
+`memory.db.init_db()` at `api/main.py` lifespan startup (and by the test fixture, which points
+`get_pool()` at an ephemeral testcontainers Postgres) — not lazily on first write.
 
 - **`review_store`** (`memory/review_store.py`) — `save_review` appends one row per
   `(document_id, session_id)` holding the **full markdown** review + `contract_type`. **List-shaped:**
@@ -213,8 +222,9 @@ on first write (module-level `_*_initialized` guards in `memory_writer.py`).
   `duration_ms`. Written on every turn. Never fed back to the LLM — it's the compliance trail.
 
 > **Test hazard (from CLAUDE.md):** a test that calls the real `memory_writer` with
-> `task_type=="research"` MUST monkeypatch `init_conversation_db` + `append_turn`, or it does a LIVE
-> write to `data/legal.db` and pollutes the dev DB.
+> `task_type=="research"` MUST monkeypatch `append_turn` (alongside `write_audit_log` /
+> `save_review`, per `tests/test_memory_writer.py`), or it does a LIVE write to the Postgres
+> `app-db` and pollutes the dev database.
 
 ---
 
@@ -246,7 +256,7 @@ Memory failure never fails silently and never (by itself) fails the turn:
 - **Mid-invoke Redis outage:** `_is_redis_failure` detects a Redis error in the exception chain and
   retries the turn on a checkpointer-less `_get_stateless_graph`, setting `memory_degraded=True`
   (`query.py:35-47, 180-190`). The turn still answers — grounding/review/conversation load from
-  SQLite and Qdrant, not Redis.
+  Postgres and Qdrant, not Redis.
 - **In-graph store read failure:** `_load_prior_review_block` / `_load_prior_conversation` catch
   read errors, set `state["memory_degraded"]=True`, and return empty — the chat turn proceeds
   ungrounded-on-that-store rather than crashing.
@@ -259,24 +269,27 @@ Memory failure never fails silently and never (by itself) fails the turn:
 
 ## 8. How to inspect each store
 
-**SQLite (`data/legal.db`) — the three durable stores:**
+**Postgres (`app-db`, host port 5434, db/user `legal`) — the three durable stores:**
 ```bash
-sqlite3 data/legal.db '.tables'                        # audit_log, conversation_store, review_store
-sqlite3 data/legal.db '.schema review_store'
+docker compose exec app-db psql -U legal -d legal -c "\dt"          # audit_log, conversation_store, review_store
+docker compose exec app-db psql -U legal -d legal -c "\d review_store"
 
 # Latest reviews (newest first)
-sqlite3 -header -column data/legal.db \
+docker compose exec app-db psql -U legal -d legal -c \
   "SELECT id, timestamp, document_id, contract_type, length(review_markdown) AS md_len
    FROM review_store ORDER BY id DESC LIMIT 10;"
 
 # A document's chat conversation (chronological)
-sqlite3 -header -column data/legal.db \
+docker compose exec app-db psql -U legal -d legal -c \
   "SELECT timestamp, attorney_id, role, substr(content,1,80) AS preview
    FROM conversation_store WHERE document_id='<doc-id>' ORDER BY id;"
 
 # Audit trail
-sqlite3 -header -column data/legal.db \
+docker compose exec app-db psql -U legal -d legal -c \
   "SELECT timestamp, user_id, skill_name, task_type, risk_level FROM audit_log ORDER BY id DESC LIMIT 20;"
+
+# Row counts
+docker compose exec app-db psql -U legal -d legal -c "SELECT count(*) FROM review_store;"
 ```
 
 **Redis — `chat_history` + checkpointer (per session):**
@@ -315,7 +328,7 @@ All in `config.py` (env-overridable):
 | `chat_context_max_chars` | `100000` | Assembled chat-context budget; truncates the **document** only |
 | `ollama_num_ctx` | `32768` | Context window for grounded LLM calls; unset → ~4k default silently truncates grounding |
 | `msa_max_chars` | `24000` | Max MSA chars inlined (review + chat), shared via `config` |
-| `sqlite_path` | `data/legal.db` | The one file holding all three durable stores |
+| `database_url` | `postgresql://legal:legal@localhost:5434/legal` | The `app-db` Postgres holding all three durable stores |
 | `sso_enabled` | `False` | On → `attorney_id` becomes the verified O365 `oid` (dormant today) |
 
 ---
@@ -333,7 +346,7 @@ All in `config.py` (env-overridable):
   the review is still reported as a placeholder. Reconcile the recalled review against the current
   `uploaded_text`, or nudge a re-review when the doc changed since the review timestamp.
 - **Conversation retention / pruning** — `conversation_store` grows unbounded; only the injected
-  window is capped. Revisit if `data/legal.db` grows.
+  window is capped. Revisit if the `app-db` Postgres database grows.
 - **FTS cross-matter precedent recall** — full-text search across all stored reviews for a
   `client_id` ("we flagged this same IP clause Red in three prior SOWs"). The list-shaped schema
   is the natural home.

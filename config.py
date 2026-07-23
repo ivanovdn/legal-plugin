@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     # App
     api_port: int = 8000
     chainlit_port: int = 8080
-    sqlite_path: str = "data/legal.db"
+    database_url: str = "postgresql://legal:legal@localhost:5434/legal"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

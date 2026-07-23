@@ -37,7 +37,7 @@ def test_config_loads_from_env(monkeypatch):
     monkeypatch.setenv("PHOENIX_HOST", "http://localhost:6006")
     monkeypatch.setenv("API_PORT", "8000")
     monkeypatch.setenv("CHAINLIT_PORT", "8080")
-    monkeypatch.setenv("SQLITE_PATH", "data/legal.db")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://legal:legal@localhost:5434/legal")
 
     settings = Settings()
 
@@ -67,7 +67,7 @@ def test_config_loads_from_env(monkeypatch):
     assert settings.phoenix_host == "http://localhost:6006"
     assert settings.api_port == 8000
     assert settings.chainlit_port == 8080
-    assert settings.sqlite_path == "data/legal.db"
+    assert settings.database_url == "postgresql://legal:legal@localhost:5434/legal"
 
 
 def test_config_singleton_returns_same_instance(monkeypatch):

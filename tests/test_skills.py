@@ -1152,7 +1152,7 @@ def test_doc_chat_injects_stored_review(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke", fake_traced_invoke)
     monkeypatch.setattr(lr, "load_latest_review",
-                        lambda db_path, document_id: {"markdown": "# Review\nIP clause is risky."})
+                        lambda document_id: {"markdown": "# Review\nIP clause is risky."})
 
     state = _make_state(
         request="expand on the IP risk you flagged", task_type="research",
@@ -1188,8 +1188,8 @@ def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
 
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
-    def _boom(db_path, document_id):
-        raise RuntimeError("redis/sqlite down")
+    def _boom(document_id):
+        raise RuntimeError("redis/postgres down")
     monkeypatch.setattr(lr, "load_latest_review", _boom)
 
     state = _make_state(
@@ -1209,7 +1209,7 @@ def test_doc_chat_no_document_id_no_degradation(monkeypatch):
         content = "answer"
 
     called = {"load": 0}
-    def _load(db_path, document_id):
+    def _load(document_id):
         called["load"] += 1
         return None
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
@@ -1237,7 +1237,7 @@ def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda db_path, document_id: None)
+    monkeypatch.setattr(lr, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("sow", False))
     monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "PLAYBOOK_BUNDLE_TEXT")
     monkeypatch.setattr(lr, "attach_parent_msa",
@@ -1271,7 +1271,7 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": seen.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda db_path, document_id: None)
+    monkeypatch.setattr(lr, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("nda", False))
     monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "NDA_BUNDLE")
     def _no_msa_for_nda(text, client_id, max_chars):
@@ -1302,7 +1302,7 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda db_path, document_id: None)
+    monkeypatch.setattr(lr, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("sow", False))
     monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
     monkeypatch.setattr(lr, "attach_parent_msa",
@@ -1377,7 +1377,7 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
         '| Signature | Fill "Signed by: [__]" with the counterparty name |\n\n'
         "# Business Questions\nWho is the client entity?\n"
     )
-    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: {"markdown": review_md})
+    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: {"markdown": review_md})
     state = _make_state(uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}], document_id="doc-1")
     block = lr._load_prior_review_block(state, "STATEMENT OF WORK\n\nbody")
     # Analysis kept (recall still works):
@@ -1429,7 +1429,7 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: {"markdown": "# Key Findings\nIP clause Red."})
+    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: {"markdown": "# Key Findings\nIP clause Red."})
     # If grounding is (wrongly) built on the lean path, these would raise:
     monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: (_ for _ in ()).throw(AssertionError("playbook built on lean path")))
     monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: (_ for _ in ()).throw(AssertionError("MSA built on lean path")))
@@ -1454,7 +1454,7 @@ def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: None)
+    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: None)
     monkeypatch.setattr(lr, "detect_contract_type", lambda t: ("sow", False))
     monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
     monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
@@ -1479,7 +1479,7 @@ def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda db, doc_id: None)
+    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: None)
     monkeypatch.setattr(lr, "detect_contract_type", lambda t: ("sow", False))
     monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
     monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))

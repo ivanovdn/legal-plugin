@@ -3,13 +3,12 @@
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from memory.audit import init_audit_db
+from memory.db import init_db
 from observability.langfuse import init_observability
 
 logger = logging.getLogger(__name__)
@@ -17,13 +16,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init observability, audit DB."""
+    """Startup: init observability; init_db() creates all Postgres store tables (audit, review, conversation)."""
     settings = get_settings()
 
     init_observability()
 
-    Path(settings.sqlite_path).parent.mkdir(parents=True, exist_ok=True)
-    init_audit_db(settings.sqlite_path)
+    init_db()
 
     logger.info("Legal plugin API started on port %d", settings.api_port)
     yield

@@ -648,7 +648,7 @@ def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
     if not document_id:
         return ""
     try:
-        latest = load_latest_review(get_settings().sqlite_path, document_id)
+        latest = load_latest_review(document_id)
     except Exception as e:
         logger.error("[legal_research] prior-review load failed: %s", e)
         state["memory_degraded"] = True
@@ -684,8 +684,7 @@ def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
         return []
     try:
         return load_recent(
-            settings.sqlite_path, document_id, attorney_id,
-            settings.conversation_max_messages,
+            document_id, attorney_id, settings.conversation_max_messages,
         )
     except Exception as e:
         logger.error("[legal_research] prior-conversation load failed: %s", e)
