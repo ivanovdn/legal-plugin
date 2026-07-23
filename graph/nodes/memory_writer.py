@@ -9,11 +9,10 @@ from langfuse.decorators import observe
 from graph.state import LegalAgentState
 from memory.audit import write_audit_log
 from memory.conversation_store import init_conversation_db, append_turn
-from memory.review_store import init_review_db, save_review
+from memory.review_store import save_review
 
 logger = logging.getLogger(__name__)
 
-_review_db_initialized = False
 _conversation_db_initialized = False
 
 
@@ -42,13 +41,8 @@ def memory_writer(state: LegalAgentState) -> dict:
     # Persist the full markdown review, keyed to the document. Loud on failure:
     # a lost write must not look like a save (the user believes it persisted).
     if state.get("task_type") == "contract_review" and state.get("llm_response"):
-        global _review_db_initialized
-        if not _review_db_initialized:
-            init_review_db(settings.sqlite_path)
-            _review_db_initialized = True
         try:
             save_review(
-                db_path=settings.sqlite_path,
                 document_id=state.get("document_id", ""),
                 session_id=state.get("session_id", ""),
                 markdown=state.get("llm_response", ""),

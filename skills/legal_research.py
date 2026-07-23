@@ -648,7 +648,7 @@ def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
     if not document_id:
         return ""
     try:
-        latest = load_latest_review(get_settings().sqlite_path, document_id)
+        latest = load_latest_review(document_id)
     except Exception as e:
         logger.error("[legal_research] prior-review load failed: %s", e)
         state["memory_degraded"] = True
