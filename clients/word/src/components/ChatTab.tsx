@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { chatQuery } from "../api";
 import { extractEditBlocks, normalizeProposals, type EditProposal } from "../parseEditBlocks";
+import { extractPreferenceBlocks } from "../parsePreferenceBlocks";
 import { readBody } from "../word";
 import EditProposalCard from "./EditProposalCard";
+import PreferenceSuggestionCard from "./PreferenceSuggestionCard";
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   proposedEdits?: EditProposal[];
+  proposedPreferences?: string[];
   /** True when the response sounded like an edit promise but no block came through. */
   promisedEditMissing?: boolean;
   /** Original LLM output before edit-block stripping — for the "show raw" toggle. */
@@ -35,9 +38,10 @@ interface Props {
   sessionId: string;
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  onPreferenceAdded?: () => void;
 }
 
-export default function ChatTab({ sessionId, messages, setMessages }: Props) {
+export default function ChatTab({ sessionId, messages, setMessages, onPreferenceAdded }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,12 +88,16 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
       const finalProse = cleanedProse || rawAnswer;
       const promisedEditMissing =
         proposedEdits.length === 0 && looksLikeEditPromise(finalProse);
+      const backendPrefs = res.data?.report?.proposed_preferences ?? [];
+      const { cleanedProse: prose2, preferences: fePrefs } = extractPreferenceBlocks(finalProse);
+      const proposedPreferences = backendPrefs.length > 0 ? backendPrefs : fePrefs;
       setMessages((m) => [
         ...m,
         {
           role: "assistant",
-          content: finalProse,
+          content: prose2 || finalProse,
           proposedEdits: proposedEdits.length > 0 ? proposedEdits : undefined,
+          proposedPreferences: proposedPreferences.length > 0 ? proposedPreferences : undefined,
           promisedEditMissing,
           rawResponse: rawAnswer,
         },
@@ -122,6 +130,9 @@ export default function ChatTab({ sessionId, messages, setMessages }: Props) {
             <div className="chat-content">{m.content}</div>
             {m.proposedEdits?.map((proposal, j) => (
               <EditProposalCard key={`${i}-${j}`} proposal={proposal} />
+            ))}
+            {m.proposedPreferences?.map((p, j) => (
+              <PreferenceSuggestionCard key={`pref-${i}-${j}`} text={p} onAdded={onPreferenceAdded} />
             ))}
             {m.promisedEditMissing && (
               <div className="chat-warning">

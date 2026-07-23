@@ -228,6 +228,20 @@ confirm a "remember that…" chat turn shows a card whose **Add** persists (visi
 - **Anonymous pooling** (Chainlit) — all anonymous callers share one `USER.md`. Acceptable; Word is
   always keyed.
 - **Last-write-wins** across two devices for the same attorney — acceptable single-user stage.
+- **Prefs may be the last *system* message on the chat path in one benign combination** — a plain
+  factual question with grounding off AND no stored review on file (so playbook/MSA/review are all
+  absent). Benign: in that case no playbook/policy/rating/gate exists in the prompt for a preference
+  to override, and the user's document turn is still last overall. Verified in the final review;
+  documented, not sentinel-guarded (would be gold-plating).
+- **Relaxing preferences ("don't worry about X", "ignore Y") are the dangerous class — and the
+  ceiling is enforced structurally, not provably.** The directive + early placement keep the
+  playbook authoritative, but enforcement is LLM-dependent (same class as every other "SKILL.md is
+  the ceiling" item). The 2026-07-22 Word smoke showed a relaxing pref did **not** weaken the
+  verdict (still Do-not-send, indemnity still Red), but the suppression test was **inconclusive** —
+  the clause the pref tried to relax (governing law) wasn't flagged in the baseline, so there was no
+  blocker to observe being (not) suppressed. This risk grows once the agent writes prefs itself
+  (Stage 2). Follow-up: a dedicated eval (playbook-flagged clause + relaxing pref → blocker must
+  survive) + possibly a guard that tags relaxing-language prefs as non-authoritative.
 
 ---
 

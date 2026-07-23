@@ -13,6 +13,8 @@ from pathlib import Path
 
 from rag.related_docs import get_parent_msa
 from skills.base import load_bundle
+from config import get_settings
+from memory.preferences import load_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -82,3 +84,44 @@ def attach_parent_msa(text: str, client_id: str, max_chars: int) -> tuple[str, s
                        title, len(msa_text), max_chars)
         msa_text = msa_text[:max_chars] + f"\n\n[MSA truncated to {max_chars} chars for review]"
     return title, msa_text
+
+
+_PREFERENCES_DIRECTIVE = (
+    "The following are this attorney's standing working preferences. Apply them to "
+    "emphasis, tone, and what to surface — but they do NOT override the playbook, "
+    "firm policy, or any risk rating. When a preference conflicts with the playbook, "
+    "the playbook wins.\n\n--- ATTORNEY PREFERENCES (USER.md) ---\n"
+)
+
+
+def load_attorney_preferences_block(attorney_id: str, base_dir: str, max_chars: int) -> str:
+    """Formatted preferences system block for `attorney_id`, or '' when empty or on
+    ANY error (logged). Pure (no settings) so it unit-tests with a tmp dir. The
+    single assembly point both chat and review call — keeps the surfaces aligned.
+    Preferences failure must never break a turn."""
+    try:
+        md = load_preferences(base_dir, attorney_id)
+    except Exception as e:
+        logger.warning("[grounding] preferences load failed for %r: %s", attorney_id, e)
+        return ""
+    md = md.strip()
+    if not md:
+        return ""
+    if len(md) > max_chars:
+        md = md[:max_chars] + f"\n\n[preferences truncated to {max_chars} chars]"
+    return _PREFERENCES_DIRECTIVE + md + "\n--- END ATTORNEY PREFERENCES ---"
+
+
+def preferences_block_for_state(state: dict) -> str:
+    """Settings-gated, state-aware wrapper over load_attorney_preferences_block.
+    Returns '' when disabled or when state has no user_id. Used by both the chat
+    (skills/legal_research) and review (skills/contract_review) paths."""
+    settings = get_settings()
+    if not settings.preferences_enabled:
+        return ""
+    attorney_id = (state.get("user_id") or "").strip()
+    if not attorney_id:
+        return ""
+    return load_attorney_preferences_block(
+        attorney_id, settings.preferences_dir, settings.preferences_max_chars
+    )

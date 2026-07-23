@@ -24,6 +24,7 @@ def output_formatter(state: LegalAgentState) -> LegalAgentState:
         ],
         "notes_unincorporated": state.get("report_notes_unincorporated", ""),
         "proposed_edits": state.get("proposed_edits", []),
+        "proposed_preferences": state.get("proposed_preferences", []),
         "contract_type_detected": state.get("contract_type_detected", ""),
         "requires_attorney": state.get("requires_attorney", False),
         "memory_degraded": state.get("memory_degraded", False),

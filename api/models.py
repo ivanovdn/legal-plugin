@@ -24,6 +24,11 @@ class ResumeRequest(BaseModel):
     revised_response: str = Field("", description="Optional: revised response text if not approved")
 
 
+class PreferencesUpdate(BaseModel):
+    """Replace an attorney's USER.md."""
+    markdown: str = Field("", description="Full markdown content of the attorney's USER.md")
+
+
 class ApiResponse(BaseModel):
     """Standard response envelope."""
     status: str = "ok"

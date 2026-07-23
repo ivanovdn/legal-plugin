@@ -19,9 +19,9 @@
 
 ## TL;DR
 
-The system now has **eight distinct context/memory stores** across four backing services
-(Redis, SQLite, Qdrant, Langfuse) plus the generated playbook on the filesystem. They are easy
-to conflate — the table is the map:
+The system now has **nine distinct context/memory stores** across four backing services
+(Redis, SQLite, Qdrant, Langfuse) plus filesystem stores (the generated playbook and, since
+2026-07-23, per-attorney `USER.md` preference files). They are easy to conflate — the table is the map:
 
 | # | Store | Backing | What it holds | Key / scope | Lifetime | Fed to the LLM? |
 |---|-------|---------|---------------|-------------|----------|-----------------|
@@ -33,12 +33,15 @@ to conflate — the table is the map:
 | 6 | **Audit log** | SQLite | One row per skill invocation | `session_id` / `user_id` | **permanent** | ❌ never fed back |
 | 7 | **Qdrant** (`legal_docs`) | Qdrant | RAG corpus + governing MSA + (indirect) playbook source | `client_id` filter | long-lived | ✅ MSA on SOW paths; RAG only when no doc attached |
 | 8 | **Langfuse** | Postgres | Traces, token usage | — | observability | ❌ never fed back |
+| 9 | **Attorney preferences** (`USER.md`) | Filesystem | Per-attorney standing preferences (plain markdown) | `attorney_id` → `data/attorneys/<id>/USER.md` | **permanent** (human-owned; **read fresh each turn, no cache**) | ✅ injected as an **early** system block on chat + review, subordinate to the playbook |
 
 Two more things that are *memory-shaped* but not stores of conversation:
 - **Playbook bundle** — generated markdown under `skills/contract_review/playbook/` (from the
   legal-team `.docx`); attached as grounding on both the review and chat paths. Filesystem, not a DB.
-- **Qdrant `memory` collection** — provisioned empty (`scripts/create_collections.py:24-27`) for a
-  future cross-session attorney-preference store; **no code reads or writes it yet** (scaffold only).
+- **Qdrant `memory` collection** — provisioned empty (`scripts/create_collections.py:24-27`). The
+  **stage-1** attorney-preference store now exists as a flat file (#9, `USER.md`), so this collection
+  is reserved for the *semantic / inferred* harness stage (relevance-narrowed recall, autonomous
+  writes); **still no code reads or writes it yet** (scaffold only).
 
 **Most important fact for the Chat tab:** every turn re-sends the **entire current document**
 inlined in the user message. On top of that, `_run_doc_chat` assembles a grounded, memory-rich

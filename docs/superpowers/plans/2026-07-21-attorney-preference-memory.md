@@ -1225,3 +1225,27 @@ Two execution options:
 2. **Inline Execution** — batch with checkpoints.
 
 Which approach?
+
+---
+
+## Post-implementation notes (plan ≡ code)
+
+Executed via subagent-driven-development (8 tasks, cheap-tier implementers + per-task sonnet
+reviews + opus whole-branch review = READY TO MERGE, zero Critical/Important). Deltas from the
+plan as written, for anyone diffing plan vs code:
+
+- **Task 2 test assertion.** The plan's `test_block_truncates` asserted `block.count("y") <= 100`,
+  which is impossible — the `_PREFERENCES_DIRECTIVE` text itself contains ~8 "y"s, so the real
+  block has ~108. Shipped as `assert "y" * 101 not in block` (genuinely fails if truncation is
+  skipped). Same recurring authoring miss: hand-written plan assertions that don't run.
+- **Fix wave (commit 1d64ba7).** Added the SOW+MSA review-injection ordering test (the MSA-last
+  legal-safety invariant now has a regression test — needed `importlib.import_module` +
+  `monkeypatch.setattr` on the real module object, because `skills.contract_review` re-exports the
+  `contract_review` function and shadows the submodule); hardened `_safe_attorney_id` from `.match`
+  to `.fullmatch` (rejects a trailing "\n"); removed an unused `logger` in the route module; added
+  minimal CSS for the new `.preferences*` / `.preference-suggestion*` classes.
+- **Final backend suite: 380** (base 347 + this feature) + `parsePreferenceBlocks` tsx (4) +
+  frontend typecheck clean.
+- **Smoke (Word for Mac, 2026-07-22/23):** passed — see the wiki Shipped row (traces `f8788b0b`,
+  `fc051464`, `401e2da9`, `fa3a1bf0`). One documented caveat: the relaxing-preference ceiling test
+  was inconclusive (no baseline blocker to observe suppression) → logged as a follow-up.

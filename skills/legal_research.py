@@ -18,7 +18,12 @@ from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
-from skills.grounding import attach_parent_msa, detect_contract_type, load_playbook_bundle
+from skills.grounding import (
+    attach_parent_msa,
+    detect_contract_type,
+    load_playbook_bundle,
+    preferences_block_for_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +91,10 @@ Actions and required fields:
 
 replace_all applies ONE new_text to EVERY match, so its target must correspond to exactly ONE intended value (e.g. "[Year]" → "2026"). Do NOT replace_all a generic blank like "[__]" when different fields need different values — the same "[__]" stands for the name on one line and the title on another, so a single value cannot fill them correctly. In that case emit a separate "replace" for each field, targeting that field's own line (the label plus its blank).
 
-The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?")."""
+The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?").
+
+REMEMBERING PREFERENCES (only when explicitly asked):
+If — and ONLY if — the user explicitly asks you to remember a standing preference for the future (e.g. "always flag…", "remember that I want…", "from now on…"), then in addition to your normal answer, end your reply with a fenced ```preference``` block containing the preference as ONE short imperative line (use several lines for several preferences). Do NOT emit this block for one-off requests, ordinary questions, or edits, and NEVER propose a preference that contradicts the playbook or firm policy. This block is a suggestion the attorney approves — it does not change the current document."""
 
 
 # Structural, model-neutral note added when a governing MSA is attached on the
@@ -209,6 +217,7 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
 
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+_PREFERENCE_BLOCK_RE = re.compile(r"```preference\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
 def _escape_unescaped_whitespace_in_strings(raw: str) -> str:
@@ -351,6 +360,22 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
             else:
                 logger.warning("[legal_research] edit entry missing/invalid action: %r", c)
     return proposals
+
+
+def _extract_proposed_preferences(prose: str) -> list[str]:
+    """Pull ```preference``` fenced blocks into individual preference lines.
+
+    Plain text, one preference per line (a leading '-'/'*' bullet is stripped) —
+    deliberately NOT JSON, to avoid the edit-block parsing fragility. Non-fatal:
+    no block → []. The suggestion the attorney approves; not a document edit.
+    """
+    prefs: list[str] = []
+    for match in _PREFERENCE_BLOCK_RE.finditer(prose or ""):
+        for line in match.group(1).splitlines():
+            t = re.sub(r"^\s*[-*]\s+", "", line).strip()
+            if t:
+                prefs.append(t)
+    return prefs
 
 
 def _strip_redlines_section(markdown: str) -> str:
@@ -779,6 +804,9 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     if not chat_history:
         chat_history = state.get("chat_history", []) or []
     system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    prefs_block = preferences_block_for_state(state)
+    if prefs_block:                     # early → subordinate to playbook/review (ceiling intact)
+        system_messages.append({"role": "system", "content": prefs_block})
     if playbook:
         system_messages.append({"role": "system", "content": playbook})
     if msa_block:
@@ -891,12 +919,14 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
     # Always reset proposed_edits at the start so a turn that produces no
     # edit block doesn't carry the prior turn's proposal forward.
     state["proposed_edits"] = []
+    state["proposed_preferences"] = []
 
     try:
         if uploaded_text:
             content, edits = _run_doc_chat(state, uploaded_text)
             state["llm_response"] = content
             state["proposed_edits"] = edits
+            state["proposed_preferences"] = _extract_proposed_preferences(content)
             state["retrieved_chunks"] = []
             logger.info(
                 "[legal_research] doc-chat completed, response=%d chars, edits=%d",

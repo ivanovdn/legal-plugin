@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     conversation_store_enabled: bool = True   # durable per-(document,attorney) chat store; False = Redis-only history
     conversation_max_messages: int = 20       # messages injected from the durable store (~10 turns); store retains all
 
+    # Attorney preference memory (USER.md) — stage 1 of the self-improving harness
+    preferences_enabled: bool = True          # per-attorney USER.md; False = no store/injection
+    preferences_dir: str = "data/attorneys"   # USER.md at <preferences_dir>/<attorney_id>/USER.md
+    preferences_max_chars: int = 8000         # cap on prefs injected into a prompt (counts to chat budget)
+
     # O365 SSO (slice 3) — dormant until sso_enabled; False = trust X-User-ID (today)
     sso_enabled: bool = False
     sso_tenant_id: str = ""      # Azure AD tenant (directory) id
