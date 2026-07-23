@@ -176,7 +176,7 @@ All settings live in `.env` (loaded by `config.py` via `pydantic-settings`). Key
 - **Retrieval** — `RETRIEVAL_TOP_K`, `MIN_CONFIDENCE_SCORE`, hybrid + reranker knobs
 - **Memory** — Redis URL, checkpointer TTL, chat-history depth, context caps
 - **Observability** — Langfuse host + keys
-- **App** — `API_PORT`, `CHAINLIT_PORT`, `SQLITE_PATH`
+- **App** — `API_PORT`, `CHAINLIT_PORT`, `DATABASE_URL` (e.g. `postgresql://legal:legal@localhost:5434/legal`)
 
 See `.env.example` for the full list and `config.py` for defaults.
 

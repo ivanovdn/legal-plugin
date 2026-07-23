@@ -1189,7 +1189,7 @@ def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
     def _boom(document_id):
-        raise RuntimeError("redis/sqlite down")
+        raise RuntimeError("redis/postgres down")
     monkeypatch.setattr(lr, "load_latest_review", _boom)
 
     state = _make_state(
