@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets & env — provided at runtime via env_file, never baked
+.env
+.env.*
+
+# Runtime state (mounted as volumes in production)
+data/
+
+# Tests / eval / notebooks — not needed at runtime
+tests/
+eval/
+notebooks/
+
+# Word add-in source + node_modules + build (served separately by Caddy, not the backend)
+clients/
+
+# Docs / planning
+docs/
+*.md
+!README.md
+
+# SDD controller scratch
+.superpowers/
+
+# VCS / tooling / build artifacts
+.git/
+.gitignore
+.DS_Store
+dist/
