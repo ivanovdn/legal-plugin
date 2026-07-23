@@ -1,0 +1,49 @@
+# Slim runtime deps for the backend Docker image (Word add-in API).
+# = requirements.txt minus chainlit (separate web client, not imported by
+# api.main) and the test stack (pytest/pytest-asyncio/testcontainers).
+# For local dev + tests use requirements.txt.
+
+# API
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+# Required directly by api/routes/documents.py (UploadFile/Form). Not in the
+# original requirements.txt because chainlit's dependency chain installed it
+# transitively there; the slim runtime set excludes chainlit, so it must be
+# explicit here.
+python-multipart>=0.0.9,<1.0
+
+# LangGraph
+langgraph>=0.4,<1.0
+langchain-ollama>=0.3,<1.0
+langchain-qdrant>=0.2,<1.0
+
+# RAG
+qdrant-client>=1.13,<2.0
+
+# BM25
+rank-bm25>=0.2,<1.0
+
+# Document parsing
+pdfplumber>=0.11,<1.0
+python-docx>=1.1,<2.0
+
+# Config
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+
+# Session / checkpointer
+redis>=5.0,<6.0
+langgraph-checkpoint-redis>=0.1,<1.0
+
+# App relational store (Postgres)
+psycopg[binary]>=3.2,<4.0
+psycopg-pool>=3.2,<4.0
+
+# Observability
+langfuse>=2.0,<3.0
+
+# HTTP client (reranker, Ollama direct calls)
+httpx>=0.28,<1.0
+
+# Auth (O365 SSO — dormant until sso_enabled)
+PyJWT[crypto]>=2.9,<3.0
