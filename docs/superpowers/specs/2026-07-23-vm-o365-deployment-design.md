@@ -34,7 +34,11 @@ This spec covers making the app **hostable and reachable** for those testers. It
    - (a) public cert via a public DNS name resolving internally (split-horizon DNS + Let's Encrypt DNS-01), or
    - (b) an internal-CA cert the corp machines already trust.
 3. **Word surface** the testers use — Windows desktop, Mac desktop, or Word-for-web (opening from SharePoint often lands in Word-for-web). This drives the sideload path and which surfaces get smoke-tested. See Open Decisions.
-4. **Spark box**: reachable from `SRV-AGENT-01` over the private network, `ollama serve` bound to the LAN (`OLLAMA_HOST=0.0.0.0`), the model pulled, and `OLLAMA_KEEP_ALIVE`/`OLLAMA_NUM_PARALLEL` set for the hardware. Never expose Ollama publicly.
+4. **Spark box (`172.20.0.22`)**: reachable from `SRV-AGENT-01` over the private network, `ollama serve` bound to the LAN (`OLLAMA_HOST=0.0.0.0`), the model pulled, and `OLLAMA_KEEP_ALIVE`/`OLLAMA_NUM_PARALLEL` set for the hardware. Verify before deploy: `curl http://172.20.0.22:11434/api/tags`. Never expose Ollama publicly.
+
+## Reference implementation — `../compliance-bot` (already on the VM)
+
+A sibling repo is already deployed on this VM/network. **Mirror its container pattern** for consistency and to de-risk: its `Dockerfile` (python:3.12-slim + build-essential + git, a slim runtime-requirements file, copy runtime code only, `PYTHONPATH=/app` + `PYTHONUNBUFFERED=1`), its `.dockerignore`, and its `docker-compose-remote.yml` (`build: .` + `env_file: .env` + **in-network service-name env overrides** + data-dir volumes + `restart: unless-stopped` + `depends_on` healthchecks). Deploy flow to copy: `scp` a configured `.env` to the host, then `docker compose -f docker-compose-remote.yml up -d --build`; verify Spark connectivity first. **Caveat:** compliance-bot is a Teams bot (outbound) — it has **no reverse proxy, cert, or inbound HTTPS**, so the Caddy + cert + pane-serving parts of this spec have no precedent to copy and are genuinely new.
 
 ## Target architecture
 
@@ -61,7 +65,7 @@ https://legal-triage.internal.trinetix.net            ← ONE trusted cert, ONE 
 - **Front-end hosting = co-host behind the proxy (not a separate static host).** Same origin kills CORS, one cert, and a public static host calling a VPN-only backend would be a mixed-network mess. Overkill to split for a couple of users.
 - **Reverse proxy = Caddy.** Automatic HTTPS, ~5-line config, docker-native. (Traefik is an acceptable alternative if compose-label config is preferred; nginx works but is more config.)
 - **Cert = a trusted cert, mechanism per Open Decisions** — this is the single make-or-break item; self-signed is a stopgap only (author's machine).
-- **LLM off-box** — `config.ollama_base_url` → `http://<spark>:11434`; **remove the local `ollama` container** from the VM's compose. `num_ctx` is already pinned in code (spec-1-era `ollama_num_ctx`), so remote calls stay correctly grounded.
+- **LLM off-box** — `config.ollama_base_url` → `http://172.20.0.22:11434` (the Spark GPU box; confirmed from `../compliance-bot`). **There is no local `ollama` container to remove** — Ollama is host/remote-installed here, never containerized. `num_ctx` is already pinned in code (spec-1-era `ollama_num_ctx`), so remote calls stay correctly grounded.
 - **Manifest = a prod variant** with every `https://localhost:3001` replaced by the hosted origin (`SourceLocation`, `AppDomains`, `IconUrl`/`SupportUrl`, `bt:Url`s). Keep `manifest.localhost.xml` for dev so the two don't collide; generate from a template or keep two tracked files.
 - **Identity unchanged** — per-install `localStorage` UUID as `X-User-ID`. Accepted caveat: per-machine/per-browser, so a tester using both desktop and web gets two identities → their preferences/conversation memory won't follow them across surfaces. That's the concrete argument for SSO, deferred.
 
