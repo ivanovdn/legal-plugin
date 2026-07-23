@@ -9,6 +9,7 @@ from graph.nodes.history_appender import history_appender
 from graph.nodes.human_review import human_review
 from graph.nodes.llm_caller import llm_caller
 from graph.nodes.output_formatter import output_formatter
+from memory.db import get_pool
 
 
 def _make_state(**overrides):
@@ -526,18 +527,12 @@ def test_output_formatter_surfaces_requires_attorney():
 # --- memory_writer ---
 
 def test_memory_writer_writes_audit(tmp_path, monkeypatch):
-    """memory_writer writes to SQLite audit log."""
-    db_path = str(tmp_path / "test_legal.db")
-    monkeypatch.setenv("SQLITE_PATH", db_path)
+    """memory_writer writes to the Postgres audit log."""
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     from config import get_settings
     get_settings.cache_clear()
 
-    from memory.audit import init_audit_db
-    init_audit_db(db_path)
-
     import graph.nodes.memory_writer as mw
-    mw._db_initialized = True
 
     state = _make_state(
         task_type="research",
@@ -547,10 +542,8 @@ def test_memory_writer_writes_audit(tmp_path, monkeypatch):
     )
     result = mw.memory_writer(state)
 
-    import sqlite3
-    conn = sqlite3.connect(db_path)
-    rows = conn.execute("SELECT * FROM audit_log").fetchall()
-    conn.close()
+    with get_pool().connection() as conn:
+        rows = conn.execute("SELECT * FROM audit_log").fetchall()
     assert len(rows) == 1
 
 

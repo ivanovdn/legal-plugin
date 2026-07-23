@@ -2,16 +2,15 @@
 import graph.nodes.memory_writer as mw
 from graph.nodes.intake import intake
 from memory.review_store import init_review_db, load_latest_review
-from memory.audit import init_audit_db
 
 
 def test_review_persisted_on_review_turn_is_recallable_by_document_id(monkeypatch, tmp_path):
     db = str(tmp_path / "legal.db")
-    # Point BOTH stores at a temp db and force re-init on it (module-level guards
-    # may already be True from earlier tests, which would skip table creation).
+    # Point the review store at a temp db and force re-init on it (the module-level
+    # guard may already be True from earlier tests, which would skip table creation).
+    # The audit log is unaffected — it now writes to the shared Postgres pool.
     from config import get_settings
     monkeypatch.setattr(get_settings(), "sqlite_path", db, raising=False)
-    monkeypatch.setattr(mw, "_db_initialized", False)
     monkeypatch.setattr(mw, "_review_db_initialized", False)
 
     text = "STATEMENT OF WORK\n\nAcme and Globex.\n\n1. Scope: build a site."

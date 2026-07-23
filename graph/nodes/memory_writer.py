@@ -7,13 +7,12 @@ from config import get_settings
 from langfuse.decorators import observe
 
 from graph.state import LegalAgentState
-from memory.audit import init_audit_db, write_audit_log
+from memory.audit import write_audit_log
 from memory.conversation_store import init_conversation_db, append_turn
 from memory.review_store import init_review_db, save_review
 
 logger = logging.getLogger(__name__)
 
-_db_initialized = False
 _review_db_initialized = False
 _conversation_db_initialized = False
 
@@ -22,17 +21,11 @@ _conversation_db_initialized = False
 def memory_writer(state: LegalAgentState) -> dict:
     """Writes the audit log; on a contract_review turn also persists the review.
     Returns {} normally, or {'report': {...}} with review_persist_error if the review write fails."""
-    global _db_initialized
     settings = get_settings()
-
-    if not _db_initialized:
-        init_audit_db(settings.sqlite_path)
-        _db_initialized = True
 
     review_status = "pending" if state.get("awaiting_review") else "not_required"
 
     write_audit_log(
-        db_path=settings.sqlite_path,
         session_id=state.get("session_id", ""),
         user_id=state.get("user_id", ""),
         skill_name=state.get("task_type", "unknown"),
