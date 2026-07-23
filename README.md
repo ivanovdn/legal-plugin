@@ -23,7 +23,7 @@ The whole system runs on a single workstation. **No external API calls** — con
 - **Word add-in with native tracked changes.** Runs the review in-pane, applies redlines as real Office tracked changes (Accept/Reject preserved), fills placeholders, and offers a grounded doc-chat for follow-up edits.
 - **Hybrid RAG retrieval.** Dense vectors (Qdrant) + BM25 + an optional cross-encoder reranker, always tenant-filtered by `client_id`.
 - **SOW ↔ MSA cross-checking.** A SOW review automatically pulls in the governing MSA and flags conflicts per the playbook's precedence rules.
-- **Durable memory & audit.** Redis checkpointer for resumable sessions, SQLite audit log of every turn, and persisted reviews the chat tab remembers across turns. Degraded-memory states are surfaced loudly, never silent.
+- **Durable memory & audit.** Redis checkpointer for resumable sessions; a dedicated Postgres `app-db` holds the audit log of every turn, persisted reviews the chat tab remembers across turns, and per-attorney conversations. Degraded-memory states are surfaced loudly, never silent.
 - **Full observability.** Every node and LLM call is traced to Langfuse with token usage.
 
 ---
@@ -40,7 +40,7 @@ Attorney
                                                                       ├── RAG layer ────► Qdrant (+ BM25 + reranker)
                                                                       ├── LLM ──────────► Ollama (local model)
                                                                       ├── Checkpointer ─► Redis
-                                                                      ├── Audit ────────► SQLite
+                                                                      ├── Stores ───────► Postgres app-db (audit, reviews, chat)
                                                                       └── Tracing ──────► Langfuse
 ```
 
@@ -59,7 +59,7 @@ Attorney
 | Web client       | Chainlit                                                          |
 | Word client      | Office.js task pane — React + TypeScript + Vite                   |
 | Sessions         | Redis (LangGraph checkpointer)                                    |
-| Audit            | SQLite                                                            |
+| App stores       | Postgres `app-db` (audit, reviews, conversations) via `memory/db.py` pool |
 | Tracing          | Langfuse (Postgres + ClickHouse + MinIO)                          |
 | Tooling          | `uv` for venv/deps, `docker compose` for infra                    |
 
