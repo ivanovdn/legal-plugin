@@ -93,7 +93,8 @@ Without this, Caddy falls back to its own internal (self-signed) cert — fine f
 ## Step 3 — Build the pane (Bucket A)
 
 ```bash
-cd clients/word && npm ci && npm run build
+# Subshell keeps the shell at the repo root for the later steps.
+( cd clients/word && npm ci && npm run build )
 ```
 
 Produces `clients/word/dist` (the static bundle `docker-compose.remote.yml`'s `caddy` service mounts read-only at `/srv`).
