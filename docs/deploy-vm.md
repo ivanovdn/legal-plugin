@@ -141,11 +141,19 @@ Rendering the manifest is **Bucket A**; actually sideloading to testers is **Buc
 ADDIN_ORIGIN=https://<hostname> python scripts/build_manifest.py
 ```
 
-Writes `clients/word/manifest.prod.xml` (validates in memory first — a failed render never touches the file on disk; see `scripts/build_manifest.py`). Sideload per surface:
+Writes `clients/word/manifest.prod.xml` (validates in memory first — a failed render never touches the file on disk; see `scripts/build_manifest.py`). Recommended: run the authoritative Office schema validator against the generated manifest before sideloading — `build_manifest.py` only checks XML well-formedness + template substitution, not the actual Office manifest schema:
+
+```bash
+npx office-addin-manifest validate clients/word/manifest.prod.xml
+```
+
+Sideload per surface:
 
 - **Windows (shared-folder catalog):** point a trusted network share at `manifest.prod.xml`, register it as an add-in catalog (Word Options → Trust Center → Trusted Add-in Catalogs), then insert from **My Add-ins → Shared Folder**.
 - **Mac (`wef` folder):** `cp clients/word/manifest.prod.xml ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/legal-triage.manifest.xml`, then quit/reopen Word and insert from **My Add-ins → Shared Folder** (see `clients/word/README.md` for the full walkthrough — written for the dev manifest, same mechanism).
 - **Word-for-web:** **Insert → Add-ins → Upload My Add-in**, upload `manifest.prod.xml` directly (per-user, no catalog needed).
+
+Note: `manifest.prod.xml` reuses the dev manifest's `<Id>` (`D57831EF-…`), since it's rendered from the same `manifest.template.xml`. Office keys sideloaded add-ins by `<Id>`, so a single machine can't have both the dev and prod add-in sideloaded at once. If the machine doing a prod smoke test also has the dev add-in sideloaded (e.g. the author's own machine), remove the dev add-in first — testers on other machines are unaffected.
 
 ---
 

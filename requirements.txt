@@ -17,6 +17,9 @@ rank-bm25>=0.2,<1.0
 pdfplumber>=0.11,<1.0
 python-docx>=1.1,<2.0
 
+# Uploads (multipart/form-data — used by api/routes/documents.py)
+python-multipart>=0.0.9,<1.0
+
 # Config
 pydantic>=2.0,<3.0
 pydantic-settings>=2.0,<3.0
