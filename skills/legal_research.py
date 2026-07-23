@@ -684,8 +684,7 @@ def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
         return []
     try:
         return load_recent(
-            settings.sqlite_path, document_id, attorney_id,
-            settings.conversation_max_messages,
+            document_id, attorney_id, settings.conversation_max_messages,
         )
     except Exception as e:
         logger.error("[legal_research] prior-conversation load failed: %s", e)

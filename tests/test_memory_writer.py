@@ -30,8 +30,7 @@ def test_persists_review_for_contract_review_turn(monkeypatch):
 def test_does_not_persist_for_non_review_turn(monkeypatch):
     monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
     # A research turn now triggers the conversation-store write path — mock it so
-    # this test can't do a live write to the real sqlite_path (data/legal.db).
-    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
+    # this test can't do a live write to the real Postgres store.
     monkeypatch.setattr(mod, "append_turn", lambda **kw: None)
     called = {"n": 0}
     monkeypatch.setattr(mod, "save_review", lambda **kw: called.__setitem__("n", called["n"] + 1))
@@ -51,11 +50,10 @@ def test_write_failure_is_surfaced_in_report(monkeypatch):
 
 def test_persists_conversation_for_research_turn(monkeypatch):
     monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
-    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
     saved = {}
     monkeypatch.setattr(
         mod, "append_turn",
-        lambda db_path, document_id, attorney_id, user_text, assistant_text:
+        lambda document_id, attorney_id, user_text, assistant_text:
         saved.update(document_id=document_id, attorney_id=attorney_id,
                      user_text=user_text, assistant_text=assistant_text),
     )
@@ -72,7 +70,6 @@ def test_persists_conversation_for_research_turn(monkeypatch):
 def test_does_not_persist_conversation_for_review_turn(monkeypatch):
     monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
     monkeypatch.setattr(mod, "save_review", lambda **kw: None)
-    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
     called = {"n": 0}
     monkeypatch.setattr(mod, "append_turn",
                         lambda **kw: called.__setitem__("n", called["n"] + 1))
@@ -82,7 +79,6 @@ def test_does_not_persist_conversation_for_review_turn(monkeypatch):
 
 def test_skips_conversation_when_no_document_id(monkeypatch):
     monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
-    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
     called = {"n": 0}
     monkeypatch.setattr(mod, "append_turn",
                         lambda **kw: called.__setitem__("n", called["n"] + 1))
@@ -92,20 +88,8 @@ def test_skips_conversation_when_no_document_id(monkeypatch):
 
 def test_conversation_write_failure_is_non_fatal(monkeypatch):
     monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
-    monkeypatch.setattr(mod, "init_conversation_db", lambda p: None)
     def _boom(**kw):
         raise RuntimeError("disk full")
     monkeypatch.setattr(mod, "append_turn", _boom)
-    out = mod.memory_writer(_state(task_type="research", user_id="atty-1"))
-    assert "review_persist_error" not in (out.get("report") or {})
-
-
-def test_conversation_init_failure_is_non_fatal(monkeypatch):
-    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: None)
-    monkeypatch.setattr(mod, "append_turn", lambda **kw: None)
-    def _boom(p):
-        raise RuntimeError("cannot open db")
-    monkeypatch.setattr(mod, "init_conversation_db", _boom)
-    mod._conversation_db_initialized = False  # force an init attempt
     out = mod.memory_writer(_state(task_type="research", user_id="atty-1"))
     assert "review_persist_error" not in (out.get("report") or {})

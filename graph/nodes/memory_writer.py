@@ -8,12 +8,10 @@ from langfuse.decorators import observe
 
 from graph.state import LegalAgentState
 from memory.audit import write_audit_log
-from memory.conversation_store import init_conversation_db, append_turn
+from memory.conversation_store import append_turn
 from memory.review_store import save_review
 
 logger = logging.getLogger(__name__)
-
-_conversation_db_initialized = False
 
 
 @observe(name="memory_writer")
@@ -59,13 +57,8 @@ def memory_writer(state: LegalAgentState) -> dict:
         document_id = state.get("document_id", "")
         attorney_id = state.get("user_id", "")
         if document_id and attorney_id and state.get("llm_response"):
-            global _conversation_db_initialized
             try:
-                if not _conversation_db_initialized:
-                    init_conversation_db(settings.sqlite_path)
-                    _conversation_db_initialized = True
                 append_turn(
-                    db_path=settings.sqlite_path,
                     document_id=document_id,
                     attorney_id=attorney_id,
                     user_text=state.get("request", ""),
