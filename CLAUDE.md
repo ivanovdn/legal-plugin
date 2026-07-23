@@ -146,5 +146,4 @@ uv run python -m scripts.debug_query "..."
 - Structured JSON output for `contract_review` (would unlock Phase 2 playbook citations in Word)
 - Generate-clause tab in Word add-in (Phase 6)
 - AppSource publishing — sideload only
-- WebSocket/SSE streaming responses
 - Real auth / O365 SSO — **backend `resolve_user_id` SSO seam shipped, dormant** (`sso_enabled=False`, `api/auth.py`); the Word client still sends a per-install attorney UUID as `X-User-ID` (partitioning key, not auth), Chainlit uses `anonymous`. Remaining slice-3 work = the SSO-on **client** wiring (`getAccessToken()` + manifest `WebApplicationInfo` + dialog fallback) + Azure app registration, deferred until an Azure app exists.
