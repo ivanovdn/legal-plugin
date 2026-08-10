@@ -93,3 +93,12 @@ def test_conversation_write_failure_is_non_fatal(monkeypatch):
     monkeypatch.setattr(mod, "append_turn", _boom)
     out = mod.memory_writer(_state(task_type="research", user_id="atty-1"))
     assert "review_persist_error" not in (out.get("report") or {})
+
+
+def test_audit_receives_user_name(monkeypatch):
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(mod, "append_turn", lambda **kw: None)
+    captured = {}
+    mod.memory_writer(_state(task_type="research", user_id="uuid-1",
+                             user_name="Dmytro Ivanov", llm_response="a"))
+    assert captured["user_name"] == "Dmytro Ivanov"

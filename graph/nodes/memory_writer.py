@@ -32,6 +32,7 @@ def memory_writer(state: LegalAgentState) -> dict:
         review_status=review_status,
         review_notes=state.get("attorney_notes", ""),
         duration_ms=0,
+        user_name=state.get("user_name", ""),
     )
 
     logger.info("[memory_writer] audit log written for session=%s", state.get("session_id"))

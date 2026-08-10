@@ -24,3 +24,17 @@ def test_write_audit_log_multiple():
     with get_pool().connection() as conn:
         count = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
     assert count == 3
+
+
+def test_write_audit_log_persists_user_name():
+    from memory.audit import write_audit_log
+    from memory.db import get_pool
+    write_audit_log(
+        session_id="s-name", user_id="uuid-1", skill_name="research",
+        task_type="research", request_summary="who signs?", user_name="Dmytro Ivanov",
+    )
+    with get_pool().connection() as conn:
+        row = conn.execute(
+            "SELECT user_name FROM audit_log WHERE user_id = 'uuid-1'"
+        ).fetchone()
+    assert row[0] == "Dmytro Ivanov"

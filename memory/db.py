@@ -32,9 +32,11 @@ _STATEMENTS = [
         risk_level TEXT NOT NULL DEFAULT 'low',
         review_status TEXT NOT NULL DEFAULT 'not_required',
         review_notes TEXT NOT NULL DEFAULT '',
-        duration_ms BIGINT NOT NULL DEFAULT 0
+        duration_ms BIGINT NOT NULL DEFAULT 0,
+        user_name TEXT NOT NULL DEFAULT ''
     )
     """,
+    "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''",
     """
     CREATE TABLE IF NOT EXISTS review_store (
         id BIGSERIAL PRIMARY KEY,
