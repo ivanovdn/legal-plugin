@@ -117,3 +117,30 @@ def resolve_user_id(
     except SSOConfigError as e:
         logger.error("[auth] cannot validate token (infra/config): %s", e)
         raise HTTPException(status_code=503, detail="authentication temporarily unavailable") from e
+
+
+def attorney_name_from_claims(claims: dict) -> str:
+    """Human-readable display name from the token. Display only — never a key."""
+    return claims.get("name", "") or ""
+
+
+def resolve_user_name(
+    authorization: str | None = Header(None),
+    x_user_name: str = Header("", alias="X-User-Name"),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Display name for this request (never a key).
+
+    SSO off (default): the self-entered X-User-Name header (default "").
+    SSO on: the token's `name` claim. Access is already gated by resolve_user_id;
+    a name is display-only, so any token problem here yields "" rather than failing.
+    """
+    if not settings.sso_enabled:
+        return x_user_name
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return ""
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        return attorney_name_from_claims(validate_token(token, settings))
+    except Exception:
+        return ""

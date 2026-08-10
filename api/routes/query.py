@@ -10,7 +10,7 @@ from langgraph.types import Command
 from redis.exceptions import RedisError
 
 from api.models import ApiResponse, QueryRequest, ResumeRequest
-from api.auth import resolve_user_id
+from api.auth import resolve_user_id, resolve_user_name
 from config import get_settings
 from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
@@ -129,6 +129,7 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
 def submit_query(
     body: QueryRequest,
     user_id: str = Depends(resolve_user_id),
+    user_name: str = Depends(resolve_user_name),
 ):
     """Submit a legal request for graph execution."""
     session_id = body.session_id or str(uuid.uuid4())
@@ -138,11 +139,13 @@ def submit_query(
         user_id=user_id,
         session_id=session_id,
         input=body.request,
+        metadata={"user_name": user_name},
     )
 
     initial_state = {
         "request": body.request,
         "user_id": user_id,
+        "user_name": user_name,
         "uploaded_docs": [{"text": body.uploaded_text}] if body.uploaded_text else [],
         "task_type": body.task_type,
         "skill_plan": [body.task_type] if body.task_type else [],

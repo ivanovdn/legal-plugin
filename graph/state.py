@@ -59,3 +59,4 @@ class LegalAgentState(TypedDict):
     interactive_review: bool               # NEW — caller can handle a human_review interrupt + resume (Chainlit True; Word False)
     document_id: str                       # NEW — stable id for the open document (review-store key)
     memory_degraded: bool                  # NEW — True when a memory read/store was unavailable this turn
+    user_name: str                         # NEW — display-only name (self-entered now; SSO `name` claim later); NEVER a key
