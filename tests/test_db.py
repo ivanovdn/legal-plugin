@@ -15,7 +15,6 @@ def test_init_db_creates_all_tables():
 
 
 def test_audit_log_has_user_name_column():
-    from memory.db import get_pool
     with get_pool().connection() as conn:
         cols = conn.execute(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_log'"

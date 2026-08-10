@@ -27,8 +27,6 @@ def test_write_audit_log_multiple():
 
 
 def test_write_audit_log_persists_user_name():
-    from memory.audit import write_audit_log
-    from memory.db import get_pool
     write_audit_log(
         session_id="s-name", user_id="uuid-1", skill_name="research",
         task_type="research", request_summary="who signs?", user_name="Dmytro Ivanov",
