@@ -6,11 +6,11 @@
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
   xsi:type="TaskPaneApp">
 
-  <Id>D57831EF-B615-4D73-B777-8D6E06DDA59C</Id>
+  <Id>A8A5F2CD-4CDB-4B06-B909-EEBADBF24B31</Id>
   <Version>0.1.0.0</Version>
   <ProviderName>Legal Plugin</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Legal Triage" />
+  <DisplayName DefaultValue="Legal Triage (Dev)" />
   <Description DefaultValue="Triage the open contract using the legal-plugin backend." />
   <IconUrl DefaultValue="https://localhost:3001/icon-64.png" />
   <HighResolutionIconUrl DefaultValue="https://localhost:3001/icon-128.png" />
