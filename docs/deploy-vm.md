@@ -107,10 +107,12 @@ Produces `clients/word/dist` (the static bundle `docker-compose.remote.yml`'s `c
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.remote.yml \
-  up -d --build redis qdrant app-db backend caddy
+  up -d --build redis app-db backend caddy
 ```
 
-Langfuse tracing is optional — add `langfuse-web langfuse-worker postgres clickhouse minio` to the same command if you want it.
+**Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.
+
+Langfuse tracing is optional — add `langfuse-web langfuse-worker postgres clickhouse minio` to the same command if you want it (heavier; skip for testers).
 
 > **`app-db` is a hard dependency.** The backend needs it up and **healthy** (audit log, review store, and per-attorney conversations all live there) — bring it up first if you're staging services incrementally, and don't tear it down while the backend is running. Its data is a **named volume** (`app_db_data`) — reviews are attorney work product, so back it up (`pg_dump` on a schedule, or snapshot the volume) same as any production database.
 

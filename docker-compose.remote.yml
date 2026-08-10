@@ -8,19 +8,22 @@ services:
       # In-network service discovery (overrides the localhost defaults from config.py;
       # `environment` takes precedence over env_file).
       - REDIS_URL=redis://:myredissecret@redis:6379
-      - QDRANT_URL=http://qdrant:6333
+      # Qdrant: defaults to a local `qdrant` container, but set QDRANT_REMOTE_URL in
+      # .env to reuse an external instance (e.g. Spark http://172.20.0.22:6333). When
+      # remote, DON'T start the local qdrant service — just omit it from `up`.
+      - QDRANT_URL=${QDRANT_REMOTE_URL:-http://qdrant:6333}
       - DATABASE_URL=postgresql://legal:${APP_DB_PASSWORD:-legal}@app-db:5432/legal
       - LANGFUSE_HOST=http://langfuse-web:3000
       # OLLAMA_BASE_URL is supplied by .env (the Spark box: http://172.20.0.22:11434)
     volumes:
       - ./data/attorneys:/app/data/attorneys   # attorney USER.md preferences persist
     depends_on:
+      # qdrant is intentionally NOT a depends_on — it may be external (Spark). Start a
+      # local qdrant only by including it in the `up` service list.
       redis:
         condition: service_healthy
       app-db:
         condition: service_healthy
-      qdrant:
-        condition: service_started
     restart: unless-stopped
 
   caddy:
