@@ -498,6 +498,7 @@ Coverage includes: graph compilation + routing + audit, end-to-end interrupt/res
 
 | Feature | Commit / Branch | Notes |
 |---|---|---|
+| **Per-user identity (name bridge → SSO)** | `feat/per-user-identity` | Self-entered display name: `X-User-Name` header → `state["user_name"]` → `audit_log.user_name` + Langfuse trace metadata. **Stable id stays the memory key — no re-keying.** "Your name" field in the Preferences tab; dev/prod manifests coexist (distinct dev `<Id>`, "Legal Triage (Dev)"). SSO teed up: dormant `resolve_user_name` token-`name` branch + Azure app-registration request (`docs/deploy-it-request.md` Request 3). Short/long memory verified per-user on the VM. Follow-ups: tracing-UI deploy (Langfuse doesn't fit the VM — `audit_log` is the interim), RAG corpus seeding, SSO execution. |
 | Within-session conversation memory | `feat/within-session-memory` merged 2026-05-20 | `chat_history` field with idempotent reducer; N=5 turns / trim=300 chars; RedisSaver-backed |
 | Redis checkpointer wired to graph | shipped with memory feature | `redis/redis-stack-server` (RediSearch + ReJSON) with auth |
 | Resume after interrupt | `feat/resume-after-interrupt` merged 2026-05-21 | 4-way verdict (approve/revise/loop/cap), `Command(resume=...)`, 24h TTL refresh |
