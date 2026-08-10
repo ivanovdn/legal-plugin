@@ -17,8 +17,12 @@ const noStore: PluginOption = {
   },
 };
 
-export default defineConfig(async () => {
-  const https = await getHttpsServerOptions();
+export default defineConfig(async ({ command }) => {
+  // getHttpsServerOptions() provisions a dev CA cert (needs sudo) and is ONLY
+  // for the dev server. `vite build` must not touch it — otherwise a production
+  // build in a clean container (no sudo/cert tooling) fails on a dependency it
+  // never uses. Load it only when serving.
+  const https = command === "serve" ? await getHttpsServerOptions() : undefined;
   return {
     plugins: [react(), noStore],
     root: "src",
