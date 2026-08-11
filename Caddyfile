@@ -16,6 +16,14 @@
 	# Everything else = the built task pane (fallback to taskpane.html)
 	handle {
 		root * /srv
+		# Content-hashed asset filenames are immutable — cache them hard.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		# The HTML shell references the current asset hashes — never cache it, so a
+		# redeploy reaches Word's WKWebView without users clearing their cache (the
+		# Vite dev server sets the same header for the same reason).
+		@notassets not path /assets/*
+		header @notassets Cache-Control "no-store"
 		try_files {path} /taskpane.html
 		file_server
 	}
