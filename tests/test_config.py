@@ -127,3 +127,12 @@ def test_settings_default_checkpoint_ttl_seconds(monkeypatch):
     get_settings.cache_clear()
     settings = get_settings()
     assert settings.checkpoint_ttl_seconds == 86400
+
+
+def test_otel_settings_defaults():
+    from config import Settings
+    s = Settings()
+    assert s.otel_exporter_otlp_endpoint == "http://localhost:3000/api/public/otel"
+    assert s.otel_service_name == "legal-triage"
+    assert s.tracing_enabled is True
+    assert s.otel_exporter_otlp_headers == ""

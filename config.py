@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # Phoenix
     phoenix_host: str = "http://localhost:6006"
 
+    # OpenTelemetry tracing (backend chosen by endpoint: local Langfuse v3 OTLP / VM Phoenix)
+    otel_exporter_otlp_endpoint: str = "http://localhost:3000/api/public/otel"
+    otel_exporter_otlp_headers: str = ""   # "key=value,key2=value2"; local Langfuse needs Authorization=Basic <b64 public:secret>
+    otel_service_name: str = "legal-triage"
+    tracing_enabled: bool = True
+
     # App
     api_port: int = 8000
     chainlit_port: int = 8080
