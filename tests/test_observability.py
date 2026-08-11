@@ -8,6 +8,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 
 from observability.tracing import (
     ollama_usage,
@@ -59,6 +60,29 @@ def test_traced_llm_kind_sets_openinference_span_kind():
     gen()
     span = _spans_by_name("gen_node")[0]
     assert span.attributes.get("openinference.span.kind") == "LLM"
+
+
+def test_traced_propagates_exceptions_and_resets_root():
+    import pytest
+    from observability.spans import traced, set_trace_attributes, _root_span
+
+    @traced("boom")
+    def boom():
+        raise ValueError("kaboom")
+
+    with pytest.raises(ValueError, match="kaboom"):
+        boom()
+
+    span = _spans_by_name("boom")[0]
+    assert span.status.status_code == StatusCode.ERROR      # __exit__ recorded the exception
+    assert _root_span.get() is None                          # root token was reset in finally, no leak
+
+    # a subsequent independent traced call becomes its own root
+    @traced("after")
+    def after():
+        set_trace_attributes(user_id="u2")
+    after()
+    assert _spans_by_name("after")[0].attributes.get("user.id") == "u2"
 
 
 def test_set_trace_attributes_lands_on_root_from_nested_span():
