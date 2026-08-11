@@ -1,4 +1,11 @@
 {$ADDIN_ORIGIN_HOST:localhost} {
+	# Self-signed cert from Caddy's internal CA — works for localhost AND any
+	# internal hostname (an internal-only VM can't complete public ACME).
+	# Testers trust this CA via the dev-cert workaround. Replace with an explicit
+	# `tls /etc/caddy/cert.pem /etc/caddy/key.pem` once IT issues a real cert
+	# (see docs/deploy-vm.md Step 2).
+	tls internal
+
 	encode gzip
 
 	# Backend API — keep the /api prefix (backend routes are /api/*)

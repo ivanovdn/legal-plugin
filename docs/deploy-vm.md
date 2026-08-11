@@ -58,7 +58,7 @@ Set:
 
 ## Step 2 — Cert wiring (Bucket B — gated)
 
-An internal hostname with no public DNS can't get an automatic Caddy cert. Once IT hands you a cert + key for `<hostname>`, add a `tls` directive to the `Caddyfile` site block:
+The tracked `Caddyfile` ships with `tls internal` — Caddy mints a self-signed cert from its own CA, which works for `localhost` **and** any internal hostname (an internal-only VM can't complete public ACME). That covers a local dry run and testing in real Word via the dev-cert-trust workaround. Once IT hands you a real cert + key for `<hostname>`, **replace** the `tls internal` line with an explicit cert path:
 
 ```caddyfile
 {$ADDIN_ORIGIN_HOST:localhost} {
@@ -86,7 +86,7 @@ and mount the cert + key into the `caddy` service in `docker-compose.remote.yml`
       # ...existing volumes...
 ```
 
-Without this, Caddy falls back to its own internal (self-signed) cert — fine for a local dry run, refused by Office.js for anyone other than the author.
+Until you do, the default `tls internal` serves a self-signed cert — fine for a local dry run and the dev-cert-trust workaround, but refused by Office.js for any tester who hasn't trusted the internal CA.
 
 ---
 
