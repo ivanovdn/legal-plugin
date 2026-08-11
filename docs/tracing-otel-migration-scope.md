@@ -17,7 +17,7 @@ The backend is instrumented with the **Langfuse SDK** (`@observe`, `langfuse_con
 ### D1 — Local backend
 - **(a) Phoenix everywhere, drop Langfuse** — simplest: one tool, one UI, lightest local footprint (single container). Code is identical to (b); this only changes what `docker-compose` runs locally.
 - **(b) Langfuse local, Phoenix on VM** — same single OTel instrumentation, export endpoint swapped by env (Langfuse v3 accepts OTLP). Keeps Langfuse's UI/evals in dev; still runs the heavy Langfuse stack locally.
-- **✅ DECIDED: (b)** — keep Langfuse locally, Phoenix on the VM. One OTel instrumentation; the OTLP endpoint is swapped by env. (Instrumentation code is identical to (a); only the local compose differs.)
+- **✅ DECIDED: (b)** — keep Langfuse locally, **a _dedicated_ Phoenix on the VM in legal-plugin's OWN compose** (NOT compliance-bot's — see resolved open question). One OTel instrumentation; the OTLP endpoint is swapped by env. (Instrumentation code is identical to (a); only the local compose differs.)
 
 ### D2 — Span strategy
 - **(a) Port the hand-rolled spans** — replace `@observe(name=…)` with a thin `@traced(name)` OTel decorator (written once); keep the deliberate per-node span tree + the manual httpx token-usage span. Mechanical over ~20 sites.
@@ -34,7 +34,7 @@ The backend is instrumented with the **Langfuse SDK** (`@observe`, `langfuse_con
 | 5 | Sweep ~10 metadata sites: `langfuse_context.update_current_trace(user_id=…)` → `set_trace_attributes(user_id=…, session_id=…, user_name=…)` | mechanical |
 | 6 | `config.py`: drop 3 langfuse keys → add `otel_exporter_otlp_endpoint`, `otel_service_name`, `tracing_enabled` (unset ⇒ tracing off, as today) | small |
 | 7 | `requirements(-runtime).txt`: + `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`, `openinference-instrumentation-langchain`; − `langfuse` | small |
-| 8 | docker-compose: local **keeps** the Langfuse v3 block; set local `OTEL_EXPORTER_OTLP_ENDPOINT` → Langfuse OTLP (`http://localhost:3000/api/public/otel`, Basic-auth = public:secret). remote overlay → endpoint = compliance-bot Phoenix, `project=legal-plugin` (no new container, no service removed) | small |
+| 8 | docker-compose: local **keeps** the Langfuse v3 block; set local `OTEL_EXPORTER_OTLP_ENDPOINT` → Langfuse OTLP (`http://localhost:3000/api/public/otel`, Basic-auth = public:secret). remote overlay → **add a dedicated `phoenix` service** (own named volume, `restart: unless-stopped`) to legal-plugin's stack; endpoint = `http://phoenix:6006/v1/traces` (HTTP) or `phoenix:4317` (gRPC). **Independent of compliance-bot's lifecycle.** | small |
 | 9 | tests: rewrite `test_observability.py` (assert span attrs via an in-memory OTel span exporter instead of monkeypatching `langfuse_context`); update `test_config.py` keys | medium |
 | 10 | docs: README observability section, CLAUDE.md backend note, `.env(.remote).example` | small |
 
@@ -46,4 +46,4 @@ The backend is instrumented with the **Langfuse SDK** (`@observe`, `langfuse_con
 
 ## Open questions
 - Does Langfuse's OTLP ingestion map our custom `user_name` cleanly, or only `user.id`/`session.id`? (Verify in item 1; worst case `user_name` rides as a generic attribute — fine for Phoenix.)
-- Reuse compliance-bot's Phoenix (separate `project`) or run a dedicated legal-plugin Phoenix on the VM? Reuse = zero extra RAM; dedicated = cleaner isolation. Reuse is the default.
+- ~~Reuse compliance-bot's Phoenix or dedicated?~~ **RESOLVED → dedicated.** Reusing compliance-bot's Phoenix couples our tracing to *their* lifecycle: `docker compose down` on compliance-bot stops `rag-phoenix-1` and takes our trace sink with it. A dedicated Phoenix in legal-plugin's compose (~few hundred MB; VM has ~5 GB free) is lifecycle-independent, isolates the two teams' traces + retention, and needs no cross-team coordination on restarts/upgrades. Cost: one small container — worth it.
