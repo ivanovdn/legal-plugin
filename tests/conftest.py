@@ -6,6 +6,8 @@ against clean tables (truncated before each test). Docker must be running.
 """
 import os
 
+os.environ.setdefault("TRACING_ENABLED", "false")
+
 import pytest
 from testcontainers.postgres import PostgresContainer
 

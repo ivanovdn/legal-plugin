@@ -2,11 +2,145 @@
 """Langfuse observability helpers + GENERATION/usage wiring."""
 from __future__ import annotations
 
+import json
+import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
 from observability.tracing import (
     ollama_usage,
     message_usage,
     traced_invoke,
 )
+
+_exporter = InMemorySpanExporter()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _otel_test_provider():
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(_exporter))
+    trace.set_tracer_provider(provider)   # first real set wins (app tracing is off in tests)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_spans():
+    _exporter.clear()
+    yield
+    _exporter.clear()
+
+
+def _spans_by_name(name):
+    return [s for s in _exporter.get_finished_spans() if s.name == name]
+
+
+def test_traced_creates_span_and_returns_value():
+    from observability.spans import traced
+
+    @traced("unit_node")
+    def node(x):
+        return x + 1
+
+    assert node(41) == 42
+    spans = _spans_by_name("unit_node")
+    assert len(spans) == 1
+
+
+def test_traced_llm_kind_sets_openinference_span_kind():
+    from observability.spans import traced
+
+    @traced("gen_node", kind="LLM")
+    def gen():
+        return "ok"
+
+    gen()
+    span = _spans_by_name("gen_node")[0]
+    assert span.attributes.get("openinference.span.kind") == "LLM"
+
+
+def test_set_trace_attributes_lands_on_root_from_nested_span():
+    from observability.spans import traced, set_trace_attributes
+
+    @traced("child")
+    def child():
+        # a deep node stamps trace-wide facts; they must hit the ROOT span
+        set_trace_attributes(user_id="u1", session_id="s1", tags=["research"])
+
+    @traced("root")
+    def root():
+        child()
+
+    root()
+    root_span = _spans_by_name("root")[0]
+    child_span = _spans_by_name("child")[0]
+    assert root_span.attributes.get("user.id") == "u1"
+    assert root_span.attributes.get("session.id") == "s1"
+    assert json.loads(root_span.attributes.get("tag.tags")) == ["research"]
+    assert "user.id" not in child_span.attributes
+
+
+def test_set_trace_attributes_merges_metadata_on_root():
+    from observability.spans import traced, set_trace_attributes
+
+    @traced("root")
+    def root():
+        set_trace_attributes(metadata={"contract_type_detected": "nda"})
+        set_trace_attributes(metadata={"review_risk_level": "red"})
+
+    root()
+    root_span = _spans_by_name("root")[0]
+    md = json.loads(root_span.attributes.get("metadata"))
+    assert md == {"contract_type_detected": "nda", "review_risk_level": "red"}
+
+
+def test_set_gen_attributes_sets_llm_attrs_on_current_span():
+    from observability.spans import traced, set_gen_attributes
+
+    @traced("gen", kind="LLM")
+    def gen():
+        set_gen_attributes(
+            name="doc_chat",
+            input=[{"role": "user", "content": "q"}],
+            output="the answer",
+            model="qwen3.6:latest",
+            usage={"input": 90, "output": 10, "total": 100, "unit": "TOKENS"},
+        )
+
+    gen()
+    # name override renames the span
+    span = _spans_by_name("doc_chat")[0]
+    assert span.attributes.get("llm.model_name") == "qwen3.6:latest"
+    assert span.attributes.get("llm.token_count.prompt") == 90
+    assert span.attributes.get("llm.token_count.completion") == 10
+    assert span.attributes.get("llm.token_count.total") == 100
+    assert span.attributes.get("output.value") == "the answer"
+    assert json.loads(span.attributes.get("input.value")) == [{"role": "user", "content": "q"}]
+
+
+def test_helpers_no_op_and_never_raise_without_active_span():
+    from observability.spans import set_trace_attributes, set_gen_attributes
+    # called outside any @traced span → current span is invalid/non-recording
+    set_trace_attributes(user_id="u", metadata={"k": "v"})
+    set_gen_attributes(model="m", usage={"input": 1, "output": 2, "total": 3, "unit": "TOKENS"})
+    # no exception == pass
+
+
+def test_traced_is_noop_under_noop_tracer(monkeypatch):
+    import observability.spans as mod
+    from opentelemetry.trace import NoOpTracer
+
+    monkeypatch.setattr(mod, "_tracer", NoOpTracer())
+
+    @mod.traced("dark", kind="LLM")
+    def fn():
+        mod.set_gen_attributes(model="m")
+        return "value"
+
+    assert fn() == "value"                 # returns normally
+    assert _spans_by_name("dark") == []    # nothing exported
 
 
 def test_ollama_usage_maps_token_counts():
