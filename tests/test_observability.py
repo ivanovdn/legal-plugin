@@ -202,8 +202,14 @@ def test_message_usage_none_without_counts():
     assert message_usage(_FakeMessage(content="hi")) is None
 
 
-def test_traced_invoke_records_generation_and_returns_response(monkeypatch):
-    import observability.tracing as mod
+def test_traced_invoke_records_generation_and_returns_response():
+    from observability.tracing import traced_invoke
+
+    class _FakeMessage:
+        def __init__(self, content, usage_metadata, response_metadata):
+            self.content = content
+            self.usage_metadata = usage_metadata
+            self.response_metadata = response_metadata
 
     resp = _FakeMessage(
         content="the answer",
@@ -215,17 +221,16 @@ def test_traced_invoke_records_generation_and_returns_response(monkeypatch):
         def invoke(self, messages):
             return resp
 
-    captured: dict = {}
-    monkeypatch.setattr(mod.langfuse_context, "update_current_observation",
-                        lambda **kw: captured.update(kw))
-
     out = traced_invoke(FakeLLM(), [{"role": "user", "content": "q"}], name="doc_chat")
 
-    assert out is resp                                  # response passed through
-    assert captured["usage"] == {"input": 90, "output": 10, "total": 100, "unit": "TOKENS"}
-    assert captured["model"] == "qwen3.6:latest"
-    assert captured["output"] == "the answer"
-    assert captured["name"] == "doc_chat"
+    assert out is resp                                   # response passed through
+    span = _spans_by_name("doc_chat")[0]
+    assert span.attributes.get("openinference.span.kind") == "LLM"
+    assert span.attributes.get("llm.token_count.prompt") == 90
+    assert span.attributes.get("llm.token_count.completion") == 10
+    assert span.attributes.get("llm.token_count.total") == 100
+    assert span.attributes.get("llm.model_name") == "qwen3.6:latest"
+    assert span.attributes.get("output.value") == "the answer"
 
 
 def test_llm_caller_reports_generation_usage(monkeypatch):
