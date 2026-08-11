@@ -20,3 +20,27 @@ export function resolveAttorneyId(): string {
     return "word-addin"; // fail-safe: never break a request over identity
   }
 }
+
+const NAME_KEY = "legalTriageAttorneyName";
+
+/** The attorney's self-entered display name (empty until set). Display only, never a key. */
+export function resolveAttorneyName(): string {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setAttorneyName(name: string): void {
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    /* ignore — name is display-only, must never break the app */
+  }
+}
+
+/** Identity headers for every backend call: stable id (key) + display name. */
+export function userHeaders(): Record<string, string> {
+  return { "X-User-ID": resolveAttorneyId(), "X-User-Name": resolveAttorneyName() };
+}

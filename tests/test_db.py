@@ -12,3 +12,11 @@ def test_init_db_creates_all_tables():
         for table in ("audit_log", "review_store", "conversation_store"):
             row = conn.execute("SELECT to_regclass(%s)", (table,)).fetchone()
             assert row[0] is not None, f"{table} missing"
+
+
+def test_audit_log_has_user_name_column():
+    with get_pool().connection() as conn:
+        cols = conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_log'"
+        ).fetchall()
+    assert "user_name" in {c[0] for c in cols}

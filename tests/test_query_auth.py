@@ -87,3 +87,35 @@ def test_sso_on_valid_token_returns_oid_in_state(monkeypatch):
                            json={"request": "who signs?", "task_type": "research"})
     assert resp.status_code == 200
     assert captured["state"]["user_id"] == "attorney-oid-xyz"
+
+
+def test_sso_off_captures_x_user_name(monkeypatch):
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setattr(get_settings(), "sso_enabled", False, raising=False)
+    captured = {}
+    with patch("api.routes.query._get_graph", return_value=_fake_graph(captured)), \
+         patch("api.routes.query.refresh_ttl", lambda s: None):
+        from api.main import app
+        client = TestClient(app)
+        resp = client.post("/api/query",
+                           headers={"X-User-ID": "uuid-1", "X-User-Name": "Dmytro Ivanov"},
+                           json={"request": "hi", "task_type": "research"})
+    assert resp.status_code == 200
+    assert captured["state"]["user_name"] == "Dmytro Ivanov"
+
+
+def test_missing_x_user_name_defaults_empty(monkeypatch):
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setattr(get_settings(), "sso_enabled", False, raising=False)
+    captured = {}
+    with patch("api.routes.query._get_graph", return_value=_fake_graph(captured)), \
+         patch("api.routes.query.refresh_ttl", lambda s: None):
+        from api.main import app
+        client = TestClient(app)
+        resp = client.post("/api/query",
+                           headers={"X-User-ID": "uuid-1"},
+                           json={"request": "hi", "task_type": "research"})
+    assert resp.status_code == 200
+    assert captured["state"]["user_name"] == ""

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getPreferences, savePreferences } from "../preferences";
+import { resolveAttorneyName, setAttorneyName } from "../attorneyIdentity";
 
 interface Props {
   markdown: string;
@@ -12,6 +13,7 @@ export default function PreferencesTab({ markdown, setMarkdown, loaded, setLoade
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState(resolveAttorneyName());
 
   // Fetch once (and again whenever `loaded` is reset to false — e.g. after the
   // Chat tab appends a suggested preference, so the cabinet reflects it).
@@ -47,6 +49,15 @@ export default function PreferencesTab({ markdown, setMarkdown, loaded, setLoade
         Your standing preferences (USER.md). The assistant reads these on every review and chat —
         they shape emphasis but never override the firm playbook.
       </p>
+      <label className="preferences-name">
+        Your name
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => { setName(e.target.value); setAttorneyName(e.target.value); }}
+          placeholder="e.g. Dmytro Ivanov"
+        />
+      </label>
       <textarea
         className="preferences-editor"
         rows={16}

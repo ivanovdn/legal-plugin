@@ -3,7 +3,7 @@
 
 import type { EditProposal } from "./parseEditBlocks";
 import { resolveDocumentId } from "./docIdentity";
-import { resolveAttorneyId } from "./attorneyIdentity";
+import { userHeaders } from "./attorneyIdentity";
 
 export interface QueryResponse {
   status: "ok" | "error";
@@ -36,7 +36,7 @@ export interface QueryResponse {
 async function postQuery(body: Record<string, unknown>): Promise<QueryResponse> {
   const res = await fetch("/api/query", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-User-ID": resolveAttorneyId() },
+    headers: { "Content-Type": "application/json", ...userHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
