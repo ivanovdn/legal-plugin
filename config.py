@@ -75,14 +75,6 @@ class Settings(BaseSettings):
     sso_issuer: str = ""         # expected iss; derived from tenant id when empty
     sso_jwks_url: str = ""       # JWKS endpoint; derived from tenant id when empty
 
-    # Langfuse
-    langfuse_host: str = "http://localhost:3000"
-    langfuse_public_key: str = "pk-lf-local"
-    langfuse_secret_key: str = "sk-lf-local"
-
-    # Phoenix
-    phoenix_host: str = "http://localhost:6006"
-
     # OpenTelemetry tracing (backend chosen by endpoint: local Langfuse v3 OTLP / VM Phoenix)
     otel_exporter_otlp_endpoint: str = "http://localhost:3000/api/public/otel"
     otel_exporter_otlp_headers: str = ""   # "key=value,key2=value2"; local Langfuse needs Authorization=Basic <b64 public:secret>

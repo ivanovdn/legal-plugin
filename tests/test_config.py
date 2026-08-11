@@ -61,10 +61,6 @@ def test_config_loads_from_env(monkeypatch):
     assert settings.chunk_max_tokens == 400
     assert settings.escalation_ticket_prefix == "LEG"
     assert settings.bm25_enabled is False
-    assert settings.langfuse_host == "http://localhost:3000"
-    assert settings.langfuse_public_key == "pk-lf-local"
-    assert settings.langfuse_secret_key == "sk-lf-local"
-    assert settings.phoenix_host == "http://localhost:6006"
     assert settings.api_port == 8000
     assert settings.chainlit_port == 8080
     assert settings.database_url == "postgresql://legal:legal@localhost:5434/legal"
@@ -139,3 +135,10 @@ def test_otel_settings_defaults(monkeypatch):
     assert s.otel_service_name == "legal-triage"
     assert s.tracing_enabled is True
     assert s.otel_exporter_otlp_headers == ""
+
+
+def test_legacy_tracing_keys_removed():
+    from config import Settings
+    s = Settings()
+    for attr in ("langfuse_host", "langfuse_public_key", "langfuse_secret_key", "phoenix_host"):
+        assert not hasattr(s, attr), f"{attr} should be removed"
