@@ -1,6 +1,6 @@
 # IT request — internal hostname + TLS cert for the Legal Triage add-in
 
-*Two requests below, each in its own box. **Request 1** (DNS + cert) goes to whoever provisions internal DNS/certificates. **Request 2** (Centralized Deployment) goes to a Microsoft 365 Global Admin — it can wait until Request 1 is done and 1–2 testers have validated the add-in. Everything after the boxes is context for us, not for IT.*
+*Three requests below, each in its own box. **Request 1** (DNS + cert) goes to whoever provisions internal DNS/certificates. **Request 2** (Centralized Deployment) goes to a Microsoft 365 Global Admin — it is the **only** way to get the add-in into Word on the web / SharePoint (manual web sideload is no longer offered on our tenant); for desktop it can otherwise wait until Request 1 is done and 1–2 testers have validated. **Request 3** (Entra app for SSO) is optional and later. Everything after the boxes is context for us, not for IT.*
 
 ---
 
@@ -33,6 +33,7 @@ We have an internal Microsoft Word add-in ("Legal Triage") we'd like made availa
 Notes for the admin:
 - This is an **internal line-of-business add-in** (not from AppSource) — hence "Upload custom apps."
 - Once assigned, it appears in **Word on Windows, Mac, and the web**, tied to each user's M365 account — so it shows up whether they open a local file or one from **SharePoint/OneDrive**. Initial propagation can take up to ~24h.
+- **For Word on the web / SharePoint, this is the _only_ option.** Word for the web no longer offers a manual "Upload My Add-in" on our tenant (verified 2026-08-11 — the new *Apps* store shows a curated marketplace with no self-service sideload), so centralized deployment is the sole route to the browser/SharePoint surface. Desktop Word can still be sideloaded by hand; the web cannot.
 - **This depends on Request 1.** The manifest points at the internal hostname from the DNS/cert request, and the add-in loads live from `SRV-AGENT-01` — so please deploy this only after that hostname/cert is in place, and confirm the assigned users can reach that host on the corporate network / VPN (the add-in is dark for anyone who can't).
 
 Thank you!
@@ -70,8 +71,8 @@ Once provided, we set `sso_enabled=True` + `sso_tenant_id` + `sso_client_id`, ad
   3. Sideload `clients/word/manifest.prod.xml` and test in real Word.
   4. Hand the manifest to the couple of legal-team testers.
 - **Preferred hostname:** `legal-triage.internal.trinetix.net` (placeholder — adjust to whatever fits the internal naming convention).
-- **Distribution staging** (Request 2 is the last step, not the first):
-  1. **Testers (now):** manual sideload of `manifest.prod.xml` — **no admin needed**, just Request 1's cert. Windows = shared-folder catalog · Mac = `wef` folder · Word-web = Upload My Add-in.
+- **Distribution staging** (Request 2 is the last step for desktop — but the *only* step for Word-for-web / SharePoint):
+  1. **Testers (now), desktop only:** manual sideload of `manifest.prod.xml` — **no admin needed**, just Request 1's cert. Windows = shared-folder catalog · Mac = `wef` folder. **Word-for-web has no manual "Upload My Add-in" on our tenant** (verified 2026-08-11), so the browser/SharePoint surface can't be tested until Request 2 is done.
   2. **Team-wide:** **Centralized Deployment** (Request 2) — a Global Admin uploads the *same* manifest once and assigns it to the Legal group; it then appears automatically for everyone.
   3. Both paths install the same manifest (a pointer); the add-in always loads live from `SRV-AGENT-01`, so Request 1's cert + VPN reachability is required for either.
 - **Manifest `<Id>`:** the prod manifest reuses the dev `<Id>`, so a machine can't have both the dev and prod add-in sideloaded at once (only matters for the developer's own machine; testers are unaffected).
