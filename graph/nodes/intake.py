@@ -3,7 +3,7 @@
 
 import logging
 
-from langfuse.decorators import observe, langfuse_context
+from observability.spans import traced, set_trace_attributes
 
 from graph.state import LegalAgentState
 from memory.document_id import resolve_document_id
@@ -14,13 +14,13 @@ _USER_CLIENT_MAP: dict[str, str] = {}
 _DEFAULT_CLIENT_ID = "internal"
 
 
-@observe(name="intake")
+@traced("intake")
 def intake(state: LegalAgentState) -> LegalAgentState:
     """Resolve client_id from user_id, set filters and retrieval_query."""
     user_id = state["user_id"]
     client_id = _USER_CLIENT_MAP.get(user_id, _DEFAULT_CLIENT_ID)
 
-    langfuse_context.update_current_trace(
+    set_trace_attributes(
         user_id=user_id,
         session_id=state.get("session_id", ""),
         tags=[state.get("task_type") or "unclassified"],

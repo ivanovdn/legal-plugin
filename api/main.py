@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from memory.db import init_db
-from observability.langfuse import init_observability
+from observability.otel import init_observability
 
 logger = logging.getLogger(__name__)
 

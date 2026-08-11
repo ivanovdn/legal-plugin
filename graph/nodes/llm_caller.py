@@ -4,10 +4,10 @@
 import logging
 
 import httpx
-from langfuse.decorators import observe, langfuse_context
 
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.spans import traced, set_gen_attributes
 from observability.tracing import ollama_usage
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def _build_context(chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-@observe(name="llm_caller", as_type="generation")
+@traced("llm_caller", kind="LLM")
 def llm_caller(state: LegalAgentState) -> LegalAgentState:
     """Call Ollama with context + request. temperature=0.0 always."""
     if state.get("llm_response") and not state.get("messages"):
@@ -77,7 +77,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         content = data["message"]["content"]
         state["llm_response"] = content
 
-        langfuse_context.update_current_observation(
+        set_gen_attributes(
             input=messages,
             output=content,
             model=settings.llm_model,

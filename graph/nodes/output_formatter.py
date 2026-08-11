@@ -2,14 +2,14 @@
 """Output formatter — structures the final response."""
 
 import logging
-from langfuse.decorators import observe
 
 from graph.state import LegalAgentState
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
 
-@observe(name="output_formatter")
+@traced("output_formatter")
 def output_formatter(state: LegalAgentState) -> LegalAgentState:
     """Build structured report from LLM response and metadata."""
     state["report"] = {

@@ -7,10 +7,9 @@ the chat_history reducer in graph/state.py applies the cap.
 
 import logging
 
-from langfuse.decorators import observe
-
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ def _trim(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n] + "[...]"
 
 
-@observe(name="history_appender")
+@traced("history_appender")
 def history_appender(state: LegalAgentState) -> dict:
     """Append the current turn to chat_history.
 

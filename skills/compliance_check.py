@@ -3,9 +3,8 @@
 
 import logging
 
-from langfuse.decorators import observe
-
 from graph.state import LegalAgentState
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ Cite every source document by doc_id and doc_title. If context is insufficient, 
 Respond with your analysis as structured text with clear sections for each check."""
 
 
-@observe(name="compliance_check", capture_input=False, capture_output=False)
+@traced("compliance_check")
 def compliance_check(state: LegalAgentState) -> LegalAgentState:
     """Prepare state for compliance verification via rag_retriever + llm_caller."""
     request = state["request"]

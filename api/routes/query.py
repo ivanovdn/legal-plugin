@@ -5,7 +5,6 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends
-from langfuse.decorators import observe, langfuse_context
 from langgraph.types import Command
 from redis.exceptions import RedisError
 
@@ -14,6 +13,7 @@ from api.auth import resolve_user_id, resolve_user_name
 from config import get_settings
 from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
+from observability.spans import traced, set_trace_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
 
 
 @router.post("/query", response_model=ApiResponse)
-@observe(name="query")
+@traced("query")
 def submit_query(
     body: QueryRequest,
     user_id: str = Depends(resolve_user_id),
@@ -134,7 +134,7 @@ def submit_query(
     """Submit a legal request for graph execution."""
     session_id = body.session_id or str(uuid.uuid4())
 
-    langfuse_context.update_current_trace(
+    set_trace_attributes(
         name=f"query:{body.task_type or 'auto'}",
         user_id=user_id,
         session_id=session_id,
@@ -204,10 +204,10 @@ def submit_query(
 
 
 @router.post("/query/{session_id}/resume", response_model=ApiResponse)
-@observe(name="resume")
+@traced("resume")
 def resume_query(session_id: str, body: ResumeRequest):
     """Resume graph execution after human review interrupt."""
-    langfuse_context.update_current_trace(
+    set_trace_attributes(
         name=f"resume:{session_id}",
         session_id=session_id,
         input={

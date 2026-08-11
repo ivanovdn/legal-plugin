@@ -15,10 +15,9 @@ iteration can add an LLM fallback or a user-facing override.
 
 import logging
 
-from langfuse.decorators import observe, langfuse_context
-
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.spans import traced, set_trace_attributes
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
@@ -97,7 +96,7 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
     return "\n\n".join(parts)
 
 
-@observe(name="contract_review", capture_input=False, capture_output=False)
+@traced("contract_review")
 def contract_review(state: LegalAgentState) -> LegalAgentState:
     """Prepare state for clause analysis using the per-type playbook bundle.
 
@@ -123,12 +122,12 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
             contract_type,
         )
 
-    # Surface detection on the Langfuse trace. This is the signal that was
+    # Surface detection on the trace. This is the signal that was
     # invisible when an MSA was silently reviewed as a SOW (audit Dimension 7) —
-    # the skill has no @observe span, so without this the detected type only
+    # the skill has no @traced span, so without this the detected type only
     # leaks out via the final report payload. Tracing must never break the skill.
     try:
-        langfuse_context.update_current_trace(
+        set_trace_attributes(
             metadata={
                 "contract_type_detected": contract_type,
                 "contract_type_ambiguous": was_ambiguous,
@@ -193,7 +192,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
 
     # Surface MSA attachment on the trace (best-effort; never breaks the skill).
     try:
-        langfuse_context.update_current_trace(
+        set_trace_attributes(
             metadata={"msa_attached": msa_attached, "msa_doc_title": msa_doc_title},
         )
     except Exception:  # pragma: no cover - observability is best-effort
