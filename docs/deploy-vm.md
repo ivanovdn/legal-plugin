@@ -119,14 +119,16 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
 **Phoenix smoke test — confirm a trace lands:**
 
 ```bash
-# Run one query through the add-in, or directly against the backend:
-curl -s http://localhost:8000/api/query \
+# Run one query through the add-in, or directly through Caddy (the backend
+# publishes no host port in this overlay — /api/* is only reachable via Caddy,
+# same as Step 5's curl):
+curl -sk https://<hostname>/api/query \
   -H "Content-Type: application/json" \
   -H "X-User-ID: smoke" \
   -d '{"request": "what is an NDA?", "task_type": "research"}'
 ```
 
-Then browse Phoenix. It's internal-only (`expose: "6006"`, no host port mapping) — reach it over the VPN via an SSH/port-forward to `SRV-AGENT-01:6006`, or add a Caddy route if you want it reachable at `https://<hostname>/phoenix`. Expect the trace tree to show `query → intent_router / contract_review → generation spans with token counts` — same shape as the local Langfuse smoke (see the main [README](../README.md)), just routed to Phoenix instead of Langfuse OTLP, and with no `OTEL_EXPORTER_OTLP_HEADERS` involved (Phoenix needs no auth). If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`) and that the backend actually picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`).
+Then browse Phoenix. It's internal-only (`expose: "6006"`, no host port mapping) — reach it over the VPN via an SSH/port-forward to `SRV-AGENT-01:6006`, or add a Caddy route if you want it reachable at `https://<hostname>/phoenix`. Expect the trace tree to show `query → intent_router / contract_review → generation spans with token counts`, routed to Phoenix instead of Langfuse OTLP, with no `OTEL_EXPORTER_OTLP_HEADERS` involved (Phoenix needs no auth) — the local equivalent is simpler: submit any query, then confirm the trace appears in the Langfuse UI at http://localhost:3000. If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`) and that the backend actually picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`).
 
 ---
 
