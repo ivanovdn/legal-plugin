@@ -120,7 +120,7 @@ def test_graph_end_to_end_research(tmp_path, monkeypatch):
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
          patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
 
         from graph.graph import build_graph
@@ -294,7 +294,7 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
          patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
 
         from graph.graph import build_graph
@@ -330,7 +330,7 @@ def test_graph_history_appender_runs_before_memory_writer(tmp_path, monkeypatch)
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
          patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
 
         compiled = build_graph()
@@ -362,7 +362,7 @@ def test_graph_with_checkpointer_persists_chat_history_across_invocations(tmp_pa
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_capture_aware_ollama), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture_aware_ollama), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
          patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
 
         compiled = build_graph(checkpointer=MemorySaver())
@@ -415,7 +415,7 @@ def test_graph_without_checkpointer_still_works(tmp_path, monkeypatch):
     with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
          patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
-         patch("skills.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
          patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
 
         compiled = build_graph(checkpointer=None)

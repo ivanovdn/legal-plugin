@@ -1,7 +1,8 @@
 """_load_prior_conversation — durable history load, guards, degraded posture."""
+import importlib
 from types import SimpleNamespace
 
-import skills.legal_research as lr
+lr = importlib.import_module("skills.legal_research.legal_research")
 from memory.conversation_store import append_turn
 
 

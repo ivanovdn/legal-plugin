@@ -2,6 +2,7 @@
 """OpenTelemetry span helpers + GENERATION/usage wiring."""
 from __future__ import annotations
 
+import importlib
 import json
 import pytest
 from opentelemetry import trace
@@ -291,7 +292,7 @@ def test_intent_router_reports_generation_usage(monkeypatch):
 def test_doc_chat_routes_llm_through_traced_invoke(monkeypatch):
     """The (previously invisible) Word chat-tab LLM call must go through
     traced_invoke so it becomes a nested GENERATION with token usage."""
-    from skills import legal_research as mod
+    mod = importlib.import_module("skills.legal_research.legal_research")
 
     sentinel_llm = object()
     captured: dict = {}

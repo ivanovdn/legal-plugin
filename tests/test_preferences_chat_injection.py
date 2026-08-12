@@ -1,6 +1,9 @@
+import importlib
+
 from config import get_settings
 from memory.preferences import save_preferences
-from skills import legal_research
+
+legal_research = importlib.import_module("skills.legal_research.legal_research")
 
 
 def _capture(monkeypatch):

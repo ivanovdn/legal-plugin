@@ -1,6 +1,8 @@
 """Stale-recall reconciliation: drop placeholder findings the current doc proves are filled."""
-import skills.legal_research as lr
-from skills.legal_research import _reconcile_review_with_doc
+import importlib
+
+lr = importlib.import_module("skills.legal_research.legal_research")
+from skills.legal_research.legal_research import _reconcile_review_with_doc
 
 
 def test_filled_placeholder_dropped_and_note_added():

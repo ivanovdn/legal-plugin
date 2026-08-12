@@ -179,7 +179,7 @@ def test_legal_research_calls_agent(monkeypatch):
     fake_msg = MagicMock()
     fake_msg.content = "Based on the analysis of Contract A (doc_id: d1), the indemnification standard requires..."
 
-    with patch("skills.legal_research._build_agent") as mock_build:
+    with patch("skills.legal_research.legal_research._build_agent") as mock_build:
         mock_agent = MagicMock()
         mock_agent.invoke.return_value = {"messages": [fake_msg]}
         mock_build.return_value = mock_agent
@@ -202,7 +202,7 @@ def test_legal_research_handles_error(monkeypatch):
     from config import get_settings
     get_settings.cache_clear()
 
-    with patch("skills.legal_research._build_agent") as mock_build:
+    with patch("skills.legal_research.legal_research._build_agent") as mock_build:
         mock_agent = MagicMock()
         mock_agent.invoke.side_effect = Exception("LLM down")
         mock_build.return_value = mock_agent
@@ -271,7 +271,7 @@ def test_legal_research_injects_chat_history_into_agent(monkeypatch):
         chat_history=history,
     )
 
-    with patch("skills.legal_research._build_agent", return_value=fake_agent):
+    with patch("skills.legal_research.legal_research._build_agent", return_value=fake_agent):
         legal_research(state)
 
     sent = captured["payload"]["messages"]
@@ -332,7 +332,7 @@ def test_legal_research_injects_attorney_notes(monkeypatch):
         attorney_notes="Focus on EU jurisdiction precedents only.",
     )
 
-    with patch("skills.legal_research._build_agent", return_value=fake_agent):
+    with patch("skills.legal_research.legal_research._build_agent", return_value=fake_agent):
         legal_research(state)
 
     sent = captured["payload"]["messages"]
@@ -390,7 +390,7 @@ def test_drafting_injects_attorney_notes(monkeypatch):
 
 def test_extract_proposed_edits_parses_well_formed_block():
     """A single well-formed JSON block is parsed into a structured proposal."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         "Here's a tighter version of the cap.\n"
@@ -407,7 +407,7 @@ def test_extract_proposed_edits_parses_well_formed_block():
 
 def test_extract_proposed_edits_parses_multiple_blocks():
     """Multiple JSON blocks yield multiple proposals in order."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         "Two alternatives:\n"
@@ -425,7 +425,7 @@ def test_extract_proposed_edits_parses_multiple_blocks():
 
 def test_extract_proposed_edits_skips_malformed_json():
     """Malformed JSON blocks are logged and skipped, not propagated."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         '```json\n{"action": "replace", "target_text": broken-no-quotes}\n```\n'
@@ -438,7 +438,7 @@ def test_extract_proposed_edits_skips_malformed_json():
 
 def test_extract_proposed_edits_skips_blocks_without_valid_action():
     """JSON blocks without a known action key are skipped."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = '```json\n{"action": "unknown", "target_text": "X"}\n```'
     assert _extract_proposed_edits(prose) == []
@@ -446,7 +446,7 @@ def test_extract_proposed_edits_skips_blocks_without_valid_action():
 
 def test_extract_proposed_edits_accepts_replace_all_action():
     """replace_all is a valid action — used for 'fill every X' requests."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         '```json\n{"action": "replace_all", "target_text": "Signed by: [__]", '
@@ -468,7 +468,7 @@ def test_chat_prompt_never_demonstrates_bundled_targets():
     but didn't retract it, so the two contradicted and the model picked the
     concrete (broken) example. Lock the prompt against re-introducing a tab.
     """
-    from skills.legal_research import CHAT_SYSTEM_PROMPT
+    from skills.legal_research.legal_research import CHAT_SYSTEM_PROMPT
 
     # The prompt teaches via JSON examples, so the danger is the *escape sequence*
     # \t / \n appearing inside an example target_text (the model copies it, the
@@ -485,7 +485,7 @@ def test_chat_prompts_constrain_edit_scope():
     ("Boris Bukengolts") with the requested party's details "to ensure
     consistency", an edit the user never asked for (trace 4b24ca1d). Model-neutral
     correctness guidance, not a scenario-specific worked example."""
-    from skills.legal_research import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
+    from skills.legal_research.legal_research import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
 
     for prompt in (CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM):
         low = prompt.lower()
@@ -498,7 +498,7 @@ def test_chat_prompts_constrain_edit_scope():
 
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     assert _extract_proposed_edits("Why is the IP clause risky?") == []
     assert _extract_proposed_edits("") == []
@@ -509,7 +509,7 @@ def test_extract_proposed_edits_accepts_array_inside_one_block():
     fenced block whose body is a JSON array. The old parser expected only a
     single dict and silently dropped the array, leaving proposed_edits empty
     even though the model emitted the right structured data."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         'I will replace the placeholder in two locations.\n\n'
@@ -530,7 +530,7 @@ def test_extract_proposed_edits_accepts_stacked_objects_in_one_block():
     JSON array. json.loads raises on multiple top-level objects, so the whole
     block was dropped -> empty edits -> the lossy JSON-retry fired and emitted a
     destructive replace_all "[__]". The parser must decode each stacked object."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         "I will update the blank fields.\n\n"
@@ -553,7 +553,7 @@ def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():
     """Local LLMs sometimes line-wrap long string values mid-content, producing
     JSON with a literal newline inside a quoted string (spec-invalid). The
     tolerant parser escapes those raw newlines and recovers the block."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     # Note the LITERAL newline between "Signed by:" and "[__]\\t..." inside
     # the target_text value — this is what the user saw on the second block.
@@ -572,7 +572,7 @@ def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():
 
 def test_tolerant_json_loads_handles_internal_tabs_and_returns():
     """Tab and carriage-return characters inside string values are also escaped."""
-    from skills.legal_research import _tolerant_json_loads
+    from skills.legal_research.legal_research import _tolerant_json_loads
 
     raw = '{"target": "col1\tcol2\rcol3"}'  # raw \t and \r inside the string
     parsed = _tolerant_json_loads(raw)
@@ -582,7 +582,7 @@ def test_tolerant_json_loads_handles_internal_tabs_and_returns():
 
 def test_extract_proposed_edits_array_with_invalid_entries_filtered():
     """An array containing some invalid entries keeps the valid ones and drops the rest."""
-    from skills.legal_research import _extract_proposed_edits
+    from skills.legal_research.legal_research import _extract_proposed_edits
 
     prose = (
         '```json\n'
@@ -619,8 +619,8 @@ def test_legal_research_doc_chat_skips_react_agent(monkeypatch):
     fake_agent.invoke.return_value = {"messages": [MagicMock(content="UNEXPECTED")]}
 
     with (
-        patch("skills.legal_research._build_llm", return_value=fake_llm),
-        patch("skills.legal_research._build_agent", return_value=fake_agent),
+        patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research.legal_research._build_agent", return_value=fake_agent),
     ):
         from skills.legal_research import legal_research
         state = _make_state(
@@ -650,7 +650,7 @@ def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
     fake_llm = MagicMock()
     fake_llm.invoke.return_value = fake_response
 
-    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+    with patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm):
         from skills.legal_research import legal_research
         state = _make_state(
             request="Tighten the cap to 2x.",
@@ -666,7 +666,7 @@ def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
 def test_parse_json_edits_accepts_three_shapes():
     """_parse_json_edits handles the three shapes Ollama's format=json emits:
     {edits: [...]} wrapping, bare array, bare single edit."""
-    from skills.legal_research import _parse_json_edits
+    from skills.legal_research.legal_research import _parse_json_edits
 
     wrapped = '{"edits": [{"action": "replace", "target_text": "X", "new_text": "Y"}]}'
     bare_array = '[{"action": "replace", "target_text": "X", "new_text": "Y"}]'
@@ -680,7 +680,7 @@ def test_parse_json_edits_accepts_three_shapes():
 
 def test_parse_json_edits_rejects_invalid_actions_and_malformed_json():
     """Malformed JSON and entries without a valid action are dropped silently."""
-    from skills.legal_research import _parse_json_edits
+    from skills.legal_research.legal_research import _parse_json_edits
 
     assert _parse_json_edits("not json at all") == []
     assert _parse_json_edits('{"edits": "not a list"}') == []
@@ -713,8 +713,8 @@ def test_legal_research_retries_when_edit_promise_lacks_block(monkeypatch):
     fake_json_llm.invoke.return_value = retry
 
     with (
-        patch("skills.legal_research._build_llm", return_value=fake_llm),
-        patch("skills.legal_research._build_json_llm", return_value=fake_json_llm),
+        patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research.legal_research._build_json_llm", return_value=fake_json_llm),
     ):
         from skills.legal_research import legal_research
         state = _make_state(
@@ -745,7 +745,7 @@ def test_legal_research_does_not_retry_when_block_already_present(monkeypatch):
     fake_llm = MagicMock()
     fake_llm.invoke.return_value = response
 
-    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+    with patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm):
         from skills.legal_research import legal_research
         state = _make_state(
             request="Replace X with Y.",
@@ -760,7 +760,7 @@ def test_edit_promise_detector_matches_past_tense():
     """The detector must match 'I have replaced...' too — without this, the
     retry path never fires when the local LLM uses past tense and the user
     sees a confident lie ('I have replaced…') with no actual edit."""
-    from skills.legal_research import _looks_like_edit_promise
+    from skills.legal_research.legal_research import _looks_like_edit_promise
 
     # Past-tense forms — the original \breplace\b regex missed these.
     assert _looks_like_edit_promise(
@@ -780,7 +780,7 @@ def test_edit_promise_detector_matches_past_tense():
 
 def test_edit_promise_detector_skips_qa_and_unrelated():
     """The detector must NOT match pure Q&A or unrelated mentions of edit verbs."""
-    from skills.legal_research import _looks_like_edit_promise
+    from skills.legal_research.legal_research import _looks_like_edit_promise
 
     # Pure Q&A
     assert not _looks_like_edit_promise("Per Section 4, the cap is 12 months of fees.")
@@ -813,8 +813,8 @@ def test_legal_research_retries_on_past_tense_promise(monkeypatch):
     fake_json_llm.invoke.return_value = retry
 
     with (
-        patch("skills.legal_research._build_llm", return_value=fake_llm),
-        patch("skills.legal_research._build_json_llm", return_value=fake_json_llm),
+        patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm),
+        patch("skills.legal_research.legal_research._build_json_llm", return_value=fake_json_llm),
     ):
         from skills.legal_research import legal_research
         state = _make_state(
@@ -839,7 +839,7 @@ def test_legal_research_does_not_retry_on_pure_qa(monkeypatch):
     fake_llm = MagicMock()
     fake_llm.invoke.return_value = response
 
-    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+    with patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm):
         from skills.legal_research import legal_research
         state = _make_state(
             request="Why is the cap risky?",
@@ -867,7 +867,7 @@ def test_legal_research_resets_proposed_edits_each_turn(monkeypatch):
     fake_llm.invoke.return_value = fake_response
 
     stale_edit = [{"action": "replace", "target_text": "X", "new_text": "Y"}]
-    with patch("skills.legal_research._build_llm", return_value=fake_llm):
+    with patch("skills.legal_research.legal_research._build_llm", return_value=fake_llm):
         from skills.legal_research import legal_research
         state = _make_state(
             request="Why is X risky?",
@@ -1138,7 +1138,7 @@ def test_load_bundle_strips_generated_notices():
 
 
 def test_doc_chat_injects_stored_review(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     captured = {}
 
@@ -1181,7 +1181,7 @@ def test_doc_chat_injects_stored_review(monkeypatch):
 
 
 def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     class FakeResp:
         content = "answer"
@@ -1203,7 +1203,7 @@ def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
 
 def test_doc_chat_no_document_id_no_degradation(monkeypatch):
     """When document_id is empty string, no review load occurs, no degradation flag."""
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     class FakeResp:
         content = "answer"
@@ -1227,7 +1227,7 @@ def test_doc_chat_no_document_id_no_degradation(monkeypatch):
 
 
 def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     captured = {}
 
@@ -1262,7 +1262,7 @@ def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
 
 
 def test_doc_chat_no_msa_for_nda(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     class FakeResp:
         content = "answer"
@@ -1288,7 +1288,7 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
 
 
 def test_doc_chat_caps_document_not_grounding(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     from config import get_settings
     monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "2000")
     monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
@@ -1335,7 +1335,7 @@ def test_build_llm_sets_num_ctx(monkeypatch):
     """_build_llm must forward ollama_num_ctx to ChatOllama so Ollama uses the
     correct context window instead of its small default (~4096 tokens).
     qwen3.6 supports 262k; we pin a project-level default of 32768."""
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     from config import get_settings
     monkeypatch.setenv("OLLAMA_NUM_CTX", "12345")
     get_settings.cache_clear()
@@ -1349,7 +1349,7 @@ def test_build_llm_sets_num_ctx(monkeypatch):
 def test_build_json_llm_sets_num_ctx(monkeypatch):
     """_build_json_llm must also forward ollama_num_ctx — it is the retry LLM
     used when the main LLM emits an edit promise without a JSON block."""
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     from config import get_settings
     monkeypatch.setenv("OLLAMA_NUM_CTX", "8192")
     get_settings.cache_clear()
@@ -1368,7 +1368,7 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
 
     All other sections must be preserved so recall still works.
     """
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     review_md = (
         "# Review Summary\nOverall risky.\n\n"
@@ -1393,7 +1393,7 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
 
 
 def test_needs_grounding_positive_cases():
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     for q in [
         "soften the indemnity clause",
         "does this SOW conflict with the MSA?",
@@ -1406,7 +1406,7 @@ def test_needs_grounding_positive_cases():
 
 
 def test_needs_grounding_negative_cases():
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     for q in [
         "who is the signatory for Trinetix?",
         "what is the effective date?",
@@ -1419,7 +1419,7 @@ def test_needs_grounding_negative_cases():
 
 
 def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     captured = {}
 
@@ -1445,7 +1445,7 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
 
 
 def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     captured = {}
 
     class FakeResp:
@@ -1467,7 +1467,7 @@ def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
 
 
 def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
-    import skills.legal_research as lr
+    lr = importlib.import_module("skills.legal_research.legal_research")
     from config import get_settings
     monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
     get_settings.cache_clear()
