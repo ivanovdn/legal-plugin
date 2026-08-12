@@ -1,9 +1,7 @@
 // Pure-helper checks for word.ts. Run with: npx tsx src/word.test.ts
 // (The Office.js-dependent functions are smoke-tested by sideloading in Word.)
 import { escapeWordWildcards, isAmbiguousBlankPlaceholder, shouldMatchWholeWord } from "./word";
-
-const pass = (cond: boolean, label: string) =>
-  console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
+import { pass } from "./testAssert";
 
 // --- escapeWordWildcards: backslash-escape Word's wildcard metacharacters ---
 pass(escapeWordWildcards("Signed by: [__]") === "Signed by: \\[__\\]", "escape: brackets escaped");

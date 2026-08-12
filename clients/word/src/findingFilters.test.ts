@@ -1,9 +1,7 @@
 // Pure-helper checks for findingFilters.ts. Run with: npx tsx src/findingFilters.test.ts
 import { applyFindingFilters, ALL_RISKS, type FindingFilters } from "./findingFilters";
 import type { Finding, Risk } from "./parser";
-
-const pass = (cond: boolean, label: string) =>
-  console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
+import { pass } from "./testAssert";
 
 const makeFinding = (over: Partial<Finding>): Finding => ({
   issueId: "",

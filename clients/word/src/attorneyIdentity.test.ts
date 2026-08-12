@@ -1,8 +1,6 @@
 // Read-or-create attorney id. Run with: npx tsx src/attorneyIdentity.test.ts
 import { resolveAttorneyId, resolveAttorneyName, setAttorneyName, userHeaders } from "./attorneyIdentity";
-
-const pass = (cond: boolean, label: string) =>
-  console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
+import { pass } from "./testAssert";
 
 // in-memory localStorage mock
 class MemStore {

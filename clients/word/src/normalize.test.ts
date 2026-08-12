@@ -1,8 +1,6 @@
 // Quick normalize sanity check. Run with: npx tsx src/normalize.test.ts
 import { normalizeForSearch } from "./normalize";
-
-const pass = (cond: boolean, label: string) =>
-  console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
+import { pass } from "./testAssert";
 
 pass(
   normalizeForSearch("Service Provider's “maximum liability”") ===

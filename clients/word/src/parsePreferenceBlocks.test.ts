@@ -1,8 +1,6 @@
 // Run with: npx tsx src/parsePreferenceBlocks.test.ts
 import { extractPreferenceBlocks } from "./parsePreferenceBlocks";
-
-const pass = (cond: boolean, label: string) =>
-  console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
+import { pass } from "./testAssert";
 
 {
   const { cleanedProse, preferences } = extractPreferenceBlocks(

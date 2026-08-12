@@ -1,6 +1,7 @@
 // Parser sanity check for the team's required output format.
 // Run with: npx tsx src/parser.test.ts
 import { parseContractReview } from "./parser";
+import { pass } from "./testAssert";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sample 1 — full happy-path NDA review in the team's required format
@@ -54,7 +55,6 @@ Final recommendation: DO NOT SEND FOR SIGNATURE.
 `;
 
 const r1 = parseContractReview(sample1);
-const pass = (cond: boolean, label: string) => console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
 
 console.log("=== Sample 1: team's required format (NDA) ===");
 console.log("Header:", r1.header);

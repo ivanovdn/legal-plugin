@@ -1,8 +1,6 @@
 // Quick sanity check for parseEditBlocks. Run with: npx tsx src/parseEditBlocks.test.ts
 import { extractEditBlocks, normalizeProposals, type EditProposal } from "./parseEditBlocks";
-
-const pass = (cond: boolean, label: string) =>
-  console.log(cond ? `PASS: ${label}` : `FAIL: ${label}`);
+import { pass } from "./testAssert";
 
 // 1. Well-formed single block
 {
