@@ -126,7 +126,9 @@ def test_otel_settings_defaults(monkeypatch):
                 "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_SERVICE_NAME"):
         monkeypatch.delenv(var, raising=False)
     from config import Settings
-    s = Settings()
+    # _env_file=None isolates from a developer's local .env (which may legitimately
+    # set OTEL_EXPORTER_OTLP_HEADERS) so this asserts the CODE defaults, not disk state.
+    s = Settings(_env_file=None)
     assert s.otel_exporter_otlp_endpoint == "http://localhost:3000/api/public/otel"
     assert s.otel_service_name == "legal-triage"
     assert s.tracing_enabled is True
