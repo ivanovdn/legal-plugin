@@ -52,7 +52,7 @@ Set:
 | `APP_DB_PASSWORD` | must equal the `app-db` container's `POSTGRES_PASSWORD` |
 | `LLM_MODEL` / `EMBEDDING_MODEL` / `QDRANT_VECTOR_DIM` | must match what Spark serves **and** what the Qdrant collection was built with — a mismatch on the embedding model/dim silently breaks retrieval |
 
-`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` only matter if you bring up the Langfuse services (Step 4).
+`OTEL_EXPORTER_OTLP_HEADERS` is already left unset in `.env.remote.example` — the VM's tracing backend is the dedicated Phoenix service (Step 4), which needs no auth header. Only set it if you deliberately point the VM backend at a Langfuse instance instead.
 
 ---
 
@@ -112,9 +112,21 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
 
 **Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.
 
-Langfuse tracing is optional — add `langfuse-web langfuse-worker postgres clickhouse minio` to the same command if you want it (heavier; skip for testers).
+**Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
 
 > **`app-db` is a hard dependency.** The backend needs it up and **healthy** (audit log, review store, and per-attorney conversations all live there) — bring it up first if you're staging services incrementally, and don't tear it down while the backend is running. Its data is a **named volume** (`app_db_data`) — reviews are attorney work product, so back it up (`pg_dump` on a schedule, or snapshot the volume) same as any production database.
+
+**Phoenix smoke test — confirm a trace lands:**
+
+```bash
+# Run one query through the add-in, or directly against the backend:
+curl -s http://localhost:8000/api/query \
+  -H "Content-Type: application/json" \
+  -H "X-User-ID: smoke" \
+  -d '{"request": "what is an NDA?", "task_type": "research"}'
+```
+
+Then browse Phoenix. It's internal-only (`expose: "6006"`, no host port mapping) — reach it over the VPN via an SSH/port-forward to `SRV-AGENT-01:6006`, or add a Caddy route if you want it reachable at `https://<hostname>/phoenix`. Expect the trace tree to show `query → intent_router / contract_review → generation spans with token counts` — same shape as the local Langfuse smoke (see the main [README](../README.md)), just routed to Phoenix instead of Langfuse OTLP, and with no `OTEL_EXPORTER_OTLP_HEADERS` involved (Phoenix needs no auth). If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`) and that the backend actually picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`).
 
 ---
 
