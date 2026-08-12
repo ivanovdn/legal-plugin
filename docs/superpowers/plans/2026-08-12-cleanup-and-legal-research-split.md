@@ -1017,11 +1017,19 @@ uv run pytest tests/test_legal_research_conversation.py -q
 ```
 Expected: **failures.** If this still passes, the patches are not reaching the code under test and the tests are vacuous — fix the targeting before continuing.
 
-Revert the inversion:
+**Revert the inversion by hand** — restore `if not settings.conversation_store_enabled:`.
+
+Do **not** use `git checkout skills/legal_research/context.py` here: the file is new and
+still untracked at this point in the task, so the command either errors with
+`pathspec did not match` or, once staged, discards the entire module you just wrote.
+Edit the two characters back.
+
+Then re-run to confirm you are back to green:
+
 ```bash
-git checkout skills/legal_research/context.py
+uv run pytest tests/test_legal_research_conversation.py -q
 ```
-…then re-apply Steps 1–2 if the checkout discarded them (safer: undo the two-character edit by hand rather than using `git checkout`).
+Expected: all pass.
 
 - [ ] **Step 7: Verify the dependency graph is acyclic**
 
