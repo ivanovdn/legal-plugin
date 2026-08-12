@@ -7,13 +7,13 @@ import re
 import unicodedata
 
 from langchain_ollama import ChatOllama
-from langfuse.decorators import observe
 from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
 from memory.conversation_store import load_recent
 from memory.review_store import load_latest_review
+from observability.spans import traced
 from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
@@ -905,7 +905,7 @@ def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]
     return content, _extract_proposed_edits(content), source_docs
 
 
-@observe(name="legal_research", capture_input=False, capture_output=False)
+@traced("legal_research")
 def legal_research(state: LegalAgentState) -> LegalAgentState:
     """Answer the user's request.
 

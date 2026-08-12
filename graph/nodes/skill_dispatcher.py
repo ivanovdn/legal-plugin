@@ -2,9 +2,9 @@
 """Skill dispatcher — routes to the correct skill node."""
 
 import logging
-from langfuse.decorators import observe
 
 from graph.state import LegalAgentState
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ SKILL_MAP = {
 }
 
 
-@observe(name="skill_dispatcher")
+@traced("skill_dispatcher")
 def skill_dispatcher(state: LegalAgentState) -> LegalAgentState:
     """Sets routing info for conditional edge. Actual dispatch via graph edges."""
     logger.info("[skill_dispatcher] dispatching task_type=%s", state["task_type"])

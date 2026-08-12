@@ -4,17 +4,17 @@
 import logging
 
 from config import get_settings
-from langfuse.decorators import observe
 
 from graph.state import LegalAgentState
 from memory.audit import write_audit_log
 from memory.conversation_store import append_turn
 from memory.review_store import save_review
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
 
-@observe(name="memory_writer")
+@traced("memory_writer")
 def memory_writer(state: LegalAgentState) -> dict:
     """Writes the audit log; on a contract_review turn also persists the review.
     Returns {} normally, or {'report': {...}} with review_persist_error if the review write fails."""

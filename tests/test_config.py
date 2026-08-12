@@ -31,10 +31,6 @@ def test_config_loads_from_env(monkeypatch):
     monkeypatch.setenv("CHUNK_MAX_TOKENS", "400")
     monkeypatch.setenv("ESCALATION_TICKET_PREFIX", "LEG")
     monkeypatch.setenv("BM25_ENABLED", "false")
-    monkeypatch.setenv("LANGFUSE_HOST", "http://localhost:3000")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-local")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-local")
-    monkeypatch.setenv("PHOENIX_HOST", "http://localhost:6006")
     monkeypatch.setenv("API_PORT", "8000")
     monkeypatch.setenv("CHAINLIT_PORT", "8080")
     monkeypatch.setenv("DATABASE_URL", "postgresql://legal:legal@localhost:5434/legal")
@@ -61,10 +57,6 @@ def test_config_loads_from_env(monkeypatch):
     assert settings.chunk_max_tokens == 400
     assert settings.escalation_ticket_prefix == "LEG"
     assert settings.bm25_enabled is False
-    assert settings.langfuse_host == "http://localhost:3000"
-    assert settings.langfuse_public_key == "pk-lf-local"
-    assert settings.langfuse_secret_key == "sk-lf-local"
-    assert settings.phoenix_host == "http://localhost:6006"
     assert settings.api_port == 8000
     assert settings.chainlit_port == 8080
     assert settings.database_url == "postgresql://legal:legal@localhost:5434/legal"
@@ -127,3 +119,22 @@ def test_settings_default_checkpoint_ttl_seconds(monkeypatch):
     get_settings.cache_clear()
     settings = get_settings()
     assert settings.checkpoint_ttl_seconds == 86400
+
+
+def test_otel_settings_defaults(monkeypatch):
+    for var in ("TRACING_ENABLED", "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_SERVICE_NAME"):
+        monkeypatch.delenv(var, raising=False)
+    from config import Settings
+    s = Settings()
+    assert s.otel_exporter_otlp_endpoint == "http://localhost:3000/api/public/otel"
+    assert s.otel_service_name == "legal-triage"
+    assert s.tracing_enabled is True
+    assert s.otel_exporter_otlp_headers == ""
+
+
+def test_legacy_tracing_keys_removed():
+    from config import Settings
+    s = Settings()
+    for attr in ("langfuse_host", "langfuse_public_key", "langfuse_secret_key", "phoenix_host"):
+        assert not hasattr(s, attr), f"{attr} should be removed"

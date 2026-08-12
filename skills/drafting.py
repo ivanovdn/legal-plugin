@@ -3,9 +3,8 @@
 
 import logging
 
-from langfuse.decorators import observe
-
 from graph.state import LegalAgentState
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ If no suitable template is found, generate the document from best practices and 
 IMPORTANT: This is a DRAFT for attorney review. It will always go through human review before delivery."""
 
 
-@observe(name="drafting", capture_input=False, capture_output=False)
+@traced("drafting")
 def drafting(state: LegalAgentState) -> LegalAgentState:
     """Prepare state for document drafting via rag_retriever + llm_caller."""
     request = state["request"]

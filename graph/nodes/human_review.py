@@ -3,16 +3,16 @@
 
 import logging
 
-from langfuse.decorators import observe
 from langgraph.types import interrupt
 
 from config import get_settings
 from graph.state import LegalAgentState
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
 
-@observe(name="human_review")
+@traced("human_review")
 def human_review(state: LegalAgentState) -> LegalAgentState:
     """Pause for attorney review. Applies the verdict on resume.
 

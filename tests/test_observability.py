@@ -1,12 +1,169 @@
 # tests/test_observability.py
-"""Langfuse observability helpers + GENERATION/usage wiring."""
+"""OpenTelemetry span helpers + GENERATION/usage wiring."""
 from __future__ import annotations
+
+import json
+import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 
 from observability.tracing import (
     ollama_usage,
     message_usage,
     traced_invoke,
 )
+
+_exporter = InMemorySpanExporter()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _otel_test_provider():
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(_exporter))
+    trace.set_tracer_provider(provider)   # first real set wins (app tracing is off in tests)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_spans():
+    _exporter.clear()
+    yield
+    _exporter.clear()
+
+
+def _spans_by_name(name):
+    return [s for s in _exporter.get_finished_spans() if s.name == name]
+
+
+def test_traced_creates_span_and_returns_value():
+    from observability.spans import traced
+
+    @traced("unit_node")
+    def node(x):
+        return x + 1
+
+    assert node(41) == 42
+    spans = _spans_by_name("unit_node")
+    assert len(spans) == 1
+
+
+def test_traced_llm_kind_sets_openinference_span_kind():
+    from observability.spans import traced
+
+    @traced("gen_node", kind="LLM")
+    def gen():
+        return "ok"
+
+    gen()
+    span = _spans_by_name("gen_node")[0]
+    assert span.attributes.get("openinference.span.kind") == "LLM"
+
+
+def test_traced_propagates_exceptions_and_resets_root():
+    from observability.spans import traced, set_trace_attributes, _root_span
+
+    @traced("boom")
+    def boom():
+        raise ValueError("kaboom")
+
+    with pytest.raises(ValueError, match="kaboom"):
+        boom()
+
+    span = _spans_by_name("boom")[0]
+    assert span.status.status_code == StatusCode.ERROR      # __exit__ recorded the exception
+    assert _root_span.get() is None                          # root token was reset in finally, no leak
+
+    # a subsequent independent traced call becomes its own root
+    @traced("after")
+    def after():
+        set_trace_attributes(user_id="u2")
+    after()
+    assert _spans_by_name("after")[0].attributes.get("user.id") == "u2"
+
+
+def test_set_trace_attributes_lands_on_root_from_nested_span():
+    from observability.spans import traced, set_trace_attributes
+
+    @traced("child")
+    def child():
+        # a deep node stamps trace-wide facts; they must hit the ROOT span
+        set_trace_attributes(user_id="u1", session_id="s1", tags=["research"])
+
+    @traced("root")
+    def root():
+        child()
+
+    root()
+    root_span = _spans_by_name("root")[0]
+    child_span = _spans_by_name("child")[0]
+    assert root_span.attributes.get("user.id") == "u1"
+    assert root_span.attributes.get("session.id") == "s1"
+    assert json.loads(root_span.attributes.get("tag.tags")) == ["research"]
+    assert "user.id" not in child_span.attributes
+
+
+def test_set_trace_attributes_merges_metadata_on_root():
+    from observability.spans import traced, set_trace_attributes
+
+    @traced("root")
+    def root():
+        set_trace_attributes(metadata={"contract_type_detected": "nda"})
+        set_trace_attributes(metadata={"review_risk_level": "red"})
+
+    root()
+    root_span = _spans_by_name("root")[0]
+    md = json.loads(root_span.attributes.get("metadata"))
+    assert md == {"contract_type_detected": "nda", "review_risk_level": "red"}
+
+
+def test_set_gen_attributes_sets_llm_attrs_on_current_span():
+    from observability.spans import traced, set_gen_attributes
+
+    @traced("gen", kind="LLM")
+    def gen():
+        set_gen_attributes(
+            name="doc_chat",
+            input=[{"role": "user", "content": "q"}],
+            output="the answer",
+            model="qwen3.6:latest",
+            usage={"input": 90, "output": 10, "total": 100, "unit": "TOKENS"},
+        )
+
+    gen()
+    # name override renames the span
+    span = _spans_by_name("doc_chat")[0]
+    assert span.attributes.get("llm.model_name") == "qwen3.6:latest"
+    assert span.attributes.get("llm.token_count.prompt") == 90
+    assert span.attributes.get("llm.token_count.completion") == 10
+    assert span.attributes.get("llm.token_count.total") == 100
+    assert span.attributes.get("output.value") == "the answer"
+    assert json.loads(span.attributes.get("input.value")) == [{"role": "user", "content": "q"}]
+
+
+def test_helpers_no_op_and_never_raise_without_active_span():
+    from observability.spans import set_trace_attributes, set_gen_attributes
+    # called outside any @traced span → current span is invalid/non-recording
+    set_trace_attributes(user_id="u", metadata={"k": "v"})
+    set_gen_attributes(model="m", usage={"input": 1, "output": 2, "total": 3, "unit": "TOKENS"})
+    # no exception == pass
+
+
+def test_traced_is_noop_under_noop_tracer(monkeypatch):
+    import observability.spans as mod
+    from opentelemetry.trace import NoOpTracer
+
+    monkeypatch.setattr(mod, "_tracer", NoOpTracer())
+
+    @mod.traced("dark", kind="LLM")
+    def fn():
+        mod.set_gen_attributes(model="m")
+        return "value"
+
+    assert fn() == "value"                 # returns normally
+    assert _spans_by_name("dark") == []    # nothing exported
 
 
 def test_ollama_usage_maps_token_counts():
@@ -44,8 +201,14 @@ def test_message_usage_none_without_counts():
     assert message_usage(_FakeMessage(content="hi")) is None
 
 
-def test_traced_invoke_records_generation_and_returns_response(monkeypatch):
-    import observability.tracing as mod
+def test_traced_invoke_records_generation_and_returns_response():
+    from observability.tracing import traced_invoke
+
+    class _FakeMessage:
+        def __init__(self, content, usage_metadata, response_metadata):
+            self.content = content
+            self.usage_metadata = usage_metadata
+            self.response_metadata = response_metadata
 
     resp = _FakeMessage(
         content="the answer",
@@ -57,17 +220,16 @@ def test_traced_invoke_records_generation_and_returns_response(monkeypatch):
         def invoke(self, messages):
             return resp
 
-    captured: dict = {}
-    monkeypatch.setattr(mod.langfuse_context, "update_current_observation",
-                        lambda **kw: captured.update(kw))
-
     out = traced_invoke(FakeLLM(), [{"role": "user", "content": "q"}], name="doc_chat")
 
-    assert out is resp                                  # response passed through
-    assert captured["usage"] == {"input": 90, "output": 10, "total": 100, "unit": "TOKENS"}
-    assert captured["model"] == "qwen3.6:latest"
-    assert captured["output"] == "the answer"
-    assert captured["name"] == "doc_chat"
+    assert out is resp                                   # response passed through
+    span = _spans_by_name("doc_chat")[0]
+    assert span.attributes.get("openinference.span.kind") == "LLM"
+    assert span.attributes.get("llm.token_count.prompt") == 90
+    assert span.attributes.get("llm.token_count.completion") == 10
+    assert span.attributes.get("llm.token_count.total") == 100
+    assert span.attributes.get("llm.model_name") == "qwen3.6:latest"
+    assert span.attributes.get("output.value") == "the answer"
 
 
 def test_llm_caller_reports_generation_usage(monkeypatch):
@@ -79,16 +241,15 @@ def test_llm_caller_reports_generation_usage(monkeypatch):
             return {"message": {"content": "answer"}, "prompt_eval_count": 200, "eval_count": 50}
 
     monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: FakeResp())
-    captured: dict = {}
-    monkeypatch.setattr(mod.langfuse_context, "update_current_observation",
-                        lambda **kw: captured.update(kw))
-
     state = {"request": "q", "retrieved_chunks": [], "messages": [], "task_type": "research"}
     mod.llm_caller(state)
 
-    assert captured["usage"] == {"input": 200, "output": 50, "total": 250, "unit": "TOKENS"}
-    assert captured["model"]            # settings.llm_model, non-empty
-    assert captured["output"] == "answer"
+    span = _spans_by_name("llm_caller")[0]
+    assert span.attributes.get("llm.token_count.prompt") == 200
+    assert span.attributes.get("llm.token_count.completion") == 50
+    assert span.attributes.get("llm.token_count.total") == 250
+    assert span.attributes.get("output.value") == "answer"
+    assert span.attributes.get("llm.model_name")
 
 
 def test_planner_reports_generation_usage(monkeypatch):
@@ -101,16 +262,12 @@ def test_planner_reports_generation_usage(monkeypatch):
                     "prompt_eval_count": 30, "eval_count": 12}
 
     monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: FakeResp())
-    captured: dict = {}
-    monkeypatch.setattr(mod.langfuse_context, "update_current_observation",
-                        lambda **kw: captured.update(kw))
-
-    # skill_plan length > 1 so the planner actually calls the LLM
     state = {"request": "review then research", "skill_plan": ["contract_review", "research"]}
     mod.planner(state)
 
-    assert captured["usage"] == {"input": 30, "output": 12, "total": 42, "unit": "TOKENS"}
-    assert captured["model"]
+    span = _spans_by_name("planner")[0]
+    assert span.attributes.get("llm.token_count.total") == 42
+    assert span.attributes.get("llm.model_name")
 
 
 def test_intent_router_reports_generation_usage(monkeypatch):
@@ -123,16 +280,12 @@ def test_intent_router_reports_generation_usage(monkeypatch):
                     "prompt_eval_count": 18, "eval_count": 4}
 
     monkeypatch.setattr(mod.httpx, "post", lambda *a, **k: FakeResp())
-    captured: dict = {}
-    monkeypatch.setattr(mod.langfuse_context, "update_current_observation",
-                        lambda **kw: captured.update(kw))
-    monkeypatch.setattr(mod.langfuse_context, "update_current_trace", lambda **kw: None)
-
-    state = {"request": "what is an NDA?"}   # no task_type → LLM classifies
+    state = {"request": "what is an NDA?"}
     mod.intent_router(state)
 
-    assert captured["usage"] == {"input": 18, "output": 4, "total": 22, "unit": "TOKENS"}
-    assert captured["model"]
+    span = _spans_by_name("intent_router")[0]
+    assert span.attributes.get("llm.token_count.total") == 22
+    assert span.attributes.get("llm.model_name")
 
 
 def test_doc_chat_routes_llm_through_traced_invoke(monkeypatch):
@@ -180,13 +333,28 @@ def test_llm_caller_sends_num_ctx_in_options(monkeypatch):
         return FakeResp()
 
     monkeypatch.setattr(mod.httpx, "post", fake_post)
-    monkeypatch.setattr(mod.langfuse_context, "update_current_observation", lambda **kw: None)
     monkeypatch.setenv("OLLAMA_NUM_CTX", "16384")
     get_settings.cache_clear()
 
     state = {"request": "q", "retrieved_chunks": [], "messages": [], "task_type": "research"}
     mod.llm_caller(state)
 
-    assert "options" in captured_json
     assert captured_json["options"].get("num_ctx") == 16384
     get_settings.cache_clear()
+
+
+def test_intake_stamps_identity_on_root(monkeypatch):
+    from graph.nodes import intake as mod
+    from observability.spans import traced
+
+    @traced("query")                      # simulate the route root span
+    def run():
+        return mod.intake({
+            "user_id": "u42", "session_id": "s7", "uploaded_docs": [],
+            "task_type": "research", "request": "what is an NDA?",
+        })
+
+    run()
+    root = _spans_by_name("query")[0]
+    assert root.attributes.get("user.id") == "u42"
+    assert root.attributes.get("session.id") == "s7"

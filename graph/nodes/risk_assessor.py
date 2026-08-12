@@ -16,9 +16,8 @@ server-side verdict and the client-rendered blockers always reconcile.
 import logging
 import re
 
-from langfuse.decorators import observe, langfuse_context
-
 from graph.state import LegalAgentState
+from observability.spans import traced, set_trace_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +128,7 @@ def _assess_review_verdict(llm_response: str) -> tuple[str, list[dict]]:
     return "low", []
 
 
-@observe(name="risk_assessor")
+@traced("risk_assessor")
 def risk_assessor(state: LegalAgentState) -> LegalAgentState:
     """Evaluate risk. contract_review uses the verdict; others use citations."""
     task_type = state.get("task_type", "")
@@ -156,10 +155,10 @@ def risk_assessor(state: LegalAgentState) -> LegalAgentState:
     state["risk_level"] = risk_level
     state["requires_attorney"] = requires_attorney
 
-    # Surface the verdict on the Langfuse trace (the human-review decision was
+    # Surface the verdict on the trace (the human-review decision was
     # previously invisible). Tracing must never break the node.
     try:
-        langfuse_context.update_current_trace(
+        set_trace_attributes(
             metadata={"review_risk_level": risk_level, "requires_attorney": requires_attorney},
         )
     except Exception:  # pragma: no cover - observability is best-effort

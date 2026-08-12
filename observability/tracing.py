@@ -1,35 +1,32 @@
 # observability/tracing.py
-"""Helpers for GENERATION-type spans and token usage on LLM calls.
+"""Helpers for GENERATION spans + token usage on LLM calls.
 
-Two call styles exist in this codebase, and neither uses Langfuse's LangChain
-callback integration (that integration imports the full ``langchain`` package,
-which is not a dependency here — only ``langchain-core`` / ``langchain-ollama``).
-So we instrument manually:
-
+Two call styles exist, neither using LangChain's callback integration (that
+imports the full ``langchain`` package, not a dependency here). So we instrument
+manually:
 - Raw httpx POSTs to Ollama (graph nodes) → ``ollama_usage`` maps the response.
-- LangChain ``.invoke()`` calls (skills) → ``traced_invoke`` / ``traced_agent_invoke``
-  run the call inside an ``@observe(as_type="generation")`` span and record
-  model + token usage read from the returned message(s)' ``usage_metadata``.
+- LangChain ``.invoke()`` (skills) → ``traced_invoke`` / ``traced_agent_invoke``
+  run the call inside an LLM span and record model + token usage.
 
-Tracing must never break the real call: with Langfuse disabled the ``@observe``
-decorator is a transparent pass-through and ``update_current_observation`` is a
-no-op, so every helper returns exactly what the underlying call returns.
+Tracing must never break the real call: with no provider the span is a no-op and
+``set_gen_attributes`` is a no-op, so every helper returns the underlying result.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
-from langfuse.decorators import langfuse_context, observe
-from langfuse.model import ModelUsage
+from observability.spans import set_gen_attributes, traced
 
 
-def ollama_usage(response_json: dict[str, Any]) -> ModelUsage | None:
-    """Map a non-streaming Ollama /api/chat response to Langfuse token usage.
+class TokenUsage(TypedDict):
+    input: int | None
+    output: int | None
+    total: int | None
+    unit: str
 
-    Ollama returns ``prompt_eval_count`` (input tokens) and ``eval_count``
-    (output tokens) at the top level. Returns None when neither is present
-    (e.g. an error response) so callers can pass the result straight through.
-    """
+
+def ollama_usage(response_json: dict[str, Any]) -> TokenUsage | None:
+    """Map a non-streaming Ollama /api/chat response to token usage."""
     pin = response_json.get("prompt_eval_count")
     pout = response_json.get("eval_count")
     if pin is None and pout is None:
@@ -42,13 +39,8 @@ def ollama_usage(response_json: dict[str, Any]) -> ModelUsage | None:
     }
 
 
-def message_usage(message: Any) -> ModelUsage | None:
-    """Token usage from a LangChain AIMessage.
-
-    Prefers ``usage_metadata`` (``langchain-ollama`` fills it from Ollama's
-    eval counts), falling back to the raw ``response_metadata`` counts. Returns
-    None when neither carries usable integers.
-    """
+def message_usage(message: Any) -> TokenUsage | None:
+    """Token usage from a LangChain AIMessage (usage_metadata, else response_metadata)."""
     um = getattr(message, "usage_metadata", None)
     if isinstance(um, dict):
         pin = um.get("input_tokens")
@@ -75,13 +67,11 @@ def _message_model(message: Any) -> str | None:
     return rm.get("model") if isinstance(rm, dict) else None
 
 
-@observe(as_type="generation", capture_input=False, capture_output=False)
+@traced("llm", kind="LLM")
 def traced_invoke(llm: Any, messages: Any, *, name: str = "llm") -> Any:
-    """Invoke a LangChain chat model and record it as a Langfuse GENERATION
-    (model + token usage from the returned message). Returns the model response.
-    """
+    """Invoke a LangChain chat model as an LLM span (model + token usage)."""
     response = llm.invoke(messages)
-    langfuse_context.update_current_observation(
+    set_gen_attributes(
         name=name,
         input=messages,
         output=getattr(response, "content", None) or str(response),
@@ -91,12 +81,9 @@ def traced_invoke(llm: Any, messages: Any, *, name: str = "llm") -> Any:
     return response
 
 
-@observe(as_type="generation", capture_input=False, capture_output=False)
+@traced("agent", kind="LLM")
 def traced_agent_invoke(agent: Any, payload: Any, *, name: str = "agent") -> Any:
-    """Invoke a LangGraph/LangChain agent and record a GENERATION summarizing the
-    run: the final message as output, token usage summed across AI messages.
-    Returns the agent result unchanged.
-    """
+    """Invoke a LangGraph/LangChain agent, summarizing the run as one LLM span."""
     result = agent.invoke(payload)
     messages = result.get("messages", []) if isinstance(result, dict) else []
     final = messages[-1] if messages else None
@@ -109,13 +96,13 @@ def traced_agent_invoke(agent: Any, payload: Any, *, name: str = "agent") -> Any
             have_usage = True
             tin += u["input"] or 0
             tout += u["output"] or 0
-    usage: ModelUsage | None = (
+    usage: TokenUsage | None = (
         {"input": tin, "output": tout, "total": tin + tout, "unit": "TOKENS"}
         if have_usage
         else None
     )
 
-    langfuse_context.update_current_observation(
+    set_gen_attributes(
         name=name,
         input=payload,
         output=(getattr(final, "content", None) or str(final)) if final else None,

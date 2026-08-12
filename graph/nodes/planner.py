@@ -7,9 +7,9 @@ import logging
 import httpx
 
 from config import get_settings
-from langfuse.decorators import observe, langfuse_context
 
 from graph.state import LegalAgentState
+from observability.spans import traced, set_gen_attributes
 from observability.tracing import ollama_usage
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ Determine which skill should execute FIRST (the most important one for this requ
 Respond with JSON: {{"task_type": "<first_skill_to_execute>", "skill_plan": ["<ordered_list>"]}}"""
 
 
-@observe(name="planner", as_type="generation")
+@traced("planner", kind="LLM")
 def planner(state: LegalAgentState) -> LegalAgentState:
     """Decompose multi-skill requests. Sets task_type to first skill to execute."""
     skill_plan = state.get("skill_plan", [])
@@ -65,7 +65,7 @@ def planner(state: LegalAgentState) -> LegalAgentState:
         if "skill_plan" in parsed:
             state["skill_plan"] = parsed["skill_plan"]
 
-        langfuse_context.update_current_observation(
+        set_gen_attributes(
             input=prompt,
             output=content,
             model=settings.llm_model,
