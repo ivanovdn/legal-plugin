@@ -131,8 +131,8 @@ cd clients/word && npm run dev    # https://localhost:3001/taskpane.html
 # Tests
 uv run pytest tests/ -v
 
-# One-off graph debug
-uv run python -m scripts.debug_query "..."
+# Pre-push gate (backend tests + typecheck + add-in assertions)
+bash scripts/check.sh
 ```
 
 ## When making changes
