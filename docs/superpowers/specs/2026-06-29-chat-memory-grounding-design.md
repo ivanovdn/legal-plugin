@@ -2,7 +2,7 @@
 
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** one consolidated design, implemented in four phases (0→3), each its own commit/PR.
-> **Source ideas:** `docs/00_PLAN.md` + `docs/01_reliability_floor.md` … `docs/04_context_cap.md`,
+> **Source ideas:** `docs/archive/00_PLAN.md` + `docs/01_reliability_floor.md` … `docs/archive/04_context_cap.md`,
 > grounded against the code audit in `docs/context_and_memory_audit.md`.
 
 ## Problem

@@ -1,4 +1,5 @@
 # Step 2 — MSA + playbook on the chat path
+> **SHIPPED** — archived 2026-08-12. Kept for the decision rationale; see the wiki's "Shipped Since Last Update" table for what actually landed.
 
 Solves: the Chat tab reasons with no firm-position grounding. "Does this SOW conflict with the MSA?" asked in chat runs with **no MSA in context**, and chat redlining ("soften the indemnity") happens with **no playbook** — so the agent edits toward generic contract norms, not firm policy.
 

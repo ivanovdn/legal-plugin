@@ -1,4 +1,5 @@
 # Legal agent — memory & context work: implementation plan
+> **SHIPPED** — archived 2026-08-12. Kept for the decision rationale; see the wiki's "Shipped Since Last Update" table for what actually landed.
 
 This is the handoff for the next round of work on the contract-review agent. Read this file first, then the per-step specs (`01`–`04`). Code is intentionally not specified here — these docs define **what to build and why**. Implement against the real node names in the codebase; where this doc names a node, confirm it exists before wiring to it.
 

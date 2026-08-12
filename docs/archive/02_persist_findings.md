@@ -1,4 +1,5 @@
 # Step 1 — Persist & inject the review (the core fix)
+> **SHIPPED** — archived 2026-08-12. Kept for the decision rationale; see the wiki's "Shipped Since Last Update" table for what actually landed.
 
 Solves: chat can't recall findings (300-char trim), and memory doesn't survive pane close / bleeds across docs (session-keyed, not document-keyed).
 

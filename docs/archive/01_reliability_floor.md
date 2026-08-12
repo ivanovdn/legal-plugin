@@ -1,4 +1,5 @@
 # Step 0 — Reliability floor (Redis must fail loud)
+> **SHIPPED** — archived 2026-08-12. Kept for the decision rationale; see the wiki's "Shipped Since Last Update" table for what actually landed.
 
 ## Problem
 

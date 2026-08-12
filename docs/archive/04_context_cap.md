@@ -1,4 +1,5 @@
 # Step 3 — Context cap guard on the chat path
+> **SHIPPED** — archived 2026-08-12. Kept for the decision rationale; see the wiki's "Shipped Since Last Update" table for what actually landed.
 
 Solves: the whole document is re-sent every turn on the chat path, **uncapped** — unlike the review path, which caps the MSA at 24k chars. As Step 2 adds the MSA and playbook to chat context, document + findings + playbook + MSA now compete for one fixed local-model context window. Without a guard, a large enough document overflows it — a hard failure, not a graceful degradation.
 
