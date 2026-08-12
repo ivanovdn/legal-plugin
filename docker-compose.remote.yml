@@ -35,13 +35,14 @@ services:
     volumes:
       - phoenix_data:/mnt/data
     # Container port 6006 = Phoenix UI + OTLP/HTTP ingest (/v1/traces); the backend
-    # reaches it in-network at phoenix:6006 regardless of any host mapping. Also
-    # published to the VM's LOCALHOST on 6007 (6006 is taken by compliance-bot's
-    # phoenix on this host) so the UI is reachable — bound to 127.0.0.1, NOT 0.0.0.0,
-    # because Phoenix has no auth and traces carry contract text: keep it off the VPN.
-    # View it via an SSH tunnel:  ssh -N -L 16006:localhost:6007 sa.ivanov@172.20.1.10
+    # reaches it in-network at phoenix:6006. Published on host 6007 (6006 is taken by
+    # compliance-bot's phoenix on this host) so the UI is browsable over the VPN at
+    # http://<vm>:6007 — same posture as compliance-bot's phoenix on 6006.
+    # ⚠ Phoenix has NO auth and traces carry contract text, so anyone who can reach the
+    # VM on 6007 can read them. To lock down, bind 127.0.0.1:6007:6006 + SSH-tunnel, or
+    # front it with a Caddy route + auth.
     ports:
-      - "127.0.0.1:6007:6006"
+      - "6007:6006"
 
   caddy:
     image: caddy:2
