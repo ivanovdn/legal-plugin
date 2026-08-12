@@ -137,9 +137,15 @@ real module boundary rather than an arbitrary cut.
 `_GROUNDING_TRIGGER_RE`/`_needs_grounding` (:695, :720), `_build_chat_grounding` (:730),
 `_cap_chat_context` (:752).
 
-**`legal_research.py`** — orchestration only: `_build_llm` (:112), `_build_json_llm`
-(:126), `_build_agent` (:179), `_extract_uploaded_text` (:205), `_run_doc_chat` (:773),
+**`legal_research.py`** — orchestration only: the module-level caches `_agent_cache`
+(:108) and `_llm_cache` (:109), `_build_llm` (:112), `_build_json_llm` (:126),
+`_build_agent` (:179), `_extract_uploaded_text` (:205), `_run_doc_chat` (:773),
 `_run_kb_research` (:866), `legal_research` (:909).
+
+> The two caches were missing from an earlier draft of this map (they are lowercase
+> module-level state, which the initial symbol scan skipped). They belong with the LLM
+> builders that populate them — no ownership ambiguity, but tests reset `_llm_cache`
+> directly, so the placement had to be settled.
 
 ### Dependency graph (acyclic)
 
@@ -156,13 +162,34 @@ legal_research.py  → prompts, edit_parsing, context, config, graph.state,
 Three of the five modules import nothing from this project, so ~565 lines become
 dependency-free text transforms that test in milliseconds.
 
-### The one real gotcha: `unittest.mock.patch` targets
+### The one real gotcha: test-side patch targets
 
-`tests/test_skills.py` patches `"skills.legal_research._build_agent"` in four places.
+> **Corrected 2026-08-12 during planning.** An earlier draft of this section said
+> "four places." The measured figures are below; they do not change the module
+> boundaries, but they make Task 9 substantially larger than first described.
+
 After the split, `skills.legal_research` is a **package** whose `__init__.py` re-exports
-only `legal_research` — so that target no longer resolves and those patches fail.
+only `legal_research`, so any target reaching through the package name for a private
+symbol stops resolving. Measured surface:
 
-Targets become `"skills.legal_research.legal_research._build_agent"`.
+- **19** `patch("skills.legal_research.X")` strings — `_build_agent` ×10, `_build_llm` ×7,
+  `_build_json_llm` ×2 (`test_skills.py` ×14, `test_graph.py` ×5). All three symbols stay
+  in the entry module, so all 19 become `"skills.legal_research.legal_research.X"`.
+- **56** `monkeypatch.setattr(<module object>, …)` sites reached through an alias
+  (`test_skills.py` ×45, `test_legal_research_conversation.py` ×5,
+  `test_stale_recall_reconciliation.py` ×3, `test_observability.py` ×2,
+  `test_preferences_chat_injection.py` ×1). Most are fixed by changing the alias's
+  **import line**; the rest are redistributed as symbols reach their final module.
+
+**What makes this mechanically safe:** both `mock.patch` and `monkeypatch.setattr` raise
+`AttributeError` when the target name does not exist, so every stale target fails loudly.
+There is no silent degradation — **except** for `get_settings`, which will exist on both
+`context.py` and the entry module: a patch on the wrong one succeeds and silently does
+nothing. That affects the 5 sites in `test_legal_research_conversation.py`, which the plan
+verifies by mutation rather than by a green suite.
+
+The `skills.legal_research.legal_research` stutter is accepted for consistency with
+`skills.contract_review.contract_review`.
 
 The stutter is accepted for consistency with `skills.contract_review.contract_review`
 and `skills.contract_generation.contract_generation`, which already read this way.
