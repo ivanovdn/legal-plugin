@@ -54,6 +54,11 @@ Set:
 
 `OTEL_EXPORTER_OTLP_HEADERS` is already left unset in `.env.remote.example` — the VM's tracing backend is the dedicated Phoenix service (Step 4), which needs no auth header. Only set it if you deliberately point the VM backend at a Langfuse instance instead.
 
+> **Reusing an existing `.env` (not a fresh copy)?** Config uses pydantic `extra="forbid"` on `.env`-*file* keys, so any key that's no longer a settings field crashes the backend on startup (`ValidationError: Extra inputs are not permitted`). The OTel migration removed `langfuse_*`/`phoenix_host`, so purge stale lines before bringing the stack up:
+> ```bash
+> sed -i.bak -E '/^(LANGFUSE_|PHOENIX_)/d' .env && rm .env.bak
+> ```
+
 ---
 
 ## Step 2 — Cert wiring (Bucket B — gated)
@@ -110,6 +115,8 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   up -d --build redis app-db backend caddy
 ```
 
+> **Always name the services.** A bare `up -d` (no list) starts *everything* defined in the base `docker-compose.yml` — including the heavy local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio`), which will thrash a constrained VM. The lean list above (+ `phoenix`, pulled in by `backend`'s `depends_on`) is the whole VM footprint.
+
 **Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.
 
 **Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
@@ -128,7 +135,11 @@ curl -sk https://<hostname>/api/query \
   -d '{"request": "what is an NDA?", "task_type": "research"}'
 ```
 
-Then browse Phoenix. It's internal-only (`expose: "6006"`, no host port mapping) — reach it over the VPN via an SSH/port-forward to `SRV-AGENT-01:6006`, or add a Caddy route if you want it reachable at `https://<hostname>/phoenix`. Expect the trace tree to show `query → intent_router / contract_review → generation spans with token counts`, routed to Phoenix instead of Langfuse OTLP, with no `OTEL_EXPORTER_OTLP_HEADERS` involved (Phoenix needs no auth) — the local equivalent is simpler: submit any query, then confirm the trace appears in the Langfuse UI at http://localhost:3000. If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`) and that the backend actually picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`).
+Then browse Phoenix at **`http://<vm-ip>:6007`** over the VPN — `docker-compose.remote.yml` publishes the dedicated Phoenix on host port `6007` (host `6006` belongs to compliance-bot's *separate* Phoenix on this box; the backend still reaches ours in-network at `phoenix:6006`). Expect the trace tree to show `query → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
+
+> ⚠ **Phoenix has no auth and traces carry contract text**, so anyone who can reach the VM on `6007` can read them. If that exposure isn't acceptable, change the mapping to `127.0.0.1:6007:6006` (localhost-only) and reach the UI via `ssh -N -L 16006:localhost:6007 <user>@<vm>`, or front it with a Caddy `/phoenix` route + auth.
+
+If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and note that recreating `phoenix` clears its data — re-run the query to repopulate.
 
 ---
 
