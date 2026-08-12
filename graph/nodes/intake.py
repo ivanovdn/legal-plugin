@@ -3,10 +3,9 @@
 
 import logging
 
-from observability.spans import traced, set_trace_attributes
-
 from graph.state import LegalAgentState
 from memory.document_id import resolve_document_id
+from observability.spans import traced, set_trace_attributes
 
 logger = logging.getLogger(__name__)
 

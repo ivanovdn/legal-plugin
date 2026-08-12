@@ -96,6 +96,8 @@ def set_trace_attributes(
         if input is not None:
             span.set_attribute(SpanAttributes.INPUT_VALUE, _as_attr(input))
         if tags is not None:
+            if isinstance(tags, str):
+                tags = [tags]
             span.set_attribute(
                 SpanAttributes.TAG_TAGS, json.dumps(list(tags), ensure_ascii=False)
             )

@@ -1,5 +1,5 @@
 # tests/test_observability.py
-"""Langfuse observability helpers + GENERATION/usage wiring."""
+"""OpenTelemetry span helpers + GENERATION/usage wiring."""
 from __future__ import annotations
 
 import json
@@ -63,7 +63,6 @@ def test_traced_llm_kind_sets_openinference_span_kind():
 
 
 def test_traced_propagates_exceptions_and_resets_root():
-    import pytest
     from observability.spans import traced, set_trace_attributes, _root_span
 
     @traced("boom")

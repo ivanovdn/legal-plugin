@@ -24,7 +24,7 @@ The whole system runs on a single workstation. **No external API calls** — con
 - **Hybrid RAG retrieval.** Dense vectors (Qdrant) + BM25 + an optional cross-encoder reranker, always tenant-filtered by `client_id`.
 - **SOW ↔ MSA cross-checking.** A SOW review automatically pulls in the governing MSA and flags conflicts per the playbook's precedence rules.
 - **Durable memory & audit.** Redis checkpointer for resumable sessions; a dedicated Postgres `app-db` holds the audit log of every turn, persisted reviews the chat tab remembers across turns, and per-attorney conversations. Degraded-memory states are surfaced loudly, never silent.
-- **Full observability, vendor-neutral.** Every node and LLM call is traced via **OpenTelemetry** (OpenInference conventions) with token usage. The trace backend is chosen by `OTEL_EXPORTER_OTLP_ENDPOINT` — `bash scripts/start.sh` traces to the local Langfuse v3 OTLP endpoint out of the box; the VM deploy points at a dedicated Phoenix service. Tracing is non-fatal: disabled (`TRACING_ENABLED=false`) or unreachable, the app behaves identically.
+- **Full observability, vendor-neutral.** Every node and LLM call is traced via **OpenTelemetry** (OpenInference conventions) with token usage. The trace backend is chosen by `OTEL_EXPORTER_OTLP_ENDPOINT` — `bash scripts/start.sh` traces to the local Langfuse v3 OTLP endpoint out of the box (provided `.env` carries `OTEL_EXPORTER_OTLP_HEADERS` for the Basic auth header, as `cp .env.example .env` does — otherwise the OTLP export silently 401s); the VM deploy points at a dedicated Phoenix service. Tracing is non-fatal: disabled (`TRACING_ENABLED=false`) or unreachable, the app behaves identically.
 
 ---
 
