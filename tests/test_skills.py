@@ -468,7 +468,7 @@ def test_chat_prompt_never_demonstrates_bundled_targets():
     but didn't retract it, so the two contradicted and the model picked the
     concrete (broken) example. Lock the prompt against re-introducing a tab.
     """
-    from skills.legal_research.legal_research import CHAT_SYSTEM_PROMPT
+    from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT
 
     # The prompt teaches via JSON examples, so the danger is the *escape sequence*
     # \t / \n appearing inside an example target_text (the model copies it, the
@@ -485,7 +485,7 @@ def test_chat_prompts_constrain_edit_scope():
     ("Boris Bukengolts") with the requested party's details "to ensure
     consistency", an edit the user never asked for (trace 4b24ca1d). Model-neutral
     correctness guidance, not a scenario-specific worked example."""
-    from skills.legal_research.legal_research import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
+    from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
 
     for prompt in (CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM):
         low = prompt.lower()
