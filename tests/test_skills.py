@@ -1391,10 +1391,14 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     get_settings.cache_clear()
 
     total = sum(len(m["content"]) for m in captured["messages"])
-    # CHAT_SYSTEM_PROMPT (~4370 chars) is fixed grounding that cannot be cut;
-    # the budget (2000) only controls how much document is kept. The overhead
-    # here covers CHAT_SYSTEM_PROMPT + message wrappers (~5000 fixed chars).
-    assert total <= 2000 + 5000          # within budget + fixed grounding overhead
+    # Fixed grounding (system prompt + playbook + MSA note) is never cut — the
+    # budget only controls how much DOCUMENT survives. Measure the grounding
+    # that was actually assembled rather than hardcoding an overhead: the old
+    # constant was calibrated to a ~4370-char CHAT_SYSTEM_PROMPT and broke the
+    # moment the truncation and preference rules legitimately grew it, failing a
+    # test about the cap for a reason that had nothing to do with the cap.
+    grounding = sum(len(m["content"]) for m in captured["messages"] if m["role"] == "system")
+    assert total - grounding <= 2000 + 600   # 600 = user-message wrappers + request
     joined = "\n".join(m["content"] for m in captured["messages"])
     assert "PLAYBOOK" in joined and "MSA_BODY" in joined   # grounding preserved
     assert "[document truncated" in joined                 # doc was the one cut
