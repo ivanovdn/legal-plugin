@@ -143,22 +143,27 @@ def _looks_like_edit_promise(prose: str) -> bool:
     return bool(_EDIT_PROMISE_RE.search(prose or ""))
 
 
-# Explicit "carry this past the current turn" phrasing in the USER's message.
+# Phrasing that asks us to STORE something, in the USER's message.
 #
-# Deliberately limited to unambiguous memory verbs. "always"/"never" were tried
-# and removed: even restricted to imperative verbs they fire on ordinary contract
-# questions — "does this clause always apply?" matches "always apply" — and every
-# false positive costs a real LLM round-trip on the most common kind of turn.
+# The line is storage, not usefulness: "remember…" / "from now on…" / "for future
+# reference…" ask for persistence, while "keep in mind…" / "bear in mind…" /
+# "note that…" ask only that we take something into account in the current
+# conversation — which the chat history already does, so they must NOT surface an
+# Add-preference card. Those were matched here initially and the distinction was
+# wrong (trace 4e3a2d94: "keep in mind that our client is EA games" produced an
+# unwanted preference suggestion).
 #
-# The narrowness is affordable because this is only a SAFETY NET. Instruction-
-# shaped preferences ("always flag uncapped indemnity") are the prompt's own
-# worked examples and the model emits blocks for them reliably; the retry exists
-# for the fact-shaped request the prompt used to misclassify as conversation
-# context. A miss here costs the attorney a manual Preferences-tab entry, never
-# a wrong write — the block is always a suggestion they approve.
+# "always"/"never" were also tried and removed: even restricted to imperative
+# verbs they fire on ordinary contract questions — "does this clause always
+# apply?" matches "always apply" — and every false positive costs a real LLM
+# round-trip on the most common kind of turn.
+#
+# The narrowness is affordable because this is only a SAFETY NET for a forgotten
+# block; the prompt draws the same storage/context line. A miss costs the
+# attorney a manual Preferences-tab entry, never a wrong write.
 _PREFERENCE_REQUEST_RE = re.compile(
-    r"\b(remember|keep in mind|bear in mind|from now on|going forward|"
-    r"for future reference|note that|make a note|i prefer|my preference)\b",
+    r"\b(remember|from now on|going forward|for future reference|"
+    r"i prefer|my preference)\b",
     re.I,
 )
 

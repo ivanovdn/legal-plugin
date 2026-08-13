@@ -47,16 +47,32 @@ def _stub_llm(monkeypatch, replies):
 
 # --- the detector itself ---------------------------------------------------
 
-def test_detector_matches_explicit_memory_phrasing():
+def test_detector_matches_requests_to_store():
     for req in [
         "remember that uor client is blizzard corp",   # the live miss, typo and all
-        "keep in mind that our client is Blizzard",
         "From now on, treat Acme as the counterparty.",
         "going forward use the 2x cap",
         "For future reference, I prefer short summaries.",
-        "Please note that we act for the disclosing party.",
     ]:
         assert _looks_like_preference_request(req), req
+
+
+def test_detector_ignores_hold_in_context_phrasing():
+    """"Keep in mind" asks us to use something NOW, not to store it.
+
+    The chat history already carries it forward, so offering an Add-preference
+    card is noise the attorney has to dismiss. Trace 4e3a2d94: "keep in mind
+    that our client is EA games" produced an unwanted suggestion — the test is
+    whether the user asked us to STORE it, not whether it would be useful later.
+    """
+    for req in [
+        "keep in mind that our client is EA games",
+        "bear in mind that our client is EA games",
+        "Please note that we act for the disclosing party.",
+        "make a note that the counterparty is Acme",
+        "for this document, assume the client is Acme",
+    ]:
+        assert not _looks_like_preference_request(req), req
 
 
 def test_detector_ignores_ordinary_questions():
@@ -82,6 +98,18 @@ def test_detector_deliberately_skips_bare_always_never():
     test pass too.
     """
     assert not _looks_like_preference_request("always flag uncapped indemnity")
+
+
+def test_prompt_draws_the_same_storage_line_as_the_detector():
+    """The prompt is what actually decides — the detector only nets a forgotten
+    block, and in trace 4e3a2d94 the unwanted suggestion came from the prompt
+    with no retry involved. Both must draw the line in the same place."""
+    from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT
+
+    low = CHAT_SYSTEM_PROMPT.lower()
+    assert "keep in mind" in low                      # names the excluded phrasing
+    assert "not emit a preference block" in low       # and says what to do with it
+    assert "store" in low                             # states the actual test
 
 
 # --- the retry ------------------------------------------------------------
