@@ -45,15 +45,23 @@ services:
       - "6007:6006"
 
   caddy:
-    image: caddy:2
+    # Builds the task pane INTO the image (see clients/word/Dockerfile) instead
+    # of bind-mounting a host-built ./clients/word/dist. That mount could not be
+    # kept current: dist/ is gitignored so `git pull` never touched it, only the
+    # backend image was rebuilt by `up --build`, and the VM has no npm — so the
+    # served pane silently froze at whatever was last built by hand while the
+    # backend kept moving. Now `up --build` produces both from one commit.
+    build: ./clients/word
+    image: legal-plugin-pane:latest
     ports:
       - "80:80"
       - "443:443"
     environment:
       - ADDIN_ORIGIN_HOST=${ADDIN_ORIGIN_HOST:-localhost}
     volumes:
+      # The Caddyfile stays a bind mount — cert and hostname changes (Step 2 of
+      # the runbook) should not need an image rebuild.
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./clients/word/dist:/srv:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
