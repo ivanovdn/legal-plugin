@@ -293,8 +293,26 @@ export function collapseDuplicateFills(blocks: EditProposal[]): EditProposal[] {
  * Both sources carry the same multi-line-block failure mode, so normalize at the
  * point of use, not only inside extractEditBlocks.
  */
+/**
+ * True when a proposal's replacement is byte-identical to what it targets, so
+ * applying it would produce a tracked change that changes nothing.
+ *
+ * The local LLM emits these alongside real edits — e.g. `Title: [__]` ->
+ * `Title: [__]` in a signature-fill turn — and they render as applyable cards
+ * the attorney has to reason about and dismiss. Only the value-writing actions
+ * can be no-ops; `insert` and `delete` always alter the document.
+ */
+export function isNoOpEdit(e: EditProposal): boolean {
+  if (e.action !== "replace" && e.action !== "replace_all") return false;
+  return typeof e.target_text === "string" && e.target_text === e.new_text;
+}
+
 export function normalizeProposals(blocks: EditProposal[]): EditProposal[] {
-  return collapseDuplicateFills(blocks.flatMap(splitMultilineFieldEdits));
+  // Filter LAST: splitting a multi-line block and collapsing duplicates can
+  // each surface a no-op that wasn't visible in the original proposal.
+  return collapseDuplicateFills(blocks.flatMap(splitMultilineFieldEdits)).filter(
+    (e) => !isNoOpEdit(e),
+  );
 }
 
 export function extractEditBlocks(prose: string): {

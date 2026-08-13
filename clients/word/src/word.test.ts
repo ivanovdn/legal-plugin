@@ -1,6 +1,11 @@
 // Pure-helper checks for word.ts. Run with: npx tsx src/word.test.ts
 // (The Office.js-dependent functions are smoke-tested by sideloading in Word.)
-import { escapeWordWildcards, isAmbiguousBlankPlaceholder, shouldMatchWholeWord } from "./word";
+import {
+  ambiguousBlankRejection,
+  escapeWordWildcards,
+  isAmbiguousBlankPlaceholder,
+  shouldMatchWholeWord,
+} from "./word";
 import { pass } from "./testAssert";
 
 // --- escapeWordWildcards: backslash-escape Word's wildcard metacharacters ---
@@ -32,3 +37,21 @@ pass(!shouldMatchWholeWord("Limitation of Liability"), "wholeword: 3-word phrase
 pass(!shouldMatchWholeWord("The Receiving Party shall not"), "wholeword: 5-word phrase -> false");
 pass(!shouldMatchWholeWord(""), "wholeword: empty -> false");
 pass(!shouldMatchWholeWord("   "), "wholeword: whitespace-only -> false");
+
+// --- ambiguousBlankRejection: BOTH value-writing actions refuse a bare blank ---
+// replace_all was already guarded; replace was not, so the model's
+// replace "[__]" -> "Blizzard Corp" would have written a company name into the
+// signature block's first blank (trace cc81804f).
+pass(ambiguousBlankRejection("replace", "[__]") !== null, "reject: replace on bare [__]");
+pass(ambiguousBlankRejection("replace_all", "[__]") !== null, "reject: replace_all on bare [__]");
+pass(ambiguousBlankRejection("replace", "___") !== null, "reject: replace on bare underscores");
+pass(ambiguousBlankRejection("replace", "  [__]  ") !== null, "reject: padded bare blank");
+// Labelled and specific targets stay applyable on both actions.
+pass(ambiguousBlankRejection("replace", "Signed by: [__]") === null, "allow: replace 'Signed by: [__]'");
+pass(ambiguousBlankRejection("replace_all", "[Year]") === null, "allow: replace_all '[Year]'");
+pass(ambiguousBlankRejection("replace", "Blizzard Corp") === null, "allow: replace real text");
+// The message names the field-by-line remedy so the model can self-correct.
+pass(
+  (ambiguousBlankRejection("replace", "[__]") ?? "").includes("Signed by: [__]"),
+  "reject message suggests targeting the field's own line",
+);

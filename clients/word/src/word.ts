@@ -94,6 +94,35 @@ export function isAmbiguousBlankPlaceholder(s: string): boolean {
   return /^\[?[\s_.\-]*\]?$/.test(s.trim());
 }
 
+/**
+ * Refusal message for writing into a label-less blank, or null when the target
+ * is specific enough to apply.
+ *
+ * Both value-writing actions are unsafe on a bare "[__]", for the same root
+ * reason (the target names no field) but with different damage:
+ *  - replace_all dumps ONE value into every blank at once.
+ *  - replace takes whichever blank comes FIRST in the document — in a signature
+ *    block that is "Signed by: [__]", so a company name lands where a person's
+ *    name belongs. Observed live: the model proposed replace "[__]" ->
+ *    "Blizzard Corp" whose first match sat 12 800 chars in, in the execution
+ *    block (trace cc81804f).
+ */
+export function ambiguousBlankRejection(
+  action: "replace" | "replace_all",
+  target: string,
+): string | null {
+  if (!isAmbiguousBlankPlaceholder(target)) return null;
+  const why =
+    action === "replace_all"
+      ? `"replace all" would put the same text in every field (name, title, entity)`
+      : `the first match in the document wins, which is usually the wrong field ` +
+        `(a signature block's "Signed by: [__]" comes before the one you mean)`;
+  return (
+    `"${target}" is a blank with no label, so ${why}. ` +
+    `Target each field by its own line instead, e.g. "Signed by: [__]" / "Title: [__]".`
+  );
+}
+
 // Office.js body.search rejects strings over 255 chars with
 // SearchStringInvalidOrTooLong. 200 leaves a safety margin and matches the
 // existing direct-add filter below.
@@ -583,16 +612,8 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
   if (!target.trim()) return fail("Empty target text — nothing to replace.");
   if (!newText.trim()) return fail("No replacement text provided.");
 
-  // A bare, label-less blank ("[__]", "___") is the same placeholder used by
-  // several distinct fields (signatory name, title, entity). replace_all would
-  // dump ONE value into all of them — almost always wrong. Refuse and ask for
-  // each field by name instead of corrupting the others.
-  if (isAmbiguousBlankPlaceholder(target)) {
-    return fail(
-      `"${target}" is a blank with no label, so "replace all" would put the same text in every ` +
-        `field (name, title, entity). Target each field instead, e.g. "Signed by: [__]" / "Title: [__]".`,
-    );
-  }
+  const rejection = ambiguousBlankRejection("replace_all", target);
+  if (rejection) return fail(rejection);
 
   // Hard ceiling — even if body.search returns dozens of matches, never apply
   // more than this many tracked changes from a single chat turn.
@@ -722,6 +743,8 @@ export async function applyEdit(proposal: EditProposal): Promise<Result<void>> {
     if (!proposal.target_text || !proposal.new_text) {
       return fail("Replace proposal missing target_text or new_text.");
     }
+    const rejection = ambiguousBlankRejection("replace", proposal.target_text);
+    if (rejection) return fail(rejection);
     const simplified = simplifyMultilineReplace(proposal.target_text, proposal.new_text);
     return acceptRedline(simplified.target, simplified.newText);
   }

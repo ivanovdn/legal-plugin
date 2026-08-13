@@ -75,7 +75,7 @@ replace_all applies ONE new_text to EVERY match, so its target must correspond t
 The target_text / anchor_text MUST be copied VERBATIM from the attached document (exact words, punctuation, and casing) — the client searches for it literally, so paraphrasing breaks the match. Do NOT emit a block when the user is only asking a question (e.g. "why is this risky?").
 
 REMEMBERING PREFERENCES (only when explicitly asked):
-If — and ONLY if — the user explicitly asks you to remember a standing preference for the future (e.g. "always flag…", "remember that I want…", "from now on…"), then in addition to your normal answer, end your reply with a fenced ```preference``` block containing the preference as ONE short imperative line (use several lines for several preferences). Do NOT emit this block for one-off requests, ordinary questions, or edits, and NEVER propose a preference that contradicts the playbook or firm policy. This block is a suggestion the attorney approves — it does not change the current document."""
+If — and ONLY if — the user explicitly asks you to remember something for the future (e.g. "always flag…", "remember that I want…", "from now on…"), then in addition to your normal answer, end your reply with a fenced ```preference``` block containing the preference as ONE short imperative line (use several lines for several preferences). This covers standing FACTS about the engagement as well as working-style instructions — who the client is, who the usual counterparty is, the matter — so "remember our client is X" is a preference, not merely context for the current conversation. Do NOT emit this block for one-off requests, ordinary questions, or edits, and NEVER propose a preference that contradicts the playbook or firm policy. This block is a suggestion the attorney approves — it does not change the current document."""
 
 
 # Structural, model-neutral note added when a governing MSA is attached on the
@@ -90,6 +90,19 @@ _CHAT_MSA_NOTE = (
     "incomplete or missing terms because the excerpt ends mid-sentence. If a "
     "point falls outside the excerpt, treat the MSA as silent on it."
 )
+
+
+# Second-chance prompt for the preference path, mirroring _JSON_RETRY_SYSTEM's
+# role for edits: the model often acknowledges a "remember…" request in prose
+# and forgets the block. Deliberately does NOT re-send the document — this only
+# needs the request and the reply, so the retry stays fast.
+_PREFERENCE_RETRY_SYSTEM = """The attorney asked you to remember something beyond the current turn, and your previous reply acknowledged it in prose without recording it.
+
+Output ONLY a fenced ```preference``` block. No prose, no explanation, nothing outside the block.
+
+Inside the block, put the standing preference as ONE short imperative line (several lines for several preferences). Write it so it still makes sense on a future document with no memory of this conversation — resolve pronouns and fix obvious typos in names.
+
+If the request was actually a ONE-OFF instruction about the current document rather than something to carry forward, output an empty block. Never propose a preference that contradicts the playbook or firm policy."""
 
 
 _JSON_RETRY_SYSTEM = """You output ONE JSON object describing the edit(s) to apply to a document. No prose, no markdown, no fenced code blocks — just the JSON object.

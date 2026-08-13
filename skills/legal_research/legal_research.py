@@ -26,12 +26,14 @@ from skills.legal_research.edit_parsing import (
     _extract_proposed_edits,
     _extract_proposed_preferences,
     _looks_like_edit_promise,
+    _looks_like_preference_request,
     _parse_json_edits,
 )
 from skills.legal_research.prompts import (
     CHAT_SYSTEM_PROMPT,
     RESEARCH_SYSTEM_PROMPT,
     _JSON_RETRY_SYSTEM,
+    _PREFERENCE_RETRY_SYSTEM,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,7 +119,7 @@ def _extract_uploaded_text(state: LegalAgentState) -> str:
 def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list[dict]]:
     """In-Word chat path: direct ChatOllama with the attached doc, no tools.
 
-    Returns (response, proposed_edits). Skipping the ReAct agent avoids the
+    Returns (response, proposed_edits, proposed_preferences). Skipping the ReAct agent avoids the
     search_legal / get_document / escalate tool-call loops, which add minutes
     of latency on the local LLM for chats whose source is already the
     attached document.
@@ -204,7 +206,40 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
                 retry_raw[:200],
             )
 
-    return content, edits
+    # Same shape as the edit-promise retry, for the preference path: the model
+    # frequently answers a "remember…" request in prose ("noted for this
+    # conversation") and forgets the block, so the attorney is never offered the
+    # suggestion. Gated on the USER's phrasing, so an ordinary turn never pays
+    # for it, and the retry omits the document to stay cheap.
+    prefs = _extract_proposed_preferences(content)
+    if not prefs and _looks_like_preference_request(request):
+        logger.info("[legal_research] preference request without block — retrying")
+        retry_response = traced_invoke(
+            _build_llm(),
+            [
+                {"role": "system", "content": _PREFERENCE_RETRY_SYSTEM},
+                {
+                    "role": "user",
+                    "content": (
+                        f"The attorney said:\n{request}\n\n"
+                        f"Your previous reply (which forgot the block):\n{content}"
+                    ),
+                },
+            ],
+            name="doc_chat_preference_retry",
+        )
+        retry_raw = (
+            retry_response.content if hasattr(retry_response, "content") else str(retry_response)
+        )
+        prefs = _extract_proposed_preferences(retry_raw)
+        if prefs:
+            logger.info("[legal_research] preference retry yielded %d suggestion(s)", len(prefs))
+        else:
+            logger.warning(
+                "[legal_research] preference retry produced no block; raw=%r", retry_raw[:200]
+            )
+
+    return content, edits, prefs
 
 
 def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]:
@@ -266,10 +301,10 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
 
     try:
         if uploaded_text:
-            content, edits = _run_doc_chat(state, uploaded_text)
+            content, edits, prefs = _run_doc_chat(state, uploaded_text)
             state["llm_response"] = content
             state["proposed_edits"] = edits
-            state["proposed_preferences"] = _extract_proposed_preferences(content)
+            state["proposed_preferences"] = prefs
             state["retrieved_chunks"] = []
             logger.info(
                 "[legal_research] doc-chat completed, response=%d chars, edits=%d",

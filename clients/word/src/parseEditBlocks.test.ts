@@ -366,3 +366,38 @@ import { pass } from "./testAssert";
   pass(out.length === 1, "prose-multiline: not split");
   pass(out[0].action === "replace", "prose-multiline: stays replace");
 }
+
+// --- no-op edits (BEFORE === AFTER) are dropped ---
+// The local LLM emits these beside real edits — e.g. "Title: [__]" ->
+// "Title: [__]" in a signature-fill turn (trace cc81804f) — producing an
+// applyable card that changes nothing.
+{
+  const blocks: EditProposal[] = [
+    { action: "replace", target_text: "[Legal Name]", new_text: "Blizzard Corp" },
+    { action: "replace", target_text: "Title: [__]", new_text: "Title: [__]" },
+  ];
+  const out = normalizeProposals(blocks);
+  pass(out.length === 1, "no-op: identical replace dropped");
+  pass(out[0].target_text === "[Legal Name]", "no-op: the real edit survives");
+}
+{
+  const blocks: EditProposal[] = [
+    { action: "replace_all", target_text: "[Year]", new_text: "[Year]" },
+  ];
+  pass(normalizeProposals(blocks).length === 0, "no-op: identical replace_all dropped");
+}
+{
+  // insert/delete always change the document — never treated as no-ops.
+  const blocks: EditProposal[] = [
+    { action: "delete", target_text: "Section 9" },
+    { action: "insert", anchor_text: "Section 4", position: "after", new_text: "Section 4" },
+  ];
+  pass(normalizeProposals(blocks).length === 2, "no-op: insert/delete never dropped");
+}
+{
+  // A real edit that only differs by whitespace is still a change.
+  const blocks: EditProposal[] = [
+    { action: "replace", target_text: "the fees paid", new_text: "the fees  paid" },
+  ];
+  pass(normalizeProposals(blocks).length === 1, "no-op: whitespace-differing edit kept");
+}
