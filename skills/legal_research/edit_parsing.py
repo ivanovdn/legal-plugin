@@ -18,6 +18,74 @@ _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 _PREFERENCE_BLOCK_RE = re.compile(r"```preference\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
+def _strip_structured_blocks(prose: str) -> str:
+    """Remove fenced ```json``` / ```preference``` blocks, keeping the prose.
+
+    An assistant reply carries TWO things fused into one string: conversation
+    for the human, and machinery for the client. Every consumer separates them
+    — the backend parses the blocks out, the frontend strips them for display —
+    except the path that replays the reply into the next prompt.
+
+    That matters because history is not a log to a model, it is prompt. A
+    replayed block becomes an in-context demonstration, and demonstrations beat
+    system instructions: three stored "note that …" turns that emitted a
+    preference block kept the model emitting them for hours after the prompt
+    was changed to forbid exactly that (VM conversation `2ae99ecc`). Prompt
+    fixes are not retroactive while the store replays raw output.
+
+    Stripping loses nothing the conversation needs — the prose still says "I
+    have updated the signatory name to John Doe", so a later "the legal name we
+    filled recently" still resolves. Only the machinery goes.
+    """
+    if not prose:
+        return ""
+    out = _JSON_BLOCK_RE.sub("", prose)
+    out = _PREFERENCE_BLOCK_RE.sub("", out)
+    # A stripped block leaves its blank lines behind; collapse them so the
+    # replayed turn reads as ordinary prose.
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def _sanitize_history(messages: list[dict]) -> list[dict]:
+    """Strip structured blocks from ASSISTANT turns before they re-enter a prompt.
+
+    User turns are left byte-identical: they are the attorney's own words, and a
+    quoted block there is evidence about what they asked for.
+    """
+    cleaned: list[dict] = []
+    for m in messages:
+        if m.get("role") != "assistant":
+            cleaned.append(m)
+            continue
+        content = _strip_structured_blocks(m.get("content", ""))
+        if content:
+            cleaned.append({**m, "content": content})
+        # A reply that was ONLY a block carries no conversational meaning —
+        # drop it rather than replay an empty assistant turn.
+    return cleaned
+
+
+# Phrasing that asks us to hold something in mind for the CURRENT conversation
+# rather than store it. The chat history already carries these forward, so a
+# preference card is noise the attorney must dismiss.
+#
+# Used as a NEGATIVE list, never as a positive requirement: demanding a match
+# before allowing a block would suppress "always flag uncapped indemnity",
+# which cannot be matched without also matching "does this clause always
+# apply?" (see _PREFERENCE_REQUEST_RE). An explicit storage request in the same
+# message always wins — see the caller.
+_CONTEXT_ONLY_RE = re.compile(
+    r"\b(keep in mind|bear in mind|keep in view|note that|make a note|"
+    r"for this document|for this conversation|for this review|just acknowledge)\b",
+    re.I,
+)
+
+
+def _looks_like_context_only_request(request: str) -> bool:
+    """Did the USER ask us to use something now, rather than store it?"""
+    return bool(_CONTEXT_ONLY_RE.search(request or ""))
+
+
 def _escape_unescaped_whitespace_in_strings(raw: str) -> str:
     """Escape literal LF / CR / TAB characters that sit INSIDE JSON string
     values. Local LLMs occasionally line-wrap long string values mid-content,

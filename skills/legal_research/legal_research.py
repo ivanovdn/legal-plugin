@@ -25,9 +25,11 @@ from skills.legal_research.context import (
 from skills.legal_research.edit_parsing import (
     _extract_proposed_edits,
     _extract_proposed_preferences,
+    _looks_like_context_only_request,
     _looks_like_edit_promise,
     _looks_like_preference_request,
     _parse_json_edits,
+    _sanitize_history,
 )
 from skills.legal_research.prompts import (
     CHAT_SYSTEM_PROMPT,
@@ -148,6 +150,13 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     chat_history = _load_prior_conversation(state)
     if not chat_history:
         chat_history = state.get("chat_history", []) or []
+    # Sanitize at the POINT OF USE, not inside either loader — both the durable
+    # store and the Redis fallback replay raw assistant output, and a transform
+    # buried in one of them is bypassed whenever the other path wins. (Same
+    # lesson as normalizeProposals in ChatTab.) Stripping on read, not on write,
+    # keeps the store a faithful record and makes already-contaminated rows
+    # harmless without a migration.
+    chat_history = _sanitize_history(chat_history)
     system_messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     prefs_block = preferences_block_for_state(state)
     if prefs_block:                     # early → subordinate to playbook/review (ceiling intact)
@@ -212,6 +221,24 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # suggestion. Gated on the USER's phrasing, so an ordinary turn never pays
     # for it, and the retry omits the document to stay cheap.
     prefs = _extract_proposed_preferences(content)
+
+    # The prompt tells the model not to offer a preference for "keep in mind" /
+    # "note that" phrasing, and in a clean context it complies. It stops
+    # complying once the history contains counter-examples — the reason B above
+    # exists. This guard does not depend on the model's mood or the context
+    # length: it reads the attorney's own words. An explicit storage request in
+    # the same message wins, so "keep in mind X, and remember Y" still offers one.
+    if (
+        prefs
+        and _looks_like_context_only_request(request)
+        and not _looks_like_preference_request(request)
+    ):
+        logger.info(
+            "[legal_research] context-only request — dropping %d unsolicited preference(s)",
+            len(prefs),
+        )
+        prefs = []
+
     if not prefs and _looks_like_preference_request(request):
         logger.info("[legal_research] preference request without block — retrying")
         retry_response = traced_invoke(
