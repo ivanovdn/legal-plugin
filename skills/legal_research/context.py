@@ -6,6 +6,16 @@ per-(document, attorney) conversation, the playbook + governing MSA grounding,
 and the document itself. Every read is best-effort — a memory or grounding
 failure degrades the turn, never breaks it — and the budget cap truncates only
 the document, never the grounding.
+
+Testing note — patch the module whose globals the call path resolves through.
+legal_research.py re-imports all five functions below (and get_settings), so
+those names exist on BOTH modules bound to the same object. Patch *this* module
+when calling one of them directly; patch legal_research when driving one through
+legal_research(state), since _run_doc_chat resolves them in the entry module's
+globals. Aiming at the wrong module silently no-ops. Names that did not stay in
+the entry module (load_latest_review, load_recent, detect_contract_type,
+load_playbook_bundle, attach_parent_msa, _reconcile_review_with_doc) fail loudly
+with AttributeError instead — these shared names are the exception.
 """
 import logging
 import re
