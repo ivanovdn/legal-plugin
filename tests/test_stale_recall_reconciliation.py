@@ -2,7 +2,8 @@
 import importlib
 
 lr = importlib.import_module("skills.legal_research.legal_research")
-from skills.legal_research.legal_research import _reconcile_review_with_doc
+rr = importlib.import_module("skills.legal_research.review_recall")
+from skills.legal_research.review_recall import _reconcile_review_with_doc
 
 
 def test_filled_placeholder_dropped_and_note_added():
@@ -163,7 +164,7 @@ def test_surviving_blocker_count_counts_red_and_missing_context():
         "| Y-1 | Term | Yellow | auto-renew |\n"
         "| G-1 | Law | Green | fine |\n"
     )
-    assert lr._surviving_blocker_count(md) == 2   # Red + Missing Context only
+    assert rr._surviving_blocker_count(md) == 2   # Red + Missing Context only
 
 
 def test_surviving_blocker_count_accepts_risk_header_and_mc_spellings():
@@ -174,11 +175,11 @@ def test_surviving_blocker_count_accepts_risk_header_and_mc_spellings():
         "| A | missing-context | x |\n"
         "| B | RED | y |\n"
     )
-    assert lr._surviving_blocker_count(md) == 2   # "Risk" header + odd MC spelling + case
+    assert rr._surviving_blocker_count(md) == 2   # "Risk" header + odd MC spelling + case
 
 
 def test_surviving_blocker_count_none_when_no_key_findings():
-    assert lr._surviving_blocker_count("# Review Summary\nAll clear.\n") is None
+    assert rr._surviving_blocker_count("# Review Summary\nAll clear.\n") is None
 
 
 def test_surviving_blocker_count_none_when_no_rating_column():
@@ -188,7 +189,7 @@ def test_surviving_blocker_count_none_when_no_rating_column():
         "| -- | -- | -- |\n"
         "| A | Indemnity | broad |\n"
     )
-    assert lr._surviving_blocker_count(md) is None
+    assert rr._surviving_blocker_count(md) is None
 
 
 # --- _reconcile_gate_verdict (unit) ---
@@ -203,7 +204,7 @@ def test_gate_neutralized_when_no_blockers_survive():
         "Overall status: Do not send for signature\n"
         "Blocking items: `Signed by: [__]` unfilled; `[Legal Name]` blank\n"
     )
-    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]", "[Legal Name]"])
+    out = rr._reconcile_gate_verdict(review, ["Signed by: [__]", "[Legal Name]"])
     assert "PENDING RE-REVIEW" in out
     assert "Do not send for signature" not in out          # verdict rewritten
     assert "Reconciled:" in out                            # correction note added
@@ -222,7 +223,7 @@ def test_gate_annotated_only_when_blocker_survives():
         "Overall status: Do not send for signature\n"
         "Blocking items: `Signed by: [__]` unfilled\n"
     )
-    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    out = rr._reconcile_gate_verdict(review, ["Signed by: [__]"])
     assert "Reconciled:" in out                            # note added
     assert "Do not send for signature" in out             # verdict retained
     assert "PENDING RE-REVIEW" not in out                  # not downgraded
@@ -234,7 +235,7 @@ def test_gate_unchanged_when_not_citing_dropped_token():
         "Overall status: Do not send for signature\n"
         "Blocking items: `Effective Date: [__]` blank\n"
     )
-    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])  # token not in gate
+    out = rr._reconcile_gate_verdict(review, ["Signed by: [__]"])  # token not in gate
     assert out == review
 
 
@@ -243,7 +244,7 @@ def test_gate_unchanged_when_no_gate_section():
         "# Key Findings\n"
         "| Issue ID | Rating |\n| --- | --- |\n| R-1 | Red |\n"
     )
-    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    out = rr._reconcile_gate_verdict(review, ["Signed by: [__]"])
     assert out == review
 
 
@@ -254,7 +255,7 @@ def test_gate_annotate_when_neutralize_eligible_but_no_status_line():
         "# No Signature Checklist Result\n"
         "Blocking items: `Signed by: [__]` unfilled\n"             # no 'Overall status:' line
     )
-    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    out = rr._reconcile_gate_verdict(review, ["Signed by: [__]"])
     assert "Reconciled:" in out                            # note inserted
     assert "PENDING RE-REVIEW" not in out                  # nothing to downgrade -> annotate
 
@@ -265,7 +266,7 @@ def test_gate_no_downgrade_when_key_findings_absent():
         "Overall status: Do not send for signature\n"
         "Blocking items: `Signed by: [__]` unfilled\n"
     )
-    out = lr._reconcile_gate_verdict(review, ["Signed by: [__]"])
+    out = rr._reconcile_gate_verdict(review, ["Signed by: [__]"])
     assert "Reconciled:" in out
     assert "Do not send for signature" in out             # None count -> conservative
     assert "PENDING RE-REVIEW" not in out
@@ -273,7 +274,7 @@ def test_gate_no_downgrade_when_key_findings_absent():
 
 def test_gate_empty_dropped_tokens_byte_identical():
     review = "# No Signature Checklist Result\nOverall status: Do not send for signature\n"
-    assert lr._reconcile_gate_verdict(review, []) == review
+    assert rr._reconcile_gate_verdict(review, []) == review
 
 
 # --- _reconcile_review_with_doc (end-to-end) ---
@@ -341,7 +342,7 @@ def test_surviving_blocker_count_strips_rating_emphasis():
         "| C | missing_context | underscore spelling still counts |\n"
         "| D | *Yellow* | italic non-blocker |\n"
     )
-    assert lr._surviving_blocker_count(md) == 3   # A, B, C blockers; D (Yellow) not
+    assert rr._surviving_blocker_count(md) == 3   # A, B, C blockers; D (Yellow) not
 
 
 def test_surviving_blocker_count_strips_underscore_italic_rating():
@@ -354,7 +355,7 @@ def test_surviving_blocker_count_strips_underscore_italic_rating():
         "| C | missing_context | internal underscore still counts |\n"
     )
     # Surrounding underscores stripped (_Red_ -> red); internal preserved.
-    assert lr._surviving_blocker_count(md) == 3
+    assert rr._surviving_blocker_count(md) == 3
 
 
 def test_end_to_end_bold_rating_blocker_prevents_neutralize():
