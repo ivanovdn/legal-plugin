@@ -390,7 +390,7 @@ def test_drafting_injects_attorney_notes(monkeypatch):
 
 def test_extract_proposed_edits_parses_well_formed_block():
     """A single well-formed JSON block is parsed into a structured proposal."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         "Here's a tighter version of the cap.\n"
@@ -407,7 +407,7 @@ def test_extract_proposed_edits_parses_well_formed_block():
 
 def test_extract_proposed_edits_parses_multiple_blocks():
     """Multiple JSON blocks yield multiple proposals in order."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         "Two alternatives:\n"
@@ -425,7 +425,7 @@ def test_extract_proposed_edits_parses_multiple_blocks():
 
 def test_extract_proposed_edits_skips_malformed_json():
     """Malformed JSON blocks are logged and skipped, not propagated."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         '```json\n{"action": "replace", "target_text": broken-no-quotes}\n```\n'
@@ -438,7 +438,7 @@ def test_extract_proposed_edits_skips_malformed_json():
 
 def test_extract_proposed_edits_skips_blocks_without_valid_action():
     """JSON blocks without a known action key are skipped."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = '```json\n{"action": "unknown", "target_text": "X"}\n```'
     assert _extract_proposed_edits(prose) == []
@@ -446,7 +446,7 @@ def test_extract_proposed_edits_skips_blocks_without_valid_action():
 
 def test_extract_proposed_edits_accepts_replace_all_action():
     """replace_all is a valid action — used for 'fill every X' requests."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         '```json\n{"action": "replace_all", "target_text": "Signed by: [__]", '
@@ -498,7 +498,7 @@ def test_chat_prompts_constrain_edit_scope():
 
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     assert _extract_proposed_edits("Why is the IP clause risky?") == []
     assert _extract_proposed_edits("") == []
@@ -509,7 +509,7 @@ def test_extract_proposed_edits_accepts_array_inside_one_block():
     fenced block whose body is a JSON array. The old parser expected only a
     single dict and silently dropped the array, leaving proposed_edits empty
     even though the model emitted the right structured data."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         'I will replace the placeholder in two locations.\n\n'
@@ -530,7 +530,7 @@ def test_extract_proposed_edits_accepts_stacked_objects_in_one_block():
     JSON array. json.loads raises on multiple top-level objects, so the whole
     block was dropped -> empty edits -> the lossy JSON-retry fired and emitted a
     destructive replace_all "[__]". The parser must decode each stacked object."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         "I will update the blank fields.\n\n"
@@ -553,7 +553,7 @@ def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():
     """Local LLMs sometimes line-wrap long string values mid-content, producing
     JSON with a literal newline inside a quoted string (spec-invalid). The
     tolerant parser escapes those raw newlines and recovers the block."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     # Note the LITERAL newline between "Signed by:" and "[__]\\t..." inside
     # the target_text value — this is what the user saw on the second block.
@@ -572,7 +572,7 @@ def test_extract_proposed_edits_recovers_from_unescaped_newline_in_string():
 
 def test_tolerant_json_loads_handles_internal_tabs_and_returns():
     """Tab and carriage-return characters inside string values are also escaped."""
-    from skills.legal_research.legal_research import _tolerant_json_loads
+    from skills.legal_research.edit_parsing import _tolerant_json_loads
 
     raw = '{"target": "col1\tcol2\rcol3"}'  # raw \t and \r inside the string
     parsed = _tolerant_json_loads(raw)
@@ -582,7 +582,7 @@ def test_tolerant_json_loads_handles_internal_tabs_and_returns():
 
 def test_extract_proposed_edits_array_with_invalid_entries_filtered():
     """An array containing some invalid entries keeps the valid ones and drops the rest."""
-    from skills.legal_research.legal_research import _extract_proposed_edits
+    from skills.legal_research.edit_parsing import _extract_proposed_edits
 
     prose = (
         '```json\n'
@@ -666,7 +666,7 @@ def test_legal_research_doc_chat_extracts_edit_blocks(monkeypatch):
 def test_parse_json_edits_accepts_three_shapes():
     """_parse_json_edits handles the three shapes Ollama's format=json emits:
     {edits: [...]} wrapping, bare array, bare single edit."""
-    from skills.legal_research.legal_research import _parse_json_edits
+    from skills.legal_research.edit_parsing import _parse_json_edits
 
     wrapped = '{"edits": [{"action": "replace", "target_text": "X", "new_text": "Y"}]}'
     bare_array = '[{"action": "replace", "target_text": "X", "new_text": "Y"}]'
@@ -680,7 +680,7 @@ def test_parse_json_edits_accepts_three_shapes():
 
 def test_parse_json_edits_rejects_invalid_actions_and_malformed_json():
     """Malformed JSON and entries without a valid action are dropped silently."""
-    from skills.legal_research.legal_research import _parse_json_edits
+    from skills.legal_research.edit_parsing import _parse_json_edits
 
     assert _parse_json_edits("not json at all") == []
     assert _parse_json_edits('{"edits": "not a list"}') == []
@@ -760,7 +760,7 @@ def test_edit_promise_detector_matches_past_tense():
     """The detector must match 'I have replaced...' too — without this, the
     retry path never fires when the local LLM uses past tense and the user
     sees a confident lie ('I have replaced…') with no actual edit."""
-    from skills.legal_research.legal_research import _looks_like_edit_promise
+    from skills.legal_research.edit_parsing import _looks_like_edit_promise
 
     # Past-tense forms — the original \breplace\b regex missed these.
     assert _looks_like_edit_promise(
@@ -780,7 +780,7 @@ def test_edit_promise_detector_matches_past_tense():
 
 def test_edit_promise_detector_skips_qa_and_unrelated():
     """The detector must NOT match pure Q&A or unrelated mentions of edit verbs."""
-    from skills.legal_research.legal_research import _looks_like_edit_promise
+    from skills.legal_research.edit_parsing import _looks_like_edit_promise
 
     # Pure Q&A
     assert not _looks_like_edit_promise("Per Section 4, the cap is 12 months of fees.")

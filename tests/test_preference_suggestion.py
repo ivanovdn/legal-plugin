@@ -1,5 +1,5 @@
 from graph.nodes.output_formatter import output_formatter
-from skills.legal_research.legal_research import _extract_proposed_preferences
+from skills.legal_research.edit_parsing import _extract_proposed_preferences
 
 
 def test_extract_single_line():
