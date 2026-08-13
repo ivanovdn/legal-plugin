@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT = """You are a legal assistant for an internal legal team. Answer the user's request using ONLY the provided context. For every claim, cite the source document (doc_title and doc_id). If the context is insufficient, say so explicitly — do not fabricate information."""
 
+# Task types whose prompt must NOT carry conversational history.
+#
+# A document review has to be deterministic in its inputs: the same document
+# must yield the same findings regardless of what was said in the chat tab.
+# Observed otherwise — an unrelated doc-chat turn suppressed a signature-block
+# finding and cut the review from 3 Missing Context items to 1.
+#
+# The conversational skills (drafting, compliance_check, contract_generation)
+# keep the injection — multi-turn continuity is the point there. legal_research
+# never reaches this node (it sets llm_response itself) and does its own
+# history handling via memory/conversation_store.
+_HISTORY_FREE_TASK_TYPES = frozenset({"contract_review"})
+
 
 def _build_context(chunks: list[dict]) -> str:
     """Format retrieved chunks as numbered context."""
@@ -40,7 +53,15 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     context = _build_context(chunks)
 
     skill_messages = state.get("messages", [])
+    task_type = state.get("task_type", "")
     chat_history = state.get("chat_history", []) or []
+
+    if chat_history and task_type in _HISTORY_FREE_TASK_TYPES:
+        logger.info(
+            "[llm_caller] task_type=%s — suppressing %d chat_history message(s)",
+            task_type, len(chat_history),
+        )
+        chat_history = []
 
     if skill_messages:
         base = list(skill_messages)

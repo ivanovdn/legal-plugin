@@ -743,6 +743,80 @@ def test_llm_caller_works_when_chat_history_empty(monkeypatch):
     assert sent[1]["role"] == "user"
 
 
+def test_llm_caller_suppresses_chat_history_for_contract_review(monkeypatch):
+    """contract_review must be deterministic in its inputs — no chat_history.
+
+    A doc-chat turn bleeding into the review prompt changed the findings
+    (dropped a signature-block blocker), so the review path is history-free.
+    """
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    history = [
+        {"role": "user", "content": "fill the signature block with John Doe"},
+        {"role": "assistant", "content": "done"},
+    ]
+    skill_messages = [
+        {"role": "system", "content": "Playbook bundle"},
+        {"role": "user", "content": "Review my doc"},
+    ]
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(
+            task_type="contract_review",
+            messages=skill_messages,
+            chat_history=history,
+        )
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    assert len(sent) == 2  # system + user only
+    assert sent[0]["content"] == "Playbook bundle"
+    assert sent[-1]["role"] == "user"
+    assert "Review my doc" in sent[-1]["content"]
+    # No trace of the conversation anywhere in the prompt.
+    assert not any("John Doe" in m["content"] for m in sent)
+
+
+def test_llm_caller_keeps_chat_history_for_conversational_skills(monkeypatch):
+    """The gate is contract_review-only — drafting still gets its history."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "answer"}}
+
+    captured = {}
+    def _capture(*args, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return fake_response
+
+    history = [
+        {"role": "user", "content": "prior Q"},
+        {"role": "assistant", "content": "prior A"},
+    ]
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        state = _make_state(task_type="drafting", request="new Q", chat_history=history)
+        llm_caller(state)
+
+    sent = captured["json"]["messages"]
+    assert sent[1] == history[0]
+    assert sent[2] == history[1]
+
+
 def test_human_review_approved_sets_awaiting_review_false(monkeypatch):
     """Resume with approved=True clears awaiting_review and keeps llm_response."""
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
