@@ -1139,6 +1139,7 @@ def test_load_bundle_strips_generated_notices():
 
 def test_doc_chat_injects_stored_review(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     captured = {}
 
@@ -1151,7 +1152,7 @@ def test_doc_chat_injects_stored_review(monkeypatch):
 
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke", fake_traced_invoke)
-    monkeypatch.setattr(lr, "load_latest_review",
+    monkeypatch.setattr(ctx, "load_latest_review",
                         lambda document_id: {"markdown": "# Review\nIP clause is risky."})
 
     state = _make_state(
@@ -1182,6 +1183,7 @@ def test_doc_chat_injects_stored_review(monkeypatch):
 
 def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     class FakeResp:
         content = "answer"
@@ -1190,7 +1192,7 @@ def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
     def _boom(document_id):
         raise RuntimeError("redis/postgres down")
-    monkeypatch.setattr(lr, "load_latest_review", _boom)
+    monkeypatch.setattr(ctx, "load_latest_review", _boom)
 
     state = _make_state(
         request="summarize", task_type="research",
@@ -1204,6 +1206,7 @@ def test_doc_chat_degrades_when_review_load_fails(monkeypatch):
 def test_doc_chat_no_document_id_no_degradation(monkeypatch):
     """When document_id is empty string, no review load occurs, no degradation flag."""
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     class FakeResp:
         content = "answer"
@@ -1214,7 +1217,7 @@ def test_doc_chat_no_document_id_no_degradation(monkeypatch):
         return None
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", _load)
+    monkeypatch.setattr(ctx, "load_latest_review", _load)
 
     state = _make_state(
         request="summarize", task_type="research",
@@ -1228,6 +1231,7 @@ def test_doc_chat_no_document_id_no_degradation(monkeypatch):
 
 def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     captured = {}
 
@@ -1237,10 +1241,10 @@ def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda document_id: None)
-    monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("sow", False))
-    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "PLAYBOOK_BUNDLE_TEXT")
-    monkeypatch.setattr(lr, "attach_parent_msa",
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK_BUNDLE_TEXT")
+    monkeypatch.setattr(ctx, "attach_parent_msa",
                         lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"))
 
     state = _make_state(
@@ -1263,6 +1267,7 @@ def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
 
 def test_doc_chat_no_msa_for_nda(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     class FakeResp:
         content = "answer"
@@ -1271,12 +1276,12 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": seen.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda document_id: None)
-    monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("nda", False))
-    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "NDA_BUNDLE")
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("nda", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "NDA_BUNDLE")
     def _no_msa_for_nda(text, client_id, max_chars):
         raise AssertionError("attach_parent_msa must not be called for an NDA")
-    monkeypatch.setattr(lr, "attach_parent_msa", _no_msa_for_nda)
+    monkeypatch.setattr(ctx, "attach_parent_msa", _no_msa_for_nda)
 
     state = _make_state(
         request="why is this risky?", task_type="research",
@@ -1289,6 +1294,7 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
 
 def test_doc_chat_caps_document_not_grounding(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
     from config import get_settings
     monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "2000")
     monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
@@ -1302,10 +1308,10 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda document_id: None)
-    monkeypatch.setattr(lr, "detect_contract_type", lambda text: ("sow", False))
-    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
-    monkeypatch.setattr(lr, "attach_parent_msa",
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "attach_parent_msa",
                         lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
 
     big_doc = "STATEMENT OF WORK\n\n" + ("clause text " * 1000)   # ~12k chars
@@ -1368,7 +1374,7 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
 
     All other sections must be preserved so recall still works.
     """
-    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     review_md = (
         "# Review Summary\nOverall risky.\n\n"
@@ -1377,9 +1383,9 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
         '| Signature | Fill "Signed by: [__]" with the counterparty name |\n\n'
         "# Business Questions\nWho is the client entity?\n"
     )
-    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: {"markdown": review_md})
+    monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: {"markdown": review_md})
     state = _make_state(uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}], document_id="doc-1")
-    block = lr._load_prior_review_block(state, "STATEMENT OF WORK\n\nbody")
+    block = ctx._load_prior_review_block(state, "STATEMENT OF WORK\n\nbody")
     # Analysis kept (recall still works):
     assert "Key Findings" in block
     assert "IP clause" in block
@@ -1393,7 +1399,7 @@ def test_prior_review_block_strips_suggested_redlines(monkeypatch):
 
 
 def test_needs_grounding_positive_cases():
-    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
     for q in [
         "soften the indemnity clause",
         "does this SOW conflict with the MSA?",
@@ -1402,11 +1408,11 @@ def test_needs_grounding_positive_cases():
         "rewrite the liability cap to 2x",
         "is this termination notice period acceptable?",
     ]:
-        assert lr._needs_grounding(q) is True, q
+        assert ctx._needs_grounding(q) is True, q
 
 
 def test_needs_grounding_negative_cases():
-    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
     for q in [
         "who is the signatory for Trinetix?",
         "what is the effective date?",
@@ -1415,11 +1421,12 @@ def test_needs_grounding_negative_cases():
         "who is signy from trinetix side?",
         "is the billing transparent about fees?",
     ]:
-        assert lr._needs_grounding(q) is False, q
+        assert ctx._needs_grounding(q) is False, q
 
 
 def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
 
     captured = {}
 
@@ -1429,10 +1436,10 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: {"markdown": "# Key Findings\nIP clause Red."})
+    monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: {"markdown": "# Key Findings\nIP clause Red."})
     # If grounding is (wrongly) built on the lean path, these would raise:
-    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: (_ for _ in ()).throw(AssertionError("playbook built on lean path")))
-    monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: (_ for _ in ()).throw(AssertionError("MSA built on lean path")))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: (_ for _ in ()).throw(AssertionError("playbook built on lean path")))
+    monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: (_ for _ in ()).throw(AssertionError("MSA built on lean path")))
 
     state = _make_state(request="who is signy from trinetix side?", task_type="research",
                         uploaded_docs=[{"text": "STATEMENT OF WORK\n\nSigned by: Boris Bukengolts"}],
@@ -1446,6 +1453,7 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
 
 def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
     captured = {}
 
     class FakeResp:
@@ -1454,10 +1462,10 @@ def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: None)
-    monkeypatch.setattr(lr, "detect_contract_type", lambda t: ("sow", False))
-    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
-    monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
+    monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda t: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
     state = _make_state(request="does this SOW conflict with the MSA?", task_type="research",
                         uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}],
                         filters={"client_id": "internal"}, document_id="doc-1")
@@ -1468,6 +1476,7 @@ def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
 
 def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
     from config import get_settings
     monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
     get_settings.cache_clear()
@@ -1479,10 +1488,10 @@ def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
-    monkeypatch.setattr(lr, "load_latest_review", lambda doc_id: None)
-    monkeypatch.setattr(lr, "detect_contract_type", lambda t: ("sow", False))
-    monkeypatch.setattr(lr, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
-    monkeypatch.setattr(lr, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
+    monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda t: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
     # A plain factual question that would NOT trigger the gate:
     state = _make_state(request="who signs?", task_type="research",
                         uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}],

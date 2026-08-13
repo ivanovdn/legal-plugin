@@ -1,7 +1,7 @@
 """Stale-recall reconciliation: drop placeholder findings the current doc proves are filled."""
 import importlib
 
-lr = importlib.import_module("skills.legal_research.legal_research")
+ctx = importlib.import_module("skills.legal_research.context")
 rr = importlib.import_module("skills.legal_research.review_recall")
 from skills.legal_research.review_recall import _reconcile_review_with_doc
 
@@ -110,22 +110,22 @@ def _fake_latest(_doc_id):
 
 
 def test_load_prior_review_block_injects_reconciled(monkeypatch):
-    monkeypatch.setattr(lr, "load_latest_review", _fake_latest)
-    block = lr._load_prior_review_block({"document_id": "d1"}, "Signed by: Suzy Quatro\n")
+    monkeypatch.setattr(ctx, "load_latest_review", _fake_latest)
+    block = ctx._load_prior_review_block({"document_id": "d1"}, "Signed by: Suzy Quatro\n")
     assert "PRIOR REVIEW" in block
     assert "MC-1" not in block            # stale finding reconciled out
     assert "Auto-reconciled" in block
 
 
 def test_load_prior_review_block_survives_reconcile_error(monkeypatch):
-    monkeypatch.setattr(lr, "load_latest_review", _fake_latest)
+    monkeypatch.setattr(ctx, "load_latest_review", _fake_latest)
 
     def _boom(_review, _doc):
         raise ValueError("reconcile bug")
 
-    monkeypatch.setattr(lr, "_reconcile_review_with_doc", _boom)
+    monkeypatch.setattr(ctx, "_reconcile_review_with_doc", _boom)
     state = {"document_id": "d1"}
-    block = lr._load_prior_review_block(state, "Signed by: Suzy Quatro\n")
+    block = ctx._load_prior_review_block(state, "Signed by: Suzy Quatro\n")
     assert "PRIOR REVIEW" in block
     assert "MC-1" in block                # falls back to the raw review, unchanged
     assert "memory_degraded" not in state   # a reconcile error must NOT flag memory degraded

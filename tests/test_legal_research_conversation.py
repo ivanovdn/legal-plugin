@@ -2,7 +2,7 @@
 import importlib
 from types import SimpleNamespace
 
-lr = importlib.import_module("skills.legal_research.legal_research")
+ctx = importlib.import_module("skills.legal_research.context")
 from memory.conversation_store import append_turn
 
 
@@ -15,28 +15,28 @@ def _settings(enabled=True, max_messages=20):
 
 def test_loads_durable_history(monkeypatch):
     append_turn("doc-1", "atty-1", "q1", "a1")
-    monkeypatch.setattr(lr, "get_settings", lambda: _settings())
-    msgs = lr._load_prior_conversation({"document_id": "doc-1", "user_id": "atty-1"})
+    monkeypatch.setattr(ctx, "get_settings", lambda: _settings())
+    msgs = ctx._load_prior_conversation({"document_id": "doc-1", "user_id": "atty-1"})
     assert [m["content"] for m in msgs] == ["q1", "a1"]
 
 
 def test_empty_when_disabled(monkeypatch):
     append_turn("doc-1", "atty-1", "q1", "a1")
-    monkeypatch.setattr(lr, "get_settings", lambda: _settings(enabled=False))
-    assert lr._load_prior_conversation({"document_id": "doc-1", "user_id": "atty-1"}) == []
+    monkeypatch.setattr(ctx, "get_settings", lambda: _settings(enabled=False))
+    assert ctx._load_prior_conversation({"document_id": "doc-1", "user_id": "atty-1"}) == []
 
 
 def test_empty_when_ids_missing(monkeypatch):
-    monkeypatch.setattr(lr, "get_settings", lambda: _settings())
-    assert lr._load_prior_conversation({"document_id": "", "user_id": "atty-1"}) == []
-    assert lr._load_prior_conversation({"document_id": "doc-1", "user_id": ""}) == []
+    monkeypatch.setattr(ctx, "get_settings", lambda: _settings())
+    assert ctx._load_prior_conversation({"document_id": "", "user_id": "atty-1"}) == []
+    assert ctx._load_prior_conversation({"document_id": "doc-1", "user_id": ""}) == []
 
 
 def test_read_failure_flags_degraded(monkeypatch):
-    monkeypatch.setattr(lr, "get_settings", lambda: _settings())
+    monkeypatch.setattr(ctx, "get_settings", lambda: _settings())
     def _boom(*a, **k):
         raise RuntimeError("db gone")
-    monkeypatch.setattr(lr, "load_recent", _boom)
+    monkeypatch.setattr(ctx, "load_recent", _boom)
     state = {"document_id": "doc-1", "user_id": "atty-1"}
-    assert lr._load_prior_conversation(state) == []
+    assert ctx._load_prior_conversation(state) == []
     assert state["memory_degraded"] is True
