@@ -1,4 +1,4 @@
-# skills/legal_research.py
+# skills/legal_research/legal_research.py
 """Legal research — direct ChatOllama for doc-attached chats, ReAct agent for KB research."""
 
 import logging

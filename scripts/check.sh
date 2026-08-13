@@ -17,9 +17,25 @@ cd clients/word
 npx tsc --noEmit
 
 echo "==> word add-in assertions"
+# EXPECTED_PASS_COUNT is the total PASS: line count across every src/*.test.ts,
+# checked in one at the end. Without this, a test file that exits early (a bug
+# skips its later assertions but still exits 0) or a new *.test.ts that doesn't
+# match the glob would silently run fewer assertions than intended and still
+# print "all checks passed" — exactly the failure mode this gate exists to catch.
+EXPECTED_PASS_COUNT=165
+pass_log="$(mktemp)"
+trap 'rm -f "$pass_log"' EXIT
 for f in src/*.test.ts; do
   echo "--- $f"
-  npx tsx "$f"
+  npx tsx "$f" | tee -a "$pass_log"
 done
+
+actual_pass_count=$(grep -c '^PASS: ' "$pass_log" || true)
+if [ "$actual_pass_count" -ne "$EXPECTED_PASS_COUNT" ]; then
+  echo "FAIL: expected $EXPECTED_PASS_COUNT total PASS assertions across src/*.test.ts, got $actual_pass_count" >&2
+  echo "      (fix a regression, or if you added/removed assertions on purpose, update EXPECTED_PASS_COUNT above)" >&2
+  exit 1
+fi
+echo "==> word add-in assertions: $actual_pass_count/$EXPECTED_PASS_COUNT PASS"
 
 echo "==> all checks passed"

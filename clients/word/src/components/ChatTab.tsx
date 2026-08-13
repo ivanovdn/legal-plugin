@@ -24,7 +24,7 @@ export interface ChatMessage {
 //
 // Verb-stem trick: stems are shortened so the `\w{0,3}\b` tail matches both
 // present (replace, replaces, replacing) AND past (replaced) tenses. Mirrors
-// the _EDIT_PROMISE_RE pattern in skills/legal_research.py.
+// the _EDIT_PROMISE_RE pattern in skills/legal_research/edit_parsing.py.
 const PROMISE_PATTERNS = [
   /\bi['’]?(?:ll|ve| will| have| am going to)\b[^.?!\n]*\b(?:replac|insert|delet|fill|add|remov|chang|rewrit|tighten|loosen|updat|edit|modif|set)\w{0,3}\b/i,
   /\bi['’]?(?:ll|ve| will| have| am going to)\b[^.?!\n]*\b(?:made|appli\w{0,3}|perform\w{0,3})\b[^.?!\n]*\b(?:edit|change|update|replacement)\w?\b/i,

@@ -104,7 +104,6 @@ legal-plugin/
 │
 ├── skills/                     # Legal capabilities — each in its own folder
 │   ├── base.py                 # load_skill_prompt() with ceiling constraint
-│   ├── schemas.py              # Output schemas (GeneratedContract, etc.)
 │   ├── contract_generation/    # ReAct agent — searches + generates contracts
 │   │   ├── contract_generation.py
 │   │   └── SKILL.md            # Playbook — editable by legal team
@@ -112,7 +111,12 @@ legal-plugin/
 │   │   ├── contract_review.py
 │   │   └── SKILL.md            # Playbook — editable by legal team
 │   ├── compliance_check.py     # Policy verification prompt → shared nodes
-│   ├── legal_research.py       # ReAct agent — multi-hop research
+│   ├── legal_research/         # Direct ChatOllama (doc-chat) + ReAct agent (KB research)
+│   │   ├── legal_research.py   # Entry — run paths + LLM builders
+│   │   ├── prompts.py          # Prompt constants (no imports)
+│   │   ├── edit_parsing.py     # JSON edit-block extraction
+│   │   ├── review_recall.py    # Prior-review reconciliation + gate verdict
+│   │   └── context.py          # Grounding gate, prior-review/conversation load, context cap
 │   └── drafting.py             # Document generation prompt → shared nodes
 │
 ├── rag/                        # RAG layer (ported from compliance-bot)

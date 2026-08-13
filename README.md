@@ -79,7 +79,8 @@ legal-plugin/
 ├── skills/               Legal capabilities (each with an editable SKILL.md)
 │   ├── contract_review/  Per-type playbook bundle (NDA/MSA/SOW/BAA)
 │   ├── contract_generation/
-│   ├── legal_research.py compliance_check.py  drafting.py  grounding.py
+│   ├── legal_research/   Direct ChatOllama (doc-chat) + ReAct agent (KB research)
+│   ├── compliance_check.py  drafting.py  grounding.py
 ├── rag/                  Qdrant hybrid search, reranker, tenant filtering
 ├── ingest/               Document parsers + ingestion pipeline
 ├── memory/               Audit log, review store, document-id resolution

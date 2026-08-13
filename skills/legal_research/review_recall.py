@@ -12,11 +12,8 @@ _reconcile_review_with_doc, so the gate machinery is internal to this module.
 
 Imports nothing from this project — markdown in, markdown out.
 """
-import logging
 import re
 import unicodedata
-
-logger = logging.getLogger(__name__)
 
 
 def _strip_redlines_section(markdown: str) -> str:

@@ -8,14 +8,21 @@ failure degrades the turn, never breaks it — and the budget cap truncates only
 the document, never the grounding.
 
 Testing note — patch the module whose globals the call path resolves through.
-legal_research.py re-imports all five functions below (and get_settings), so
-those names exist on BOTH modules bound to the same object. Patch *this* module
-when calling one of them directly; patch legal_research when driving one through
-legal_research(state), since _run_doc_chat resolves them in the entry module's
-globals. Aiming at the wrong module silently no-ops. Names that did not stay in
-the entry module (load_latest_review, load_recent, detect_contract_type,
-load_playbook_bundle, attach_parent_msa, _reconcile_review_with_doc) fail loudly
-with AttributeError instead — these shared names are the exception.
+legal_research.py re-imports the five functions above (_load_prior_review_block,
+_load_prior_conversation, _needs_grounding, _build_chat_grounding,
+_cap_chat_context), so those names exist on BOTH modules bound to the same
+object; get_settings hits the same hazard by a different route (both modules
+independently do `from config import get_settings` — same object, not a
+re-export). Patch *this* module when calling one of these SHARED names
+directly; patch legal_research when driving one through legal_research(state),
+since _run_doc_chat resolves them in the entry module's globals. Aiming at the
+wrong module silently no-ops for any of them.
+
+A separate, NOT-shared set of names moved out of legal_research.py entirely and
+was never re-imported there: load_latest_review, load_recent,
+detect_contract_type, load_playbook_bundle, attach_parent_msa,
+_reconcile_review_with_doc. Patching those via the entry module fails loudly
+with AttributeError instead of silently no-oping.
 """
 import logging
 import re

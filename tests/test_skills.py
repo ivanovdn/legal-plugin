@@ -1437,9 +1437,16 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
     monkeypatch.setattr(lr, "traced_invoke",
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: {"markdown": "# Key Findings\nIP clause Red."})
-    # If grounding is (wrongly) built on the lean path, these would raise:
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: (_ for _ in ()).throw(AssertionError("playbook built on lean path")))
-    monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: (_ for _ in ()).throw(AssertionError("MSA built on lean path")))
+    # These return real, detectable content rather than raising: _build_chat_grounding
+    # wraps its body in a blanket `except Exception`, so a raise here would be
+    # swallowed silently and could never fail the test either way (that was the
+    # bug in this test — proven by forcing `attach = True` in _run_doc_chat: the
+    # old raising-lambda version of this test still passed). Returning content
+    # that would show up in the assembled messages lets the assertion below
+    # actually detect over-grounding.
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda t: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
 
     state = _make_state(request="who is signy from trinetix side?", task_type="research",
                         uploaded_docs=[{"text": "STATEMENT OF WORK\n\nSigned by: Boris Bukengolts"}],
@@ -1449,6 +1456,7 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
     assert "Key Findings" in joined          # prior review STILL injected (recall preserved)
     assert "STATEMENT OF WORK" in joined      # document still present
     assert captured["messages"][-1]["role"] == "user"   # question still last
+    assert "PLAYBOOK" not in joined           # grounding NOT built on the lean path
 
 
 def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
