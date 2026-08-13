@@ -1073,6 +1073,26 @@ def test_msa_directive_disclaims_truncation_as_a_defect():
     assert "silent" in low
 
 
+def test_chat_msa_note_also_disclaims_truncation():
+    """The CHAT path needs the same disclaimer as the review path — and it is
+    the path the bug was actually observed on.
+
+    Trace 85533de4 (`query:research`, a doc_chat turn) reported our own
+    mid-sentence cut as a gap in the MSA. The review path's
+    `_MSA_COMPARISON_DIRECTIVE` does not reach doc-chat, which builds its MSA
+    grounding from `_CHAT_MSA_NOTE`; trace 6053bba2 confirmed the truncation
+    marker was present with no accompanying instruction. Both paths share
+    `grounding.attach_parent_msa`, so both need the rule.
+    """
+    from skills.legal_research.prompts import _CHAT_MSA_NOTE
+
+    low = _CHAT_MSA_NOTE.lower()
+    assert "excerpt" in low
+    assert "truncat" in low
+    assert "never a defect" in low
+    assert "silent" in low          # routes out-of-excerpt back to the existing rule
+
+
 def test_contract_review_sow_standalone_when_no_msa(monkeypatch):
     _patch_msa(monkeypatch, lambda client_id, **kw: None)
     state = _make_state(

@@ -83,7 +83,12 @@ If — and ONLY if — the user explicitly asks you to remember a standing prefe
 _CHAT_MSA_NOTE = (
     "The Master Services Agreement below GOVERNS this document. Ground any "
     "MSA-conflict answer in its actual text; if the MSA is silent on a point, say "
-    "so rather than assuming. Do not invent MSA terms."
+    "so rather than assuming. Do not invent MSA terms. "
+    "The MSA may be an EXCERPT — long MSAs are truncated to fit the context "
+    "window, and the cut is marked in the text. A truncation boundary is an "
+    "artifact of this system, NEVER a defect in the MSA: do not report the MSA as "
+    "incomplete or missing terms because the excerpt ends mid-sentence. If a "
+    "point falls outside the excerpt, treat the MSA as silent on it."
 )
 
 
