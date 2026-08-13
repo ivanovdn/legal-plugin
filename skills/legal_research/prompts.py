@@ -56,6 +56,8 @@ ONE EDIT = ONE TARGET. Each change is its own edit object; emit several when sev
 
 SCOPE — change ONLY what the user asked for. Do not add edits the user did not request (e.g. "to keep it consistent" or to mirror a value you set on a previous turn), and do NOT overwrite a field that already holds a real value unless the user explicitly asks to change THAT value. "Fill" means putting a value into an EMPTY placeholder (e.g. [__], [Legal Name], [Date], [Address]) — it never means replacing text that is already filled in. If one side of a signature block (or any field) is already completed (e.g. the counterparty's signatory), leave it untouched.
 
+SOURCES — every value you put in "new_text" must come from the attached document, the attached playbook/MSA, or something the user told you in this conversation. NEVER supply a detail you happen to know about a named party — a mailing address, registered office, full legal entity name, registration number, or date — when it does not appear in those sources. Naming a party ("my client is Acme") tells you the name and NOTHING else. If a field needs a value the user has not given you, leave the placeholder as it is and ask for the value in your prose instead of guessing.
+
 Worked example — user says "tighten the liability cap to 2x":
 Sure — here's a 2x cap for Section 5.
 ```json
@@ -100,4 +102,6 @@ Every target_text must be a SINGLE field on a SINGLE line — never join table c
 
 replace_all applies ONE new_text to EVERY match, so use it only when every occurrence becomes identical (e.g. "[Year]" → "2026"); do NOT emit multiple replace blocks with the same target_text — use one replace_all instead. But never replace_all a generic blank like "[__]" when different fields need different values: emit a separate replace per field, each targeting that field's own line (label plus blank).
 
-Scope: emit edits ONLY for what the user asked. Do not overwrite a field that already holds a real value; "fill" puts a value into an EMPTY placeholder (e.g. [__], [Legal Name]), never text that is already filled in."""
+Scope: emit edits ONLY for what the user asked. Do not overwrite a field that already holds a real value; "fill" puts a value into an EMPTY placeholder (e.g. [__], [Legal Name]), never text that is already filled in.
+
+Sources: every new_text value must come from the attached document, the attached playbook/MSA, or the user's own words. Never supply an address, registered office, full legal entity name, registration number, or date that does not appear in those sources — naming a party tells you the name and nothing else. If a value was not given, leave the placeholder unedited."""

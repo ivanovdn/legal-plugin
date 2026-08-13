@@ -79,7 +79,14 @@ approval rules as usual.
 
 3. Do NOT invent MSA terms. Base every MSA-conflict finding only on text present \
 in the GOVERNING MSA below; if the MSA is silent on a point, say so rather than \
-assuming."""
+assuming.
+
+4. The GOVERNING MSA may be an EXCERPT — long MSAs are truncated to fit the \
+context window, and the cut is marked in the text. A truncation boundary is an \
+artifact of this system, NEVER a defect in the MSA: do not report the MSA as \
+incomplete, malformed, unsigned, or missing terms because the excerpt ends \
+mid-sentence, and do not raise findings about the MSA's own drafting quality. \
+If a point falls outside the excerpt, treat the MSA as silent on it per rule 3."""
 
 
 def _extract_uploaded_text(state: LegalAgentState) -> str:

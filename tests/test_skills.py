@@ -496,6 +496,32 @@ def test_chat_prompts_constrain_edit_scope():
         assert "\\t" not in prompt and "\\n" not in prompt
 
 
+def test_chat_prompts_forbid_unsourced_values_in_edits():
+    """new_text values must be sourced, not recalled from pretraining.
+
+    Asked only to fill a signature block, the model also invented a counterparty
+    address ("Sony Corporation, mailing address at 1-7-1 Konan, Minato-ku, Tokyo
+    108-0075, Japan") — Sony's real HQ, supplied by nobody, delivered as a
+    one-click Apply into a legal instrument (trace 0f63a143).
+
+    Note the general "Do not invent facts" rule already sat in the conversational
+    RULES block and did NOT prevent this, so the constraint is restated where the
+    edit path reads it and names the specific fact classes. Model-neutral behavior
+    spec; the durable fix is a code-side provenance guard (see wiki follow-up).
+    """
+    from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
+
+    for prompt in (CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM):
+        low = prompt.lower()
+        # Ties the constraint to the value written into the document.
+        assert "new_text" in low
+        # Names the fabricated fact classes seen in the trace.
+        assert "address" in low
+        assert "registration number" in low or "registered office" in low
+        # States that naming a party conveys only the name.
+        assert "naming a party" in low
+
+
 def test_extract_proposed_edits_no_blocks_returns_empty():
     """Prose without any JSON blocks returns an empty list (Q&A turn)."""
     from skills.legal_research.edit_parsing import _extract_proposed_edits
@@ -1024,6 +1050,27 @@ def test_contract_review_sow_attaches_governing_msa(monkeypatch):
     # The comparison directive is the LAST system message (most-recent instruction).
     assert result["messages"][-2]["role"] == "system"
     assert "GOVERNING MSA COMPARISON" in result["messages"][-2]["content"]
+
+
+def test_msa_directive_disclaims_truncation_as_a_defect():
+    """A truncated MSA excerpt must not be reported as a defective MSA.
+
+    `msa_max_chars` cut a 73 152-char MSA to 33%, and the review flagged our own
+    mid-sentence cut as a flaw in the MSA. The marker written by
+    `grounding.attach_parent_msa` ("[MSA truncated to N chars for review]") was
+    present but the directive never said what to do with it. Structural and
+    model-neutral — it defers to rule 3 (treat the MSA as silent) rather than
+    stating any legal position, so SKILL.md stays the ceiling.
+    """
+    from skills.contract_review.contract_review import _MSA_COMPARISON_DIRECTIVE
+
+    low = _MSA_COMPARISON_DIRECTIVE.lower()
+    assert "truncat" in low
+    assert "excerpt" in low
+    # Says a cut is our artifact, not an MSA defect.
+    assert "never a defect" in low
+    # Routes the out-of-excerpt case back to the existing "MSA is silent" rule.
+    assert "silent" in low
 
 
 def test_contract_review_sow_standalone_when_no_msa(monkeypatch):
