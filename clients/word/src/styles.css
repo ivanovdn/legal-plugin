@@ -829,3 +829,43 @@ button.secondary:disabled {
   flex: 1;
   font-size: 12px;
 }
+
+/* Feedback capture */
+.flag-button {
+  background: none;
+  border: none;
+  color: #8a8886;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+}
+.flag-button:hover { color: #a4262c; }
+
+.feedback-panel {
+  border: 1px solid #c8c6c4;
+  border-radius: 4px;
+  background: #faf9f8;
+  padding: 10px;
+  margin: 8px 0;
+}
+.feedback-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.feedback-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px;
+}
+.feedback-attached {
+  font-size: 11px;
+  color: #605e5c;
+  margin: 6px 0;
+}
+.feedback-actions { display: flex; gap: 6px; }
+.feedback-open { margin-top: 6px; }
+.disclosure { font-size: 11px; color: #605e5c; margin-top: 4px; }

@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Tabs, { type TabKey } from "./components/Tabs";
 import FindingsTab from "./components/FindingsTab";
 import ChatTab, { type ChatMessage } from "./components/ChatTab";
 import PreferencesTab from "./components/PreferencesTab";
 import FinalizeBar from "./components/FinalizeBar";
+import FeedbackPanel from "./components/FeedbackPanel";
+import { buildSnapshot, onFlagRequested, EMPTY_TURN, type FlagTarget } from "./feedback";
+import { readBody } from "./word";
 import type { ReviewSummary } from "./parser";
 
 export default function App() {
@@ -20,12 +23,43 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [prefMarkdown, setPrefMarkdown] = useState<string>("");
   const [prefLoaded, setPrefLoaded] = useState<boolean>(false);
+  const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
+
+  // One panel for the whole pane; cards reach it through the feedback module's
+  // one-slot channel rather than four levels of prop drilling.
+  useEffect(() => {
+    onFlagRequested(async (t) => {
+      // Attach the document at flag time, not at card-render time — the doc may
+      // have changed since the turn, and what we want is what they are looking at.
+      const documentText = await readBody().catch(() => "");
+      setFlagTarget({ ...t, snapshot: { ...t.snapshot, ...buildSnapshot({ documentText }) } });
+    });
+    return () => onFlagRequested(null);
+  }, []);
 
   return (
     <div className="app">
       <header>
         <h1>Legal Triage</h1>
         <p className="subtitle">Reviews the open document against the firm's standards.</p>
+        <button
+          className="secondary feedback-open"
+          onClick={() =>
+            setFlagTarget({
+              turn: EMPTY_TURN,
+              surface: "general",
+              targetKind: "",
+              targetRef: "",
+              snapshot: {},
+            })
+          }
+        >
+          Send feedback
+        </button>
+        <p className="disclosure">
+          During testing, your use of the assistant's suggestions is recorded so we
+          can measure what it gets wrong.
+        </p>
       </header>
       <Tabs active={tab} onChange={setTab} />
       {/* Both tabs always mounted; visibility toggled via CSS so state persists. */}
@@ -52,6 +86,9 @@ export default function App() {
           setLoaded={setPrefLoaded}
         />
       </div>
+      {flagTarget && (
+        <FeedbackPanel target={flagTarget} onClose={() => setFlagTarget(null)} />
+      )}
       {/* Document-level action, available regardless of the active tab. */}
       <FinalizeBar />
     </div>
