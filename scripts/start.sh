@@ -30,11 +30,23 @@ if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTE
   echo "Port $BACKEND_PORT is already taken — refusing to start:"
   lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN | tail -n +2 | sed 's/^/  /'
   echo ""
-  echo "  Nothing of ours is running yet, so that listener is not our backend."
-  echo "  A stale run:  kill the PID above."
-  echo "  VS Code:      it auto-forwards ports and keeps the socket bound after"
-  echo "                the target dies, accepting connections and never replying."
-  echo "                Set \"remote.autoForwardPorts\": false, then reload the window."
+  # Name the actual case instead of guessing. The two look identical in lsof
+  # output but need opposite responses, and an earlier version of this message
+  # flatly asserted "that listener is not our backend" while pointing at a
+  # stale uvicorn — which is the commonest cause, not the rare one.
+  holder_pid=$(lsof -nP -iTCP:"$BACKEND_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)
+  holder_cmd=$(ps -o command= -p "$holder_pid" 2>/dev/null || true)
+  if printf '%s' "$holder_cmd" | grep -q "uvicorn"; then
+    echo "  That is a STALE RUN OF THIS BACKEND (pid $holder_pid) — probably a"
+    echo "  previous start.sh, or one launched by hand. Stop it and retry:"
+    echo ""
+    echo "      kill $holder_pid"
+  else
+    echo "  That is NOT our backend — nothing of ours is running yet."
+    echo "  Most often VS Code: it auto-forwards ports and keeps the socket bound"
+    echo "  after the target dies, accepting connections and never replying."
+    echo "  Set \"remote.autoForwardPorts\": false and reload the window, or kill $holder_pid."
+  fi
   exit 1
 fi
 
