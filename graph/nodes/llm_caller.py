@@ -102,7 +102,13 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
                 "model": settings.llm_model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": 0.0, "num_ctx": settings.ollama_num_ctx},
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": settings.ollama_num_ctx,
+                    # Bounded so a repetition loop truncates instead of
+                    # running to the context limit (see config.py).
+                    "num_predict": settings.ollama_num_predict_review,
+                },
             },
             timeout=600.0,
         )

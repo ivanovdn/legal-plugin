@@ -106,3 +106,58 @@ def test_doc_chat_logs_before_it_calls_the_model(monkeypatch, caplog):
     for field in ("model=", "doc=", "grounded=", "history=", "msgs="):
         assert field in seen_at_call_time["text"], field
     assert "<- doc_chat" in caplog.text
+
+
+# --- generation must be BOUNDED ---------------------------------------------
+
+def test_review_call_bounds_generated_tokens(monkeypatch):
+    """Unbounded generation is why a degenerate loop presents as a hang.
+
+    Observed on the VM (2026-08-14): asked to "fill the title" against a title
+    that was ALREADY filled, the model looped the same self-doubt paragraph
+    inside a JSON rationale until it exhausted the context window — roughly 21k
+    tokens of it. Ollama's default num_predict is "fill the context", so nothing
+    stopped it. A cap turns that into a truncated answer instead of a stall.
+    """
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    sent = {}
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"message": {"content": "answer"}}
+
+    def _capture(*a, **kw):
+        sent.update(kw.get("json") or {})
+        return resp
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_capture):
+        llm_caller(_state(request="Review this."))
+
+    opts = sent["options"]
+    assert opts.get("num_predict"), "review generation is unbounded"
+    assert opts["num_predict"] == get_settings().ollama_num_predict_review
+    get_settings.cache_clear()
+
+
+def test_every_chat_llm_bounds_generated_tokens(monkeypatch):
+    """Both chat builders — the conversational one AND the JSON-retry one.
+
+    The retry is the likelier one to loop (it fires precisely when the first
+    reply was already malformed), so leaving it uncapped would miss the case
+    this guards.
+    """
+    built = []
+    monkeypatch.setattr(legal_research, "_llm_cache", {})
+    monkeypatch.setattr(
+        legal_research, "ChatOllama",
+        lambda **kw: built.append(kw) or MagicMock(),
+    )
+
+    legal_research._build_llm()
+    legal_research._build_json_llm()
+
+    assert len(built) == 2
+    cap = get_settings().ollama_num_predict_chat
+    for kw in built:
+        assert kw.get("num_predict") == cap, kw.get("format", "conversational")

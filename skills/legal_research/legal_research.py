@@ -58,6 +58,7 @@ def _build_llm() -> ChatOllama:
             temperature=0.0,
             reasoning=False,
             num_ctx=settings.ollama_num_ctx,
+            num_predict=settings.ollama_num_predict_chat,
         )
     return _llm_cache["chat"]
 
@@ -77,6 +78,7 @@ def _build_json_llm() -> ChatOllama:
             reasoning=False,
             format="json",
             num_ctx=settings.ollama_num_ctx,
+            num_predict=settings.ollama_num_predict_chat,
         )
     return _llm_cache["json"]
 
