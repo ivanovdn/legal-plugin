@@ -33,9 +33,22 @@ export default function FeedbackPanel({
   // calls the shared onClose and silently closes the NEW panel — and
   // whatever the attorney had started typing into it — out from under them.
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True for as long as THIS instance is mounted. closeTimer's cleanup only
+  // cancels a timer that already exists at unmount time; it does nothing
+  // for a sendFeedback() still in flight at that moment (✕ clicked mid-send,
+  // or a different card's flag swapping the key mid-send — nothing gates
+  // other cards' flag buttons on this panel's status). The continuation
+  // below resumes after unmount regardless, so it must check this itself
+  // before touching state or scheduling closeTimer. Reset to true in the
+  // effect body (not just the initial useRef(true)) so this stays correct
+  // even if a future StrictMode double-invoke tears down and reruns the
+  // effect once before the component's real unmount.
+  const mounted = useRef(true);
 
   useEffect(() => {
+    mounted.current = true;
     return () => {
+      mounted.current = false;
       if (closeTimer.current !== null) clearTimeout(closeTimer.current);
     };
   }, []);
@@ -45,9 +58,11 @@ export default function FeedbackPanel({
     setStatus({ kind: "sending" });
     try {
       await sendFeedback(target, comment.trim());
+      if (!mounted.current) return; // unmounted while the request was in flight
       setStatus({ kind: "sent" });
       closeTimer.current = setTimeout(onClose, 1200);
     } catch (e) {
+      if (!mounted.current) return; // unmounted while the request was in flight
       setStatus({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
   };
