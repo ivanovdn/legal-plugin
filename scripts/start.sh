@@ -42,7 +42,21 @@ fi
 echo ""
 echo "Starting FastAPI backend on port $BACKEND_PORT..."
 source .venv/bin/activate
-uvicorn api.main:app --host 0.0.0.0 --port "$BACKEND_PORT" &
+# Bind the LOOPBACK ADDRESS SPECIFICALLY, not the 0.0.0.0 wildcard.
+#
+# This is what stops VS Code stealing the port. A wildcard bind leaves
+# 127.0.0.1:8000 unclaimed, and macOS routes localhost connections to the more
+# specific listener — so VS Code's port auto-forwarding grabs it (repeatedly:
+# five different helper PIDs in one afternoon) and then accepts connections
+# without ever answering. Binding 127.0.0.1 takes the address, and VS Code
+# physically cannot have it. Vite has never had this problem for exactly this
+# reason — vite.config.ts already pins host: "127.0.0.1".
+#
+# Nothing local needs the wildcard: Word reaches the backend through Vite's
+# proxy and Chainlit is on the same machine. The CONTAINER is unaffected — the
+# Dockerfile has its own CMD with --host 0.0.0.0, which it needs for Docker
+# networking.
+uvicorn api.main:app --host 127.0.0.1 --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 echo "Backend PID: $BACKEND_PID"
 

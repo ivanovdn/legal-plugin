@@ -282,17 +282,50 @@ def _extract_proposed_edits(prose: str) -> list[dict]:
     return proposals
 
 
+# A preference line is STORED and re-read on future documents by someone with no
+# memory of this conversation, so it must read as a statement, not as an order
+# given to the assistant. The model half-complies: told to write standalone, it
+# resolved the pronoun ("our" -> "the") but kept the imperative — live output was
+# "Remember that the client is Sony." (2026-08-14).
+#
+# This strips ONLY the leading wrapper and never touches what follows, because a
+# preference is not always a fact about the client. Both shapes must survive:
+#   "Remember that the client is Sony."             -> "The client is Sony."
+#   "Remember I always want indemnity flagged red." -> "I always want indemnity flagged red."
+# Rewriting the remainder would need to understand it, which is exactly the kind
+# of judgment that belongs to the attorney approving the card.
+#
+# `note` requires a following word boundary, so "Notes must be short" is untouched.
+_PREFERENCE_LEAD_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:remember|keep in mind|bear in mind|make a note|note)\b"
+    r"\s*(?:that\b|to\b)?\s*",
+    re.I,
+)
+
+
+def _normalize_preference_line(line: str) -> str:
+    """Drop a leading 'remember that …' wrapper; leave the substance alone."""
+    stripped = _PREFERENCE_LEAD_RE.sub("", line, count=1).strip()
+    if not stripped:
+        return line.strip()          # the whole line was the wrapper — keep it
+    return stripped[0].upper() + stripped[1:]
+
+
 def _extract_proposed_preferences(prose: str) -> list[str]:
     """Pull ```preference``` fenced blocks into individual preference lines.
 
     Plain text, one preference per line (a leading '-'/'*' bullet is stripped) —
     deliberately NOT JSON, to avoid the edit-block parsing fragility. Non-fatal:
     no block → []. The suggestion the attorney approves; not a document edit.
+
+    Normalizing HERE covers both paths that produce preferences — the model's
+    first reply and the second-chance retry — since both are parsed through this
+    one function.
     """
     prefs: list[str] = []
     for match in _PREFERENCE_BLOCK_RE.finditer(prose or ""):
         for line in match.group(1).splitlines():
             t = re.sub(r"^\s*[-*]\s+", "", line).strip()
             if t:
-                prefs.append(t)
+                prefs.append(_normalize_preference_line(t))
     return prefs

@@ -18,7 +18,11 @@ ENTRY module's globals, so these tests drive and patch
 
 import importlib
 
-from skills.legal_research.edit_parsing import _looks_like_preference_request
+from skills.legal_research.edit_parsing import (
+    _extract_proposed_preferences,
+    _looks_like_preference_request,
+    _normalize_preference_line,
+)
 
 legal_research = importlib.import_module("skills.legal_research.legal_research")
 
@@ -172,3 +176,56 @@ def test_retry_that_yields_nothing_is_non_fatal(monkeypatch):
     assert prefs == []
     assert content == "Noted for this document."
     assert len(calls) == 2
+
+
+# --- stored lines must read as statements, not orders ------------------------
+
+def test_normalize_strips_the_imperative_wrapper_only():
+    """A preference is re-read on future documents by someone with no memory of
+    the conversation, so "Remember that X" is an order addressed to nobody.
+
+    Content-agnostic by design: a preference is NOT always a fact about the
+    client, so the wrapper comes off and the substance is left exactly as the
+    attorney phrased it.
+    """
+    cases = [
+        # the live 2026-08-14 output, and the shape it should have had
+        ("Remember that the client is Sony.", "The client is Sony."),
+        ("remember that our client is Sony", "Our client is Sony"),
+        # working-style instructions must survive the same treatment
+        ("Remember I always want the indemnity clause flagged red.",
+         "I always want the indemnity clause flagged red."),
+        ("Please remember to cite the clause ID.", "Cite the clause ID."),
+        ("Note that we act for the seller.", "We act for the seller."),
+        ("keep in mind that payment terms are 30 days",
+         "Payment terms are 30 days"),
+    ]
+    for raw, want in cases:
+        assert _normalize_preference_line(raw) == want, raw
+
+
+def test_normalize_leaves_a_well_formed_preference_alone():
+    for line in [
+        "Always flag uncapped indemnity.",
+        "Our client is Acme Corp.",
+        "Notes must be short.",          # "Notes" is not the verb "note"
+        "Never accept a governing law outside the US.",
+    ]:
+        assert _normalize_preference_line(line) == line, line
+
+
+def test_normalize_keeps_the_original_when_nothing_would_remain():
+    assert _normalize_preference_line("Remember that") == "Remember that"
+    assert _normalize_preference_line("remember") == "remember"
+
+
+def test_extraction_applies_the_normalization():
+    """Both the first reply and the retry are parsed through this one function."""
+    prefs = _extract_proposed_preferences(
+        "Sure.\n\n```preference\n- Remember that the client is Sony.\n"
+        "- Remember I always want indemnity flagged red.\n```"
+    )
+    assert prefs == [
+        "The client is Sony.",
+        "I always want indemnity flagged red.",
+    ]
