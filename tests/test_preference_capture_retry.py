@@ -19,6 +19,7 @@ ENTRY module's globals, so these tests drive and patch
 import importlib
 
 from skills.legal_research.edit_parsing import (
+    _should_retry_preference,
     _extract_proposed_preferences,
     _looks_like_preference_request,
     _normalize_preference_line,
@@ -92,28 +93,44 @@ def test_detector_ignores_ordinary_questions():
         assert not _looks_like_preference_request(req), req
 
 
-def test_detector_deliberately_skips_bare_always_never():
-    """Documented coverage gap, not an oversight.
+def test_always_never_instructions_trigger_the_retry():
+    """Trace 004bccfe: "Always flag uncapped indemnity" — the prompt's OWN worked
+    example — produced "I have remembered that you want me to always flag
+    uncapped indemnity in future reviews" with no block and no retry. The
+    preference was lost while the model claimed it was stored.
 
-    "always flag X" is the prompt's own worked example and the model emits a
-    block for it reliably, so the net is not needed. Matching bare always/never
-    cannot be done without also matching "does this always apply?" — see
-    test_detector_ignores_ordinary_questions. If you widen the regex, make that
-    test pass too.
+    always/never stay out of _PREFERENCE_REQUEST_RE (that one also overrides the
+    context-only suppression), so only the retry path takes the wider net.
     """
-    assert not _looks_like_preference_request("always flag uncapped indemnity")
+    for req in [
+        "Always flag uncapped indemnity",
+        "always flag uncapped indemnity",
+        "Never accept a governing law outside the US.",
+        "I always want indemnity flagged red",
+    ]:
+        assert _should_retry_preference(req), req
 
 
-def test_prompt_draws_the_same_storage_line_as_the_detector():
-    """The prompt is what actually decides — the detector only nets a forgotten
-    block, and in trace 4e3a2d94 the unwanted suggestion came from the prompt
-    with no retry involved. Both must draw the line in the same place."""
-    from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT
+def test_questions_never_trigger_the_retry():
+    """The reason always/never were excluded in the first place — a false
+    positive costs a real LLM round-trip on the commonest kind of turn. The
+    discriminator is sentence FORM, not the verb."""
+    for req in [
+        "does this clause always apply?",
+        "is the cap never enforceable?",
+        "Should we always flag uncapped indemnity?",
+        "what is the billing model?",
+        "who signs this agreement?",
+    ]:
+        assert not _should_retry_preference(req), req
 
-    low = CHAT_SYSTEM_PROMPT.lower()
-    assert "keep in mind" in low                      # names the excluded phrasing
-    assert "not emit a preference block" in low       # and says what to do with it
-    assert "store" in low                             # states the actual test
+
+def test_context_only_suppression_is_not_widened():
+    """"keep in mind we always use Tennessee law" is still context-only —
+    widening the SUPPRESSION predicate would invert what "keep in mind" means."""
+    req = "keep in mind we always use Tennessee law"
+    assert not _looks_like_preference_request(req)   # suppression still applies
+    assert _should_retry_preference(req)             # but a lost block is recoverable
 
 
 # --- the retry ------------------------------------------------------------
@@ -150,6 +167,38 @@ def test_no_retry_when_the_model_already_emitted_a_block(monkeypatch):
 
     assert prefs == ["Assume the client is Blizzard Corp."]
     assert len(calls) == 1, "a block was already present — the retry is wasted latency"
+
+
+def test_retry_fires_for_an_always_instruction_end_to_end(monkeypatch):
+    """Trace 004bccfe, driven through the real path.
+
+    Predicate tests alone do NOT cover the wiring: reverting _run_doc_chat to
+    the narrow _looks_like_preference_request left every other test green.
+    Caught by mutation, not by the suite.
+    """
+    calls = _stub_llm(
+        monkeypatch,
+        [
+            # what the model actually said — prose, no block
+            "I have remembered that you want me to always flag uncapped indemnity in future reviews.",
+            "```preference\nAlways flag uncapped indemnity.\n```",
+        ],
+    )
+    _, _, prefs = legal_research._run_doc_chat(
+        _make_state("Always flag uncapped indemnity"), "NON-DISCLOSURE AGREEMENT"
+    )
+    assert prefs == ["Always flag uncapped indemnity."]
+    assert [c["name"] for c in calls] == ["doc_chat", "doc_chat_preference_retry"]
+
+
+def test_no_retry_for_an_always_QUESTION_end_to_end(monkeypatch):
+    """The other half: a question mentioning "always" must not pay for a call."""
+    calls = _stub_llm(monkeypatch, ["Yes, per Section 2.3."])
+    _, _, prefs = legal_research._run_doc_chat(
+        _make_state("does this clause always apply?"), "NDA"
+    )
+    assert prefs == []
+    assert [c["name"] for c in calls] == ["doc_chat"]
 
 
 def test_no_retry_on_an_ordinary_turn(monkeypatch):

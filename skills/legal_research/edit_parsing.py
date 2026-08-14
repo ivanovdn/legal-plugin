@@ -236,6 +236,46 @@ _PREFERENCE_REQUEST_RE = re.compile(
 )
 
 
+# Standing instructions phrased with always/never, and the interrogative test
+# that keeps ordinary questions out.
+#
+# These were excluded from _PREFERENCE_REQUEST_RE because "does this clause
+# always apply?" matched, and a false positive costs a real LLM round-trip. The
+# justification was that "always flag X" is the prompt's own worked example and
+# the model emits a block for it reliably — which trace `004bccfe` disproved:
+# "Always flag uncapped indemnity" produced "I have remembered that you want me
+# to always flag uncapped indemnity in future reviews" with NO block and no
+# retry, so the preference was lost while the model claimed it was stored.
+#
+# The real discriminator was never the verb, it was the sentence form.
+_ALWAYS_NEVER_RE = re.compile(r"\b(?:always|never)\b", re.I)
+_INTERROGATIVE_RE = re.compile(
+    r"^\s*(?:do|does|did|is|are|was|were|can|could|should|would|will|may|"
+    r"what|which|who|whom|whose|why|when|where|how)\b",
+    re.I,
+)
+
+
+def _is_question(request: str) -> bool:
+    r = (request or "").strip()
+    return r.endswith("?") or bool(_INTERROGATIVE_RE.match(r))
+
+
+def _should_retry_preference(request: str) -> bool:
+    """Should we spend a second call recovering a forgotten preference block?
+
+    Broader than `_looks_like_preference_request` on purpose. That one also
+    decides whether an explicit storage request OVERRIDES the context-only
+    suppression, and widening it there would let "keep in mind we always use
+    Tennessee law" produce a card — the opposite of what "keep in mind" means.
+    Retrying is cheap and self-correcting (the retry prompt returns an empty
+    block for a one-off), so only THIS path takes the wider net.
+    """
+    if _looks_like_preference_request(request):
+        return True
+    return bool(_ALWAYS_NEVER_RE.search(request or "")) and not _is_question(request)
+
+
 def _looks_like_preference_request(request: str) -> bool:
     """Heuristic: did the USER ask us to carry something beyond this turn?
 

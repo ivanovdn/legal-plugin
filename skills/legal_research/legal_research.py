@@ -28,6 +28,7 @@ from skills.legal_research.edit_parsing import (
     _looks_like_context_only_request,
     _looks_like_edit_promise,
     _looks_like_preference_request,
+    _should_retry_preference,
     _parse_json_edits,
     _sanitize_history,
 )
@@ -239,7 +240,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         )
         prefs = []
 
-    if not prefs and _looks_like_preference_request(request):
+    if not prefs and _should_retry_preference(request):
         logger.info("[legal_research] preference request without block — retrying")
         retry_response = traced_invoke(
             _build_llm(),
