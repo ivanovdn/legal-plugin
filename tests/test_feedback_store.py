@@ -26,6 +26,8 @@ def test_feedback_round_trip():
     assert rows[0]["comment"] == "wrong field"
     assert rows[0]["trace_id"] == "abc123"
     assert rows[0]["surface"] == "chat"
+    assert isinstance(rows[0]["id"], int), "id must round-trip so a row can be hand-pulled"
+    assert rows[0]["document_id"] == "d-1"
 
 
 def test_recent_feedback_is_newest_first():
@@ -60,6 +62,57 @@ def test_event_round_trip_and_counts():
     counts = {(c["surface"], c["action"]): c["count"] for c in fs.event_counts()}
     assert counts[("chat", "edit_applied")] == 2
     assert counts[("chat", "edit_discarded")] == 1
+
+
+def test_counter_totals_round_trip():
+    """turns = how many turns fired the counter; total = the summed detail."""
+    fs.record_event(turn_id="t-1", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edits_proposed",
+                    detail="3")
+    fs.record_event(turn_id="t-2", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edits_proposed",
+                    detail="4")
+    fs.record_event(turn_id="t-1", session_id="s", document_id="d",
+                    attorney_id="a", surface="findings", action="findings_rendered",
+                    detail="2")
+    # A per-item action in the same table must never leak into counter_totals().
+    fs.record_event(turn_id="t-1", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edit_applied")
+
+    totals = {(t["surface"], t["action"]): t for t in fs.counter_totals()}
+    assert totals[("chat", "edits_proposed")] == {
+        "surface": "chat", "action": "edits_proposed", "turns": 2, "total": 7,
+    }
+    assert totals[("findings", "findings_rendered")] == {
+        "surface": "findings", "action": "findings_rendered", "turns": 1, "total": 2,
+    }
+    assert ("chat", "edit_applied") not in totals
+
+
+def test_counter_totals_survives_a_non_numeric_detail():
+    """A stray non-numeric/empty detail on a counter action must not raise —
+    it contributes 0 to `total` (guarded, not trusted) while the row still
+    counts toward `turns`."""
+    fs.record_event(turn_id="t-1", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edits_proposed",
+                    detail="5")
+    fs.record_event(turn_id="t-2", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edits_proposed",
+                    detail="not-a-number")
+    fs.record_event(turn_id="t-3", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edits_proposed",
+                    detail="")
+
+    totals = {(t["surface"], t["action"]): t for t in fs.counter_totals()}
+    row = totals[("chat", "edits_proposed")]
+    assert row["turns"] == 3, "all three rows count as turns regardless of detail"
+    assert row["total"] == 5, "the non-numeric and empty details contribute 0, not an error"
+
+
+def test_counter_totals_empty_when_no_counters_fired():
+    fs.record_event(turn_id="t-1", session_id="s", document_id="d",
+                    attorney_id="a", surface="chat", action="edit_discarded")
+    assert fs.counter_totals() == []
 
 
 def test_event_write_is_quiet(monkeypatch):

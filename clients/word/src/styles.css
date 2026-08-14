@@ -879,5 +879,8 @@ button.secondary:disabled {
   margin: 6px 0;
 }
 .feedback-actions { display: flex; gap: 6px; }
-.feedback-open { margin-top: 6px; }
+/* .app header is flex-column with default align-items:stretch, which would
+   otherwise stretch this secondary button to the full pane width and make it
+   read like a primary call to action. */
+.feedback-open { margin-top: 6px; align-self: flex-start; }
 .disclosure { font-size: 11px; color: #605e5c; margin-top: 4px; }

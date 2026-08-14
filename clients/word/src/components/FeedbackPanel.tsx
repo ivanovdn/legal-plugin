@@ -92,10 +92,14 @@ export default function FeedbackPanel({
         disabled={status.kind === "sending" || status.kind === "sent"}
       />
 
-      {/* The attorney must never send something they didn't know they sent. */}
+      {/* The attorney must never send something they didn't know they sent.
+          document_text is only actually in the snapshot when readBody()
+          succeeded (App.tsx swallows a rejection to ""), so the claim below
+          must not be unconditional — that would promise text that wasn't sent. */}
       <div className="feedback-attached">
-        Sends your note plus {item}, the document text, and this turn's id so the
-        developer can reproduce it.
+        Sends your note plus {item}
+        {target.snapshot.document_text ? ", the document text," : ""} and this
+        turn's id so the developer can reproduce it.
       </div>
 
       <div className="feedback-actions">

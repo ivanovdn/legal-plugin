@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 
 _TRUNCATION_MARK = "\n\n[... truncated at {n} chars ...]"
 
+# Per-turn counters: these three actions fire ONCE PER TURN/REVIEW, carrying
+# their magnitude as a number in `detail` (see InteractionEvent.detail in
+# api/models.py). Every other action fires once per ITEM (one Apply, one
+# Discard, one failure). A raw COUNT(*) over both kinds in one column is how
+# "12 edits_proposed, 19 edit_applied" misreads as a 158% apply rate instead
+# of 19-of-37 — counter_totals() below exists to keep the two separate.
+COUNTER_ACTIONS = ("edits_proposed", "findings_rendered", "preferences_suggested")
+
 
 def truncate_snapshot(snapshot: dict | None, max_chars: int) -> dict | None:
     """Cap each top-level string value, marking the cut. Returns a new dict.
@@ -155,22 +163,36 @@ def record_events(events: list[dict], *, attorney_id: str) -> int:
 
 
 def recent_feedback(limit: int = 50) -> list[dict]:
-    """Most recent feedback rows, newest first. Snapshot deliberately omitted."""
+    """Most recent feedback rows, newest first. Snapshot deliberately omitted
+    (it's the large replayable payload, not the read-back summary — pull it
+    directly with `WHERE id = ...` once you have the id from here).
+
+    Keys: id, timestamp, turn_id, trace_id, document_id, attorney_id,
+    user_name, surface, target_kind, target_ref, comment.
+    """
     with get_pool().connection() as conn:
         cur = conn.execute(
-            """SELECT timestamp, turn_id, trace_id, attorney_id, user_name,
-                      surface, target_kind, target_ref, comment
+            """SELECT id, timestamp, turn_id, trace_id, document_id, attorney_id,
+                      user_name, surface, target_kind, target_ref, comment
                FROM feedback ORDER BY id DESC LIMIT %s""",
             (limit,),
         )
         rows = cur.fetchall()
-    keys = ("timestamp", "turn_id", "trace_id", "attorney_id", "user_name",
-            "surface", "target_kind", "target_ref", "comment")
+    keys = ("id", "timestamp", "turn_id", "trace_id", "document_id", "attorney_id",
+            "user_name", "surface", "target_kind", "target_ref", "comment")
     return [dict(zip(keys, r)) for r in rows]
 
 
 def event_counts() -> list[dict]:
-    """Interaction counts grouped by surface and action — the denominators."""
+    """Interaction counts grouped by surface and action — the denominators.
+
+    A raw COUNT(*): correct for per-item actions (edit_applied, ...), but for
+    the three entries in COUNTER_ACTIONS this counts TURNS, not the magnitude
+    they carry in `detail` — use counter_totals() for those instead. This
+    function keeps reporting the honest row count either way; it is the
+    caller's job (see scripts/feedback_report.py) not to present the two as
+    comparable.
+    """
     with get_pool().connection() as conn:
         cur = conn.execute(
             """SELECT surface, action, COUNT(*) FROM interaction_event
@@ -178,3 +200,32 @@ def event_counts() -> list[dict]:
         )
         rows = cur.fetchall()
     return [{"surface": r[0], "action": r[1], "count": r[2]} for r in rows]
+
+
+def counter_totals() -> list[dict]:
+    """Turns fired vs. summed magnitude, for the three per-turn counters only.
+
+    Returns one dict per (surface, action) actually present, with:
+      - turns: COUNT(*) — how many turns/reviews fired this counter
+      - total: SUM of the numeric value each of those turns carried in
+        `detail` (e.g. 12 turns proposing edits might sum to 37 edits total)
+
+    `detail` is free text everywhere else in this table (error messages on
+    edit_failed, etc.) and can be empty, so a non-numeric or blank value is
+    guarded with a `detail ~ '^[0-9]+$'` predicate rather than trusting the
+    action filter alone to keep it clean — it contributes 0 to `total` and
+    never raises; the row still counts toward `turns`.
+    """
+    with get_pool().connection() as conn:
+        placeholders = ", ".join(["%s"] * len(COUNTER_ACTIONS))
+        cur = conn.execute(
+            f"""SELECT surface, action, COUNT(*),
+                       COALESCE(SUM(CASE WHEN detail ~ '^[0-9]+$'
+                                          THEN detail::bigint ELSE 0 END), 0)
+                FROM interaction_event
+                WHERE action IN ({placeholders})
+                GROUP BY surface, action ORDER BY surface, action""",
+            COUNTER_ACTIONS,
+        )
+        rows = cur.fetchall()
+    return [{"surface": r[0], "action": r[1], "turns": r[2], "total": r[3]} for r in rows]

@@ -291,8 +291,27 @@ sufficient to replay the case on a different model later:
 }
 ```
 
-**On an event** (frequent — expect thousands), ids and counters only. No document text,
-no model output.
+**On an event** (frequent — expect thousands), mostly ids and counters — but not only
+that, and this is a deliberate choice, not an oversight this doc failed to describe.
+`target_ref` (capped at 200 chars) carries a quoted excerpt of the clause the
+interaction targeted, and on `edit_failed` specifically, `detail` (capped at 500 chars)
+carries the matcher's own error string, which itself quotes the excerpt it searched for:
+`Couldn't find "<clause text>" in the document.` No full document text and no model
+*output* travel through the event log — that boundary holds — but short fragments of
+the client's contract text do, on every event whose `target_ref`/`detail` happens to
+carry one.
+
+The excerpt earns its place. Without it, `edit_failed` tells you only that
+`body.search` missed, and nothing about which clause — a bare tally of "how often,"
+full stop. With it, the event log becomes a direct, per-occurrence measurement of
+matcher behavior: `findClauseRange`, `searchCandidates`, the 85% completeness guard,
+wildcard escaping, tab-segment reduction, multi-line collapse — this project's single
+most expensive recurring problem, and every fix to it so far was built against
+anecdote, never data. The excerpt is what turns the count into something actionable:
+"on what," not just "how often." Both fields are length-capped, and this is the same
+category of exposure the "On storing contract text" section below already accepts for
+the flagged-item snapshot — the same database, the same host, the same tenancy — just
+at a much smaller size per row.
 
 ### On storing contract text
 

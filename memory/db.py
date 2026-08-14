@@ -71,6 +71,8 @@ _STATEMENTS = [
         attorney_id TEXT NOT NULL,
         user_name TEXT NOT NULL DEFAULT '',
         surface TEXT NOT NULL,
+        -- what was flagged: 'finding' | 'edit' | 'reply' | '' (unattached).
+        -- NOT the same vocabulary as interaction_event.target_kind below.
         target_kind TEXT NOT NULL DEFAULT '',
         target_ref TEXT NOT NULL DEFAULT '',
         comment TEXT NOT NULL,
@@ -88,6 +90,9 @@ _STATEMENTS = [
         attorney_id TEXT NOT NULL,
         surface TEXT NOT NULL,
         action TEXT NOT NULL,
+        -- the edit ACTION at record time ('replace'/'insert'/'delete'/
+        -- 'replace_all'), NOT the feedback.target_kind vocabulary above —
+        -- same column name, deliberately different meaning per table.
         target_kind TEXT NOT NULL DEFAULT '',
         target_ref TEXT NOT NULL DEFAULT '',
         detail TEXT NOT NULL DEFAULT ''

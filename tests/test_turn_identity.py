@@ -45,7 +45,6 @@ def _fake_graph(recorder: dict):
 
 
 def _client(monkeypatch, recorder):
-    import api.routes.query as q
     from fastapi.testclient import TestClient
     from api.main import app
 

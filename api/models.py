@@ -52,7 +52,14 @@ class InteractionEvent(BaseModel):
     document_id: str = ""
     surface: str = ""
     action: str
-    target_kind: str = ""
+    target_kind: str = Field(
+        "",
+        description=(
+            "The edit action ('replace'/'insert'/'delete'/'replace_all') at record "
+            "time. Same column name as FeedbackSubmission.target_kind, DIFFERENT "
+            "vocabulary — that one is 'finding'/'edit'/'reply', this one never is."
+        ),
+    )
     target_ref: str = ""
     detail: str = Field("", description="Error text on failures; the count on per-turn counters")
 
