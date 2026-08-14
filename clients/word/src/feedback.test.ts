@@ -2,6 +2,16 @@
 import { buildSnapshot, onFlagRequested, recordEvent, requestFlag, sendFeedback } from "./feedback";
 import { pass } from "./testAssert";
 
+// Minimal ambient type for the one Node API this file needs (detecting an
+// unhandled promise rejection) — not @types/node, same rationale as
+// testAssert.ts's own `declare const process`: tsconfig pins
+// "types": ["office-js", "vite/client"], and pulling in full Node globals
+// would change typing project-wide for no benefit here.
+declare const process: {
+  once(event: "unhandledRejection", listener: (reason: unknown) => void): void;
+  removeListener(event: "unhandledRejection", listener: (reason: unknown) => void): void;
+};
+
 (globalThis as { localStorage?: unknown }).localStorage = {
   getItem: () => null,
   setItem: () => {},
@@ -13,12 +23,27 @@ const TARGET = { turn: TURN, surface: "chat", targetKind: "edit", targetRef: "[_
 // --- recordEvent must never break the pane -------------------------------
 (globalThis as { fetch?: unknown }).fetch = () => Promise.reject(new Error("offline"));
 let threw = false;
+// A rejected fetch promise never throws SYNCHRONOUSLY — whether or not
+// recordEvent attaches an internal .catch(), so the try/catch alone can't
+// tell the two cases apart (this is exactly what made the original version
+// of this assertion vacuous). The only observable difference is whether the
+// rejection goes UNHANDLED, and Node only reports that asynchronously via
+// process's "unhandledRejection" event. Listen for it, give the microtask
+// queue a turn to raise it, then always remove the listener so it can't leak
+// into a later assertion in this file.
+let unhandledRejectionSeen = false;
+const onUnhandledRejection = () => {
+  unhandledRejectionSeen = true;
+};
+process.once("unhandledRejection", onUnhandledRejection);
 try {
   recordEvent(TURN, "chat", "edit_applied");
 } catch {
   threw = true;
 }
-pass(!threw, "recordEvent swallows a rejected fetch");
+await new Promise((resolve) => setTimeout(resolve, 0));
+process.removeListener("unhandledRejection", onUnhandledRejection);
+pass(!threw && !unhandledRejectionSeen, "recordEvent swallows a rejected fetch");
 
 (globalThis as { fetch?: unknown }).fetch = () => {
   throw new Error("fetch itself exploded");
