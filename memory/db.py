@@ -1,5 +1,6 @@
 # memory/db.py
-"""Postgres connection pool for the relational stores (audit, review, conversation).
+"""Postgres connection pool for the relational stores (audit, review,
+conversation, feedback, interaction_event).
 
 One app-wide psycopg pool built from config.database_url. Connections are
 autocommit — the stores issue single-statement writes/reads, so no explicit
@@ -59,6 +60,40 @@ _STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_conv ON conversation_store (document_id, attorney_id, id)",
+    """
+    CREATE TABLE IF NOT EXISTS feedback (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        turn_id TEXT NOT NULL DEFAULT '',
+        trace_id TEXT NOT NULL DEFAULT '',
+        session_id TEXT NOT NULL DEFAULT '',
+        document_id TEXT NOT NULL DEFAULT '',
+        attorney_id TEXT NOT NULL,
+        user_name TEXT NOT NULL DEFAULT '',
+        surface TEXT NOT NULL,
+        target_kind TEXT NOT NULL DEFAULT '',
+        target_ref TEXT NOT NULL DEFAULT '',
+        comment TEXT NOT NULL,
+        snapshot JSONB
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_feedback_turn ON feedback (turn_id)",
+    """
+    CREATE TABLE IF NOT EXISTS interaction_event (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        turn_id TEXT NOT NULL DEFAULT '',
+        session_id TEXT NOT NULL DEFAULT '',
+        document_id TEXT NOT NULL DEFAULT '',
+        attorney_id TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_kind TEXT NOT NULL DEFAULT '',
+        target_ref TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_event_turn ON interaction_event (turn_id, action)",
 ]
 
 
@@ -74,7 +109,8 @@ def get_pool() -> ConnectionPool:
 
 
 def init_db() -> None:
-    """Create all store tables + indexes if absent. Idempotent."""
+    """Create all five store tables + indexes if absent (audit_log, review_store,
+    conversation_store, feedback, interaction_event). Idempotent."""
     with get_pool().connection() as conn:
         for stmt in _STATEMENTS:
             conn.execute(stmt)
