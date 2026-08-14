@@ -152,3 +152,19 @@ def set_gen_attributes(
             )
     except Exception:
         pass
+
+
+def current_trace_id() -> str:
+    """32-hex trace id for the active span, or "" when tracing is off.
+
+    Best-effort like every helper here. A feedback item is joined to its turn by
+    `turn_id`, which is minted independently of tracing — the trace id only
+    speeds up the lookup, so it must never be the thing that breaks a turn.
+    """
+    try:
+        ctx = trace.get_current_span().get_span_context()
+        if not ctx.is_valid:
+            return ""
+        return format(ctx.trace_id, "032x")
+    except Exception:
+        return ""
