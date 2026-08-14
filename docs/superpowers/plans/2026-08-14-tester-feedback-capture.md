@@ -132,9 +132,11 @@ the module's contract: "" with no provider, never raises."
 
 **Interfaces:**
 - Consumes: `observability.spans.current_trace_id() -> str` (Task 1)
-- Produces: every `/api/query` and `/api/query/{id}/resume` success payload carries `turn_id: str` (uuid4) and `trace_id: str`. `_payload_from_result(result, session_id, turn_id="", trace_id="")` — **the two new parameters must have `""` defaults.**
+- Produces: every `/api/query` and `/api/query/{id}/resume` success payload carries `turn_id: str` (uuid4) and `trace_id: str`. `_payload_from_result(result, session_id, turn_id, trace_id)` — **all four parameters required, no defaults.**
 
-**Trap — do not skip this.** `tests/test_query_memory.py` calls `_payload_from_result(result, "sess-1")` positionally at five sites. Making the new parameters required breaks all five. Default them to `""`, and rely on the route-level test below (which goes through `TestClient`) to prove the real code path always populates them.
+**Trap — do not skip this.** `tests/test_query_memory.py` calls `_payload_from_result(result, "sess-1")` positionally at **five** sites (lines 8, 15, 21, 33, 40). Making the new parameters required breaks all five, and the failure reads like a bug in the new code rather than a signature change.
+
+**Update those five call sites** — append `, "t-1", "trace-1"` to each. Do **not** default the parameters to `""`: that is the backwards-compat shim CLAUDE.md rule 5 forbids, and a default on a function that must always receive real values turns a forgotten argument into empty ids instead of an error. (Decided 2026-08-14; the plan originally specified defaults.)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -209,14 +211,6 @@ def test_legacy_awaiting_review_branch_carries_the_ids():
     )
     assert payload["turn_id"] == "t-9"
     assert payload["trace_id"] == "abc"
-
-
-def test_payload_ids_default_to_empty():
-    """Five call sites in test_query_memory.py pass two positional args."""
-    import api.routes.query as q
-    payload = q._payload_from_result({"task_type": "research", "report": {}}, "s1")
-    assert payload["turn_id"] == ""
-    assert payload["trace_id"] == ""
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -236,8 +230,15 @@ Change the signature and all three return dicts:
 
 ```python
 def _payload_from_result(
-    result: dict, session_id: str, turn_id: str = "", trace_id: str = ""
+    result: dict, session_id: str, turn_id: str, trace_id: str
 ) -> dict:
+```
+
+Then update the five callers in `tests/test_query_memory.py` (lines 8, 15, 21, 33, 40), appending `, "t-1", "trace-1"` to each — e.g.
+
+```python
+    payload = q._payload_from_result(
+        {"task_type": "research", "report": {}}, "sess-1", "t-1", "trace-1")
 ```
 
 Add these two keys to **each** of the three returned dicts (the `__interrupt__` branch, the legacy `awaiting_review` branch, and the normal branch), alongside the existing `"session_id": session_id,`:
@@ -286,12 +287,12 @@ and update its `_payload_from_result(result, session_id)` call site the same way
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `uv run pytest tests/test_turn_identity.py tests/test_query_memory.py -v`
-Expected: 9 passed (3 from Task 1, 6 new) + the 5 pre-existing `test_query_memory.py` tests still green.
+Expected: 13 passed — 8 in `test_turn_identity.py` (3 from Task 1, 5 new) plus the 5 updated `test_query_memory.py` tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/routes/query.py tests/test_turn_identity.py
+git add api/routes/query.py tests/test_turn_identity.py tests/test_query_memory.py
 git commit -m "feat(api): make a turn addressable with turn_id + trace_id
 
 One session_id covers every turn in both Word tabs, so feedback keyed to
@@ -988,7 +989,7 @@ Expected: 10 passed
 - [ ] **Step 8: Run the whole backend suite**
 
 Run: `uv run pytest tests/ -q`
-Expected: all green — 439 pre-existing + 30 new = 469 passed.
+Expected: all green — 439 pre-existing + 29 new = 468 passed.
 
 - [ ] **Step 9: Commit**
 
@@ -1903,7 +1904,7 @@ Then in `## Follow-ups / Roadmap`:
 - [ ] **Step 7: Final gate**
 
 Run: `bash scripts/check.sh`
-Expected: `all checks passed`; 469 backend tests, 199/199 frontend assertions.
+Expected: `all checks passed`; 468 backend tests, 199/199 frontend assertions.
 
 - [ ] **Step 8: Commit**
 
@@ -1921,7 +1922,7 @@ now that the denominators exist."
 
 ## Definition of done
 
-- `bash scripts/check.sh` green: 469 backend tests, 199/199 frontend assertions.
+- `bash scripts/check.sh` green: 468 backend tests, 199/199 frontend assertions.
 - Word sideload smoke complete, **including step 7** — an Apply still works with `app-db` stopped.
 - `uv run python -m scripts.feedback_report` shows both sections populated from the smoke.
 - Nothing in `graph/`, `skills/`, or any prompt file was touched. Verify with `git diff --stat main`.
