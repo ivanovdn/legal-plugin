@@ -9,6 +9,8 @@ export interface QueryResponse {
   status: "ok" | "error";
   data?: {
     session_id?: string;
+    turn_id?: string;
+    trace_id?: string;
     task_type?: string;
     risk_level?: string;
     awaiting_review?: boolean;
