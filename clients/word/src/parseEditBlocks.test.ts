@@ -1,5 +1,11 @@
 // Quick sanity check for parseEditBlocks. Run with: npx tsx src/parseEditBlocks.test.ts
-import { extractEditBlocks, normalizeProposals, type EditProposal } from "./parseEditBlocks";
+import {
+  annotateFillOverwrites,
+  extractEditBlocks,
+  fillOverwriteWarning,
+  normalizeProposals,
+  type EditProposal,
+} from "./parseEditBlocks";
 import { pass } from "./testAssert";
 
 // 1. Well-formed single block
@@ -400,4 +406,57 @@ import { pass } from "./testAssert";
     { action: "replace", target_text: "the fees paid", new_text: "the fees  paid" },
   ];
   pass(normalizeProposals(blocks).length === 1, "no-op: whitespace-differing edit kept");
+}
+
+// --- fill-vs-overwrite guard ---
+// "fill blanc singed by with suzy qutreo" produced Signed by: Jane Doe ->
+// Signed by: Suzy Qutreo while `Title: [__]` and `for and on behalf of [__]`
+// sat empty: a real value destroyed under a request that asked for a blank.
+{
+  const overwrite: EditProposal = {
+    action: "replace",
+    target_text: "Signed by: Jane Doe",
+    new_text: "Signed by: Suzy Qutreo",
+  };
+  const realFill: EditProposal = {
+    action: "replace",
+    target_text: "Title: [__]",
+    new_text: "Title: Chief Growth Officer",
+  };
+
+  pass(fillOverwriteWarning("fill blanc singed by with suzy qutreo", overwrite) !== null,
+       "fill-guard: warns when a fill request overwrites real text");
+  pass(fillOverwriteWarning("fill blanc singed by with suzy qutreo", realFill) === null,
+       "fill-guard: silent when the target holds a placeholder");
+  // Not a fill request -> the attorney explicitly asked to change it.
+  pass(fillOverwriteWarning("change signed by to Suzy Qutreo", overwrite) === null,
+       "fill-guard: silent when the request says change, not fill");
+  pass(fillOverwriteWarning("replace Jane Doe with Suzy Qutreo", overwrite) === null,
+       "fill-guard: silent on an explicit replace request");
+  // Labelled placeholders of every shape count as blanks.
+  for (const t of ["[Legal Name]", "mailing address at [Address]", "Signed by: [__]", "___"]) {
+    pass(fillOverwriteWarning("fill it in", { action: "replace", target_text: t, new_text: "x" }) === null,
+         `fill-guard: placeholder ${t} treated as a blank`);
+  }
+  // insert/delete never overwrite a field value.
+  pass(fillOverwriteWarning("fill the block", { action: "delete", target_text: "Signed by: Jane Doe" }) === null,
+       "fill-guard: delete is out of scope");
+  // The warning names the offending text so the attorney can judge it.
+  pass((fillOverwriteWarning("fill it", overwrite) ?? "").includes("Signed by: Jane Doe"),
+       "fill-guard: message quotes the target");
+}
+{
+  // annotateFillOverwrites attaches to the right edit and leaves others alone.
+  const out = annotateFillOverwrites(
+    [
+      { action: "replace", target_text: "Signed by: Jane Doe", new_text: "Signed by: Suzy" },
+      { action: "replace", target_text: "Title: [__]", new_text: "Title: CGO" },
+    ],
+    "fill blanc singed by with suzy",
+  );
+  pass(out[0].warning !== undefined, "annotate: overwrite edit carries a warning");
+  pass(out[1].warning === undefined, "annotate: genuine fill is untouched");
+  // Idempotent — it runs on an already-annotated list without duplicating.
+  const twice = annotateFillOverwrites(out, "fill blanc singed by with suzy");
+  pass(twice[0].warning === out[0].warning, "annotate: idempotent");
 }

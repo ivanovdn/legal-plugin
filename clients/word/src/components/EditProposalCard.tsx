@@ -119,6 +119,11 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
         </>
       )}
 
+      {/* Advisory only — Apply stays enabled. A "fill the blank" request that
+          overwrites real text is usually the wrong field, but not always
+          ("fill in the governing law" on a clause that already names one). */}
+      {proposal.warning && <div className="chat-warning">⚠ {proposal.warning}</div>}
+
       <div className="card-actions">
         <button
           className="primary"

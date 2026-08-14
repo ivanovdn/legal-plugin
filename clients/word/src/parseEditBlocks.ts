@@ -12,7 +12,63 @@ export type EditProposal = {
   anchor_text?: string;
   position?: "after" | "before";
   rationale?: string;
+  /** Set by annotateFillOverwrites — shown on the card, never blocks Apply. */
+  warning?: string;
 };
+
+/** The user asked us to FILL something (as opposed to change/replace/update it). */
+const FILL_REQUEST_RE = /\b(fill|complete|populate|blanc|blank)\w*\b/i;
+
+/**
+ * A placeholder is an EMPTY slot: brackets/underscores/dots around nothing, or a
+ * bracketed label like [Legal Name] / [Address] / [Year]. Anything else in a
+ * target is real content.
+ */
+const PLACEHOLDER_RE = /\[[^\]]*\]|_{2,}|\.{3,}/;
+
+/**
+ * Warn when a "fill the blank" request produces an edit that overwrites real
+ * text, or null when the edit genuinely targets a placeholder.
+ *
+ * Observed on the VM: with the signature block already reading
+ * `Signed by: Jane Doe` and two genuine blanks (`Title: [__]`,
+ * `for and on behalf of [__]`) still empty, "fill blanc singed by with suzy
+ * qutreo" produced `Signed by: Jane Doe` → `Signed by: Suzy Qutreo`. The
+ * blanks were left alone and a real value was destroyed, as a one-click
+ * tracked change. The model's own rationale said "**Updates** the counterparty
+ * signatory name" — it knew it was not a fill.
+ *
+ * CHAT_SYSTEM_PROMPT's SCOPE rule already forbids exactly this ("'Fill' means
+ * putting a value into an EMPTY placeholder — it never means replacing text
+ * that is already filled in"), and the model ignored it. This reads the same
+ * two signals deterministically: the verb the attorney used, and whether the
+ * target actually contains a blank.
+ *
+ * Deliberately a WARNING, not a refusal — "fill in the governing law with
+ * Tennessee" on a clause that already names Delaware is a legitimate request
+ * phrased as a fill, and blocking it would be worse than flagging it.
+ */
+export function fillOverwriteWarning(request: string, e: EditProposal): string | null {
+  if (e.action !== "replace" && e.action !== "replace_all") return null;
+  if (!FILL_REQUEST_RE.test(request || "")) return null;
+  const target = e.target_text ?? "";
+  if (!target.trim() || PLACEHOLDER_RE.test(target)) return null;
+  return (
+    `You asked to fill a blank, but this replaces existing text — "${target.trim().slice(0, 60)}" ` +
+    `contains no empty placeholder. Check this is the field you meant before applying.`
+  );
+}
+
+/** Attach fill-overwrite warnings to a final edit list. Idempotent. */
+export function annotateFillOverwrites(
+  blocks: EditProposal[],
+  request: string,
+): EditProposal[] {
+  return blocks.map((e) => {
+    const warning = fillOverwriteWarning(request, e);
+    return warning ? { ...e, warning } : e;
+  });
+}
 
 const JSON_BLOCK_RE = /```json\s*\n([\s\S]*?)```/g;
 const VALID_ACTIONS = new Set<EditAction>(["replace", "replace_all", "insert", "delete"]);

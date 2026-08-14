@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { chatQuery } from "../api";
-import { extractEditBlocks, normalizeProposals, type EditProposal } from "../parseEditBlocks";
+import {
+  annotateFillOverwrites,
+  extractEditBlocks,
+  normalizeProposals,
+  type EditProposal,
+} from "../parseEditBlocks";
 import { extractPreferenceBlocks } from "../parsePreferenceBlocks";
 import { readBody } from "../word";
 import EditProposalCard from "./EditProposalCard";
@@ -79,12 +84,16 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
       // — an empty array would short-circuit to the empty backend value and
       // ignore the frontend's correctly-parsed blocks. Prefer NON-EMPTY instead.
       const backendEdits = res.data?.report?.proposed_edits ?? [];
-      // normalizeProposals runs again here because the backend's proposed_edits
-      // win over the frontend's `blocks` (already normalized in extractEditBlocks)
-      // — and the backend list carries the same unmatchable multi-line
-      // signature-block fills. The transform is idempotent, so re-running on the
-      // frontend `blocks` path is harmless.
-      const proposedEdits = normalizeProposals(backendEdits.length > 0 ? backendEdits : blocks);
+      // Both transforms run HERE, on the final chosen list, because the backend's
+      // proposed_edits win over the frontend's `blocks` whenever present — so
+      // anything living only inside extractEditBlocks is bypassed in the common
+      // case. normalizeProposals is idempotent, and annotateFillOverwrites
+      // additionally needs `question`, the attorney's own words, which only this
+      // scope has.
+      const proposedEdits = annotateFillOverwrites(
+        normalizeProposals(backendEdits.length > 0 ? backendEdits : blocks),
+        question,
+      );
       const finalProse = cleanedProse || rawAnswer;
       const promisedEditMissing =
         proposedEdits.length === 0 && looksLikeEditPromise(finalProse);

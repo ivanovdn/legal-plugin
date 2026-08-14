@@ -496,6 +496,23 @@ def test_chat_prompts_constrain_edit_scope():
         assert "\\t" not in prompt and "\\n" not in prompt
 
 
+def test_preference_block_must_be_a_standalone_statement():
+    """A stored preference is re-read on future documents by someone with no
+    memory of the conversation, so it must be a statement, not an echo.
+
+    Live: "remeber that our client is Sony" produced the preference line
+    "remember that our client is Sony", which the attorney approved — and it now
+    rides in EVERY prompt as an imperative addressed to nobody
+    (`--- ATTORNEY PREFERENCES (USER.md) --- - remember that our client is Sony`).
+    """
+    from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT
+
+    low = CHAT_SYSTEM_PROMPT.lower()
+    assert "standalone" in low
+    assert "restatement of the request" in low
+    assert "resolve pronouns" in low
+
+
 def test_chat_prompts_forbid_unsourced_values_in_edits():
     """new_text values must be sourced, not recalled from pretraining.
 
