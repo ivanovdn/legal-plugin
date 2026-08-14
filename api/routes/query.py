@@ -13,7 +13,7 @@ from api.auth import resolve_user_id, resolve_user_name
 from config import get_settings
 from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
-from observability.spans import traced, set_trace_attributes
+from observability.spans import traced, set_trace_attributes, current_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,9 @@ def _memory_degraded(report: dict) -> bool:
     return get_settings().checkpointer_enabled and not _checkpointer_active
 
 
-def _payload_from_result(result: dict, session_id: str) -> dict:
+def _payload_from_result(
+    result: dict, session_id: str, turn_id: str, trace_id: str
+) -> dict:
     """Shape the response payload for both submit and resume.
 
     LangGraph 0.6 surfaces an active interrupt via the `__interrupt__` key
@@ -79,6 +81,10 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
     NOT persisted, so we read the interrupt's `.value` (the dict passed to
     interrupt()) for the payload. The legacy `awaiting_review` flag is also
     honored so unit tests that mock graph.invoke continue to work.
+
+    turn_id/trace_id are always minted by the caller (no defaults here) so a
+    forgotten argument fails loudly instead of shipping an empty id that a
+    tester's feedback can never be joined back to a turn.
     """
     interrupts = result.get("__interrupt__") or []
     if interrupts:
@@ -87,6 +93,8 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
         value = getattr(first, "value", first) if not isinstance(first, dict) else first
         return {
             "session_id": session_id,
+            "turn_id": turn_id,
+            "trace_id": trace_id,
             "awaiting_review": True,
             "interrupt_payload": {
                 "task_type": value.get("task_type", ""),
@@ -102,6 +110,8 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
         # Legacy / test-mocked shape — keep working for unit tests that don't use real interrupts.
         return {
             "session_id": session_id,
+            "turn_id": turn_id,
+            "trace_id": trace_id,
             "awaiting_review": True,
             "interrupt_payload": {
                 "task_type": result.get("task_type", ""),
@@ -116,6 +126,8 @@ def _payload_from_result(result: dict, session_id: str) -> dict:
     report = result.get("report", {})
     return {
         "session_id": session_id,
+        "turn_id": turn_id,
+        "trace_id": trace_id,
         "task_type": result.get("task_type", ""),
         "report": report,
         "risk_level": result.get("risk_level", ""),
@@ -133,13 +145,17 @@ def submit_query(
 ):
     """Submit a legal request for graph execution."""
     session_id = body.session_id or str(uuid.uuid4())
+    # A session_id spans every turn in both Word tabs; a turn_id names one.
+    # Feedback and interaction events join on it.
+    turn_id = str(uuid.uuid4())
+    trace_id = current_trace_id()
 
     set_trace_attributes(
         name=f"query:{body.task_type or 'auto'}",
         user_id=user_id,
         session_id=session_id,
         input=body.request,
-        metadata={"user_name": user_name},
+        metadata={"user_name": user_name, "turn_id": turn_id},
     )
 
     initial_state = {
@@ -161,7 +177,7 @@ def submit_query(
         "report": {},
         "session_id": session_id,
         "checkpoint_ref": "",
-        "trace_id": session_id,
+        "trace_id": trace_id,
         "chat_history": [],
         "review_iterations": 0,
         "report_notes_unincorporated": "",
@@ -178,7 +194,9 @@ def submit_query(
     try:
         result = graph.invoke(initial_state, config=config)
         refresh_ttl(session_id)
-        return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
+        return ApiResponse(
+            status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
+        )
     except Exception as e:
         if _checkpointer_active and _is_redis_failure(e):
             logger.error(
@@ -192,7 +210,9 @@ def submit_query(
                 if isinstance(report, dict):
                     report["memory_degraded"] = True
                     result["report"] = report
-                return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
+                return ApiResponse(
+                    status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
+                )
             except Exception as e2:
                 logger.exception("Stateless fallback failed after checkpointer outage")
                 return ApiResponse(
@@ -207,6 +227,10 @@ def submit_query(
 @traced("resume")
 def resume_query(session_id: str, body: ResumeRequest):
     """Resume graph execution after human review interrupt."""
+    # A resume is a distinct turn from the submit that interrupted it, and is
+    # separately flaggable.
+    turn_id = str(uuid.uuid4())
+    trace_id = current_trace_id()
     set_trace_attributes(
         name=f"resume:{session_id}",
         session_id=session_id,
@@ -238,7 +262,9 @@ def resume_query(session_id: str, body: ResumeRequest):
             config=config,
         )
         refresh_ttl(session_id)
-        return ApiResponse(status="ok", data=_payload_from_result(result, session_id))
+        return ApiResponse(
+            status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
+        )
     except Exception as e:
         logger.exception("resume: graph invoke failed for %s", session_id)
         return ApiResponse(status="error", errors=[str(e)])
