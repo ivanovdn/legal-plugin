@@ -19,6 +19,7 @@ ENTRY module's globals, so these tests drive and patch
 import importlib
 
 from skills.legal_research.edit_parsing import (
+    _looks_like_memory_promise,
     _should_retry_preference,
     _extract_proposed_preferences,
     _looks_like_preference_request,
@@ -93,44 +94,53 @@ def test_detector_ignores_ordinary_questions():
         assert not _looks_like_preference_request(req), req
 
 
-def test_always_never_instructions_trigger_the_retry():
-    """Trace 004bccfe: "Always flag uncapped indemnity" — the prompt's OWN worked
-    example — produced "I have remembered that you want me to always flag
-    uncapped indemnity in future reviews" with no block and no retry. The
-    preference was lost while the model claimed it was stored.
+def test_memory_promise_detects_the_models_own_claim():
+    """The reliable signal is the MODEL saying it stored something, not how the
+    attorney phrased the request. Strings below are verbatim model output."""
+    for reply in [
+        "I have remembered that you want me to always flag uncapped indemnity in future reviews.",
+        "I have noted your preference to always flag uncapped indemnity in future reviews.",
+        "I have remembered that your client is Sony for future reference.",
+        "Understood, I will keep in mind that your client is Blizzard for this conversation.",
+    ]:
+        assert _looks_like_memory_promise(reply), reply
 
-    always/never stay out of _PREFERENCE_REQUEST_RE (that one also overrides the
-    context-only suppression), so only the retry path takes the wider net.
+    for reply in [
+        "The effective date is June 1, 2026.",
+        "Two directors sign, per Section 9.",
+        "I will replace 'Signed by: [__]' with 'Signed by: Jane Doe'.",   # an EDIT promise
+        "",
+    ]:
+        assert not _looks_like_memory_promise(reply), reply
+
+
+def test_retry_fires_on_either_signal_independently():
+    """Two independent signals, OR'd. Each must work without the other.
+
+    This is what stops the rule list growing: a phrasing nobody anticipated
+    ("Always flag uncapped indemnity") is caught by the model's narration, so
+    _PREFERENCE_REQUEST_RE never needs another entry.
     """
-    for req in [
-        "Always flag uncapped indemnity",
-        "always flag uncapped indemnity",
-        "Never accept a governing law outside the US.",
-        "I always want indemnity flagged red",
-    ]:
-        assert _should_retry_preference(req), req
+    plain = "Noted."
+    promise = "I have remembered that for future reference."
+
+    # attorney signal alone
+    assert _should_retry_preference("remember our client is Acme", plain)
+    # model signal alone — the phrasing the old rules missed
+    assert _should_retry_preference("Always flag uncapped indemnity", promise)
+    # neither
+    assert not _should_retry_preference("who signs this?", plain)
+    # a question mentioning "always" no longer needs a special case at all
+    assert not _should_retry_preference("does this clause always apply?", plain)
 
 
-def test_questions_never_trigger_the_retry():
-    """The reason always/never were excluded in the first place — a false
-    positive costs a real LLM round-trip on the commonest kind of turn. The
-    discriminator is sentence FORM, not the verb."""
-    for req in [
-        "does this clause always apply?",
-        "is the cap never enforceable?",
-        "Should we always flag uncapped indemnity?",
-        "what is the billing model?",
-        "who signs this agreement?",
-    ]:
-        assert not _should_retry_preference(req), req
-
-
-def test_context_only_suppression_is_not_widened():
-    """"keep in mind we always use Tennessee law" is still context-only —
-    widening the SUPPRESSION predicate would invert what "keep in mind" means."""
-    req = "keep in mind we always use Tennessee law"
-    assert not _looks_like_preference_request(req)   # suppression still applies
-    assert _should_retry_preference(req)             # but a lost block is recoverable
+def test_context_only_requests_short_circuit_the_retry():
+    """The model narrates "I have noted…" for these too, but guard A would drop
+    the card — so retrying is pure waste. An explicit storage verb still wins."""
+    promise = "I have noted that your client is Sony for this conversation."
+    assert not _should_retry_preference("keep in mind our client is Sony", promise)
+    assert not _should_retry_preference("keep in mind we always use Tennessee law", promise)
+    assert _should_retry_preference("keep in mind X, and remember our client is Sony", promise)
 
 
 # --- the retry ------------------------------------------------------------

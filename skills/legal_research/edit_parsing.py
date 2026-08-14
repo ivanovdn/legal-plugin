@@ -236,44 +236,50 @@ _PREFERENCE_REQUEST_RE = re.compile(
 )
 
 
-# Standing instructions phrased with always/never, and the interrogative test
-# that keeps ordinary questions out.
+# The model announcing that it stored something — the preference-side twin of
+# _EDIT_PROMISE_RE, and for the same reason: the reliable signal is the model's
+# own claim, not the shape of the user's request.
 #
-# These were excluded from _PREFERENCE_REQUEST_RE because "does this clause
-# always apply?" matched, and a false positive costs a real LLM round-trip. The
-# justification was that "always flag X" is the prompt's own worked example and
-# the model emits a block for it reliably — which trace `004bccfe` disproved:
-# "Always flag uncapped indemnity" produced "I have remembered that you want me
-# to always flag uncapped indemnity in future reviews" with NO block and no
-# retry, so the preference was lost while the model claimed it was stored.
-#
-# The real discriminator was never the verb, it was the sentence form.
-_ALWAYS_NEVER_RE = re.compile(r"\b(?:always|never)\b", re.I)
-_INTERROGATIVE_RE = re.compile(
-    r"^\s*(?:do|does|did|is|are|was|were|can|could|should|would|will|may|"
-    r"what|which|who|whom|whose|why|when|where|how)\b",
+# Replaces a growing pile of user-phrasing rules. `remember` needed `always`
+# needed `never` needed an interrogative test to undo the collateral, and the
+# next phrasing would have needed another — an open set, English-only, and
+# defeated by a typo ("remeber" only worked because the MODEL understood it).
+# The model's vocabulary here is small and stable, and it carried the correct
+# signal in every trace examined, including `004bccfe` where the user-side rules
+# missed: "I have remembered that you want me to always flag uncapped indemnity
+# in future reviews" — with no block behind it.
+_MEMORY_PROMISE_RE = re.compile(
+    r"\b(?:"
+    r"i(?:['\u2019]|\s)?(?:ll|ve|will|have|shall)\s+(?:remember|note|record|stor|keep)\w{0,4}"
+    r"|noted your preference"
+    r"|(?:saved|added|stored)\s+(?:this|that|it)?\s*(?:as\s+)?a?\s*preference"
+    r")",
     re.I,
 )
 
 
-def _is_question(request: str) -> bool:
-    r = (request or "").strip()
-    return r.endswith("?") or bool(_INTERROGATIVE_RE.match(r))
+def _looks_like_memory_promise(reply: str) -> bool:
+    """Did the MODEL claim it stored something for the future?"""
+    return bool(_MEMORY_PROMISE_RE.search(reply or ""))
 
 
-def _should_retry_preference(request: str) -> bool:
+def _should_retry_preference(request: str, reply: str) -> bool:
     """Should we spend a second call recovering a forgotten preference block?
 
-    Broader than `_looks_like_preference_request` on purpose. That one also
-    decides whether an explicit storage request OVERRIDES the context-only
-    suppression, and widening it there would let "keep in mind we always use
-    Tennessee law" produce a card — the opposite of what "keep in mind" means.
-    Retrying is cheap and self-correcting (the retry prompt returns an empty
-    block for a one-off), so only THIS path takes the wider net.
+    Two INDEPENDENT signals, OR'd: the attorney used an explicit storage verb,
+    or the model claimed to have remembered. The cost asymmetry justifies the
+    OR — a miss loses a preference while the model says it saved it (invisible),
+    a false positive costs one ~200-token call whose prompt returns an empty
+    block for a one-off (self-correcting).
+
+    Context-only requests short-circuit: the model narrates "I have noted …" for
+    those too, but guard A would discard the resulting card, so retrying is pure
+    waste. Reuses the guard's own condition rather than adding another rule.
     """
-    if _looks_like_preference_request(request):
-        return True
-    return bool(_ALWAYS_NEVER_RE.search(request or "")) and not _is_question(request)
+    explicit = _looks_like_preference_request(request)
+    if _looks_like_context_only_request(request) and not explicit:
+        return False
+    return explicit or _looks_like_memory_promise(reply)
 
 
 def _looks_like_preference_request(request: str) -> bool:
