@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.trace import TracerProvider
 
+import api.routes.query as q
 from observability.spans import current_trace_id
 
 
@@ -85,8 +86,6 @@ def test_state_trace_id_is_no_longer_the_session_id(monkeypatch):
 
 def test_interrupt_branch_carries_the_ids():
     """A blocked review is still a turn, and still flaggable."""
-    import api.routes.query as q
-
     class _Interrupt:
         value = {"task_type": "contract_review", "risk_level": "high",
                  "llm_response": "", "risk_flags": [], "review_iterations": 0}
@@ -97,7 +96,6 @@ def test_interrupt_branch_carries_the_ids():
 
 
 def test_legacy_awaiting_review_branch_carries_the_ids():
-    import api.routes.query as q
     payload = q._payload_from_result(
         {"awaiting_review": True, "task_type": "contract_review", "report": {}},
         "s1", "t-9", "abc",
