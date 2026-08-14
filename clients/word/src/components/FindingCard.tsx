@@ -155,21 +155,6 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
                 {redline.kind === "running" ? "Applying…" : "Accept redline"}
               </button>
             )}
-            <button
-              className="flag-button"
-              title="Report a problem with this finding"
-              onClick={() =>
-                requestFlag({
-                  turn,
-                  surface: "findings",
-                  targetKind: "finding",
-                  targetRef: finding.issueId || finding.clause,
-                  snapshot: buildSnapshot({ target: finding }),
-                })
-              }
-            >
-              ⚑
-            </button>
           </div>
           {finding.redline && !finding.hasQuotedText && (
             <div className="card-hint">
@@ -179,6 +164,33 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
           )}
         </>
       )}
+
+      {/*
+        Unconditional, unlike the block above: currentText/redline/hasQuotedText
+        gate actions that need an anchor in the document (Show-in-document,
+        Accept redline). Reporting a bad finding needs nothing from the
+        document, so this must not inherit that gating — currentText is often
+        empty on exactly the findings most worth flagging (the team's Issue
+        cells frequently describe a problem meta-textually, e.g. "Effective
+        date is a placeholder", instead of quoting wording).
+      */}
+      <div className="card-actions">
+        <button
+          className="flag-button"
+          title="Report a problem with this finding"
+          onClick={() =>
+            requestFlag({
+              turn,
+              surface: "findings",
+              targetKind: "finding",
+              targetRef: finding.issueId || finding.clause,
+              snapshot: buildSnapshot({ target: finding }),
+            })
+          }
+        >
+          ⚑
+        </button>
+      </div>
       {comment.kind === "done" && <div className="card-status success">{comment.message}</div>}
       {comment.kind === "error" && <div className="card-status error">{comment.message}</div>}
       {comment.kind === "notfound" && <div className="card-status info">{comment.message}</div>}
