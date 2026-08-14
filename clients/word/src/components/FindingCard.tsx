@@ -2,6 +2,7 @@ import { useState } from "react";
 import RiskBadge from "./RiskBadge";
 import type { Finding } from "../parser";
 import { acceptRedline, goToClause, showInDocument } from "../word";
+import { buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
 
 type ActionState =
   | { kind: "idle" }
@@ -19,7 +20,7 @@ function buildCommentBody(f: Finding): string {
   return lines.join("\n");
 }
 
-export default function FindingCard({ finding }: { finding: Finding }) {
+export default function FindingCard({ finding, turn }: { finding: Finding; turn: TurnRef }) {
   const [comment, setComment] = useState<ActionState>({ kind: "idle" });
   const [redline, setRedline] = useState<ActionState>({ kind: "idle" });
   const [jump, setJump] = useState<ActionState>({ kind: "idle" });
@@ -29,7 +30,16 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     setJump({ kind: "running" });
     const res = await goToClause(anchors);
     // Success is silent — the Word selection is the feedback. Only surface errors.
-    setJump(res.ok ? { kind: "idle" } : { kind: res.notFound ? "notfound" : "error", message: res.error });
+    if (res.ok) {
+      setJump({ kind: "idle" });
+    } else {
+      setJump({ kind: res.notFound ? "notfound" : "error", message: res.error });
+      if (res.notFound) {
+        recordEvent(turn, "findings", "finding_jump_notfound", {
+          targetRef: finding.issueId || finding.clause, detail: res.error,
+        });
+      }
+    }
   };
 
   const anchors = finding.anchors.length > 0 ? finding.anchors : [finding.currentText];
@@ -38,8 +48,14 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     if (comment.kind === "running") return;
     setComment({ kind: "running" });
     const res = await showInDocument(anchors, buildCommentBody(finding));
-    if (res.ok) setComment({ kind: "done", message: "Commented ✓" });
-    else setComment({ kind: res.notFound ? "notfound" : "error", message: res.error });
+    if (res.ok) {
+      setComment({ kind: "done", message: "Commented ✓" });
+      recordEvent(turn, "findings", "finding_commented", {
+        targetRef: finding.issueId || finding.clause,
+      });
+    } else {
+      setComment({ kind: res.notFound ? "notfound" : "error", message: res.error });
+    }
   };
 
   const onAccept = async () => {
@@ -50,10 +66,17 @@ export default function FindingCard({ finding }: { finding: Finding }) {
     }
     setRedline({ kind: "running" });
     const res = await acceptRedline(anchors, finding.redline);
-    if (res.ok) setRedline({ kind: "done", message: "Applied ✓ — see Track Changes" });
-    // A failed redline apply is always a genuine error (acceptRedline never
-    // returns notFound) — the calm pill is only for navigation (jump/comment).
-    else setRedline({ kind: "error", message: res.error });
+    if (res.ok) {
+      setRedline({ kind: "done", message: "Applied ✓ — see Track Changes" });
+      recordEvent(turn, "findings", "redline_applied", { targetRef: finding.issueId || finding.clause });
+    } else {
+      // A failed redline apply is always a genuine error (acceptRedline never
+      // returns notFound) — the calm pill is only for navigation (jump/comment).
+      setRedline({ kind: "error", message: res.error });
+      recordEvent(turn, "findings", "redline_failed", {
+        targetRef: finding.issueId || finding.clause, detail: res.error,
+      });
+    }
   };
 
   return (
@@ -132,6 +155,21 @@ export default function FindingCard({ finding }: { finding: Finding }) {
                 {redline.kind === "running" ? "Applying…" : "Accept redline"}
               </button>
             )}
+            <button
+              className="flag-button"
+              title="Report a problem with this finding"
+              onClick={() =>
+                requestFlag({
+                  turn,
+                  surface: "findings",
+                  targetKind: "finding",
+                  targetRef: finding.issueId || finding.clause,
+                  snapshot: buildSnapshot({ target: finding }),
+                })
+              }
+            >
+              ⚑
+            </button>
           </div>
           {finding.redline && !finding.hasQuotedText && (
             <div className="card-hint">

@@ -8,6 +8,8 @@ import {
 } from "../parseEditBlocks";
 import { extractPreferenceBlocks } from "../parsePreferenceBlocks";
 import { readBody } from "../word";
+import { buildSnapshot, recordEvent, requestFlag, type TurnRef, EMPTY_TURN } from "../feedback";
+import { resolveDocumentId } from "../docIdentity";
 import EditProposalCard from "./EditProposalCard";
 import PreferenceSuggestionCard from "./PreferenceSuggestionCard";
 
@@ -20,6 +22,8 @@ export interface ChatMessage {
   promisedEditMissing?: boolean;
   /** Original LLM output before edit-block stripping — for the "show raw" toggle. */
   rawResponse?: string;
+  /** Identifies the backend turn that produced this reply — for flags and events. */
+  turn?: TurnRef;
 }
 
 // Phrases the LLM uses when it claims it's about to make an edit OR has just
@@ -73,6 +77,12 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
         setMemoryDegraded(false);
         return;
       }
+      const turn: TurnRef = {
+        turnId: res.data?.turn_id ?? "",
+        traceId: res.data?.trace_id ?? "",
+        sessionId,
+        documentId: await resolveDocumentId(),
+      };
       setMemoryDegraded(Boolean(res.data?.memory_degraded));
       const rawAnswer =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "(no response)";
@@ -109,8 +119,15 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
           proposedPreferences: proposedPreferences.length > 0 ? proposedPreferences : undefined,
           promisedEditMissing,
           rawResponse: rawAnswer,
+          turn,
         },
       ]);
+      // Denominators. Without these you only ever see cards the attorney acted
+      // on, and "ignored" is a different signal from "discarded".
+      recordEvent(turn, "chat", "edits_proposed", { detail: String(proposedEdits.length) });
+      recordEvent(turn, "chat", "preferences_suggested", {
+        detail: String(proposedPreferences.length),
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -137,11 +154,36 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
           <div key={i} className={`chat-msg chat-${m.role}`}>
             <div className="chat-role">{m.role === "user" ? "You" : "Assistant"}</div>
             <div className="chat-content">{m.content}</div>
+            {m.role === "assistant" && (
+              <button
+                className="flag-button"
+                title="Report a problem with this reply"
+                onClick={() =>
+                  requestFlag({
+                    turn: m.turn ?? EMPTY_TURN,
+                    surface: "chat",
+                    targetKind: "reply",
+                    targetRef: m.content.slice(0, 120),
+                    snapshot: buildSnapshot({
+                      assistantOutput: m.rawResponse ?? m.content,
+                      request: messages[i - 1]?.content,
+                    }),
+                  })
+                }
+              >
+                ⚑
+              </button>
+            )}
             {m.proposedEdits?.map((proposal, j) => (
-              <EditProposalCard key={`${i}-${j}`} proposal={proposal} />
+              <EditProposalCard key={`${i}-${j}`} proposal={proposal} turn={m.turn ?? EMPTY_TURN} />
             ))}
             {m.proposedPreferences?.map((p, j) => (
-              <PreferenceSuggestionCard key={`pref-${i}-${j}`} text={p} onAdded={onPreferenceAdded} />
+              <PreferenceSuggestionCard
+                key={`pref-${i}-${j}`}
+                text={p}
+                turn={m.turn ?? EMPTY_TURN}
+                onAdded={onPreferenceAdded}
+              />
             ))}
             {m.promisedEditMissing && (
               <div className="chat-warning">

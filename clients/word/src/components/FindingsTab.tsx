@@ -10,6 +10,8 @@ import {
 import type { Risk } from "../parser";
 import { applyFindingFilters, ALL_RISKS, ownerKey, type FindingFilters } from "../findingFilters";
 import { readBody } from "../word";
+import { recordEvent, type TurnRef, EMPTY_TURN } from "../feedback";
+import { resolveDocumentId } from "../docIdentity";
 import FindingCard from "./FindingCard";
 
 type Status =
@@ -28,6 +30,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [rawResponse, setRawResponse] = useState<string>("");
   const [persistError, setPersistError] = useState<string | null>(null);
+  const [turn, setTurn] = useState<TurnRef>(EMPTY_TURN);
 
   const onReview = async () => {
     setPersistError(null);
@@ -61,6 +64,16 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
         parsed.contractType = detected.toUpperCase();
       }
       setResult(parsed);
+      const reviewTurn: TurnRef = {
+        turnId: res.data?.turn_id ?? "",
+        traceId: res.data?.trace_id ?? "",
+        sessionId,
+        documentId: await resolveDocumentId(),
+      };
+      setTurn(reviewTurn);
+      recordEvent(reviewTurn, "findings", "findings_rendered", {
+        detail: String(parsed.findings.length),
+      });
       const rpe = res.data?.report?.review_persist_error;
       if (rpe) setPersistError(rpe);
       setStatus({ kind: "idle" });
@@ -93,7 +106,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
 
       {result && (
         <div className="findings-scroll">
-          <Results result={result} />
+          <Results result={result} turn={turn} />
           {rawResponse && <RawResponse markdown={rawResponse} />}
         </div>
       )}
@@ -275,7 +288,7 @@ function FilterBar({
   );
 }
 
-function Results({ result }: { result: ReviewSummary }) {
+function Results({ result, turn }: { result: ReviewSummary; turn: TurnRef }) {
   const { findings, blockers, businessQuestions, gate, counts, header } = result;
 
   const [filters, setFilters] = useState<FindingFilters>({
@@ -349,7 +362,7 @@ function Results({ result }: { result: ReviewSummary }) {
 
       <div className="findings">
         {visible.map((f) => (
-          <FindingCard key={keyOf.get(f)} finding={f} />
+          <FindingCard key={keyOf.get(f)} finding={f} turn={turn} />
         ))}
       </div>
 

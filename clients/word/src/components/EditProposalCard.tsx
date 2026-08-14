@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { EditProposal } from "../parseEditBlocks";
 import { applyEdit, goToClause } from "../word";
+import { buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
 
 type Status =
   | { kind: "idle" }
@@ -23,7 +24,7 @@ const ACTION_CLASS: Record<EditProposal["action"], string> = {
   delete: "edit-action-delete",
 };
 
-export default function EditProposalCard({ proposal }: { proposal: EditProposal }) {
+export default function EditProposalCard({ proposal, turn }: { proposal: EditProposal; turn: TurnRef }) {
   // The lawyer can tweak new_text before applying — e.g. "2x" → "3x".
   const [draftText, setDraftText] = useState(proposal.new_text ?? "");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -38,7 +39,12 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
     if (!jumpTarget) return;
     setJumpMsg(null);
     const res = await goToClause(jumpTarget);
-    if (!res.ok) setJumpMsg({ message: res.error, notFound: !!res.notFound });
+    if (!res.ok) {
+      setJumpMsg({ message: res.error, notFound: !!res.notFound });
+      if (res.notFound) {
+        recordEvent(turn, "chat", "edit_jump_notfound", { targetRef: jumpTarget });
+      }
+    }
   };
 
   const onApply = async () => {
@@ -49,12 +55,26 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
         ? proposal
         : { ...proposal, new_text: draftText };
     const res = await applyEdit(effective);
-    if (res.ok) setStatus({ kind: "applied" });
-    else setStatus({ kind: "error", message: res.error });
+    const ref = proposal.target_text ?? proposal.anchor_text ?? "";
+    if (res.ok) {
+      setStatus({ kind: "applied" });
+      recordEvent(turn, "chat", "edit_applied", { targetKind: proposal.action, targetRef: ref });
+    } else {
+      setStatus({ kind: "error", message: res.error });
+      // The error string is the point: this is the only field measurement of
+      // body.search matching we have ever had.
+      recordEvent(turn, "chat", "edit_failed", {
+        targetKind: proposal.action, targetRef: ref, detail: res.error,
+      });
+    }
   };
 
   const onDiscard = () => {
     if (status.kind === "running") return;
+    recordEvent(turn, "chat", "edit_discarded", {
+      targetKind: proposal.action,
+      targetRef: proposal.target_text ?? proposal.anchor_text ?? "",
+    });
     setStatus({ kind: "discarded" });
   };
 
@@ -150,6 +170,21 @@ export default function EditProposalCard({ proposal }: { proposal: EditProposal 
             Discard
           </button>
         )}
+        <button
+          className="flag-button"
+          title="Report a problem with this edit"
+          onClick={() =>
+            requestFlag({
+              turn,
+              surface: "chat",
+              targetKind: "edit",
+              targetRef: proposal.target_text ?? proposal.anchor_text ?? "",
+              snapshot: buildSnapshot({ target: proposal }),
+            })
+          }
+        >
+          ⚑
+        </button>
       </div>
 
       {status.kind === "applied" && (

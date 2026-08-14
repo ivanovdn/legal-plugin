@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { appendPreference } from "../preferences";
+import { recordEvent, type TurnRef } from "../feedback";
 
 interface Props {
   text: string;
+  turn: TurnRef;
   onAdded?: () => void;
 }
 
-export default function PreferenceSuggestionCard({ text, onAdded }: Props) {
+export default function PreferenceSuggestionCard({ text, turn, onAdded }: Props) {
   const [state, setState] = useState<"idle" | "saving" | "added" | "error">("idle");
 
   const add = async () => {
@@ -14,6 +16,7 @@ export default function PreferenceSuggestionCard({ text, onAdded }: Props) {
     try {
       await appendPreference(text);
       setState("added");
+      recordEvent(turn, "chat", "preference_added", { targetRef: text.slice(0, 200) });
       onAdded?.();
     } catch {
       setState("error");
