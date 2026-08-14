@@ -2,6 +2,7 @@
 """LLM caller — sends prompt + retrieved context to Ollama."""
 
 import logging
+import time
 
 import httpx
 
@@ -82,6 +83,18 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     else:
         messages = [*chat_history, *base]
 
+    # Announce BEFORE the call. uvicorn writes its access line only when the
+    # response completes, and every other log here fires post-call — so an
+    # in-flight turn was completely invisible: "queued behind another tenant on
+    # the shared Ollama" and "wedged" looked identical in `docker logs`.
+    chars = sum(len(m.get("content", "")) for m in messages)
+    logger.info(
+        "[llm_caller] -> ollama model=%s task=%s messages=%d chars=%d url=%s",
+        settings.llm_model, state.get("task_type", "?"), len(messages), chars,
+        settings.ollama_base_url,
+    )
+    started = time.monotonic()
+
     try:
         response = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
@@ -109,9 +122,13 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
                 "temperature": 0.0,
             },
         )
-        logger.info("[llm_caller] got %d char response", len(content))
+        logger.info(
+            "[llm_caller] <- ollama %d chars in %.1fs", len(content), time.monotonic() - started
+        )
     except Exception as e:
-        logger.error("[llm_caller] LLM call failed: %s", e)
+        logger.error(
+            "[llm_caller] LLM call FAILED after %.1fs: %s", time.monotonic() - started, e
+        )
         state["llm_response"] = f"Error: LLM call failed — {e}"
 
     return state

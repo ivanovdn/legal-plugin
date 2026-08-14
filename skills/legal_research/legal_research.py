@@ -3,6 +3,7 @@
 
 import logging
 import re
+import time
 
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
@@ -177,9 +178,22 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
 
     _cap_chat_context(messages, uploaded_text, request)
 
+    # Same reason as llm_caller: without a pre-call line an in-flight doc-chat
+    # turn leaves no trace anywhere until it finishes, so a slow shared Ollama
+    # is indistinguishable from a hang.
+    settings = get_settings()
+    logger.info(
+        "[legal_research] -> doc_chat model=%s doc=%d chars grounded=%s history=%d msgs=%d",
+        settings.llm_model, len(uploaded_text), bool(playbook), len(chat_history), len(messages),
+    )
+    started = time.monotonic()
+
     llm = _build_llm()
     response = traced_invoke(llm, messages, name="doc_chat")
     content = response.content if hasattr(response, "content") else str(response)
+    logger.info(
+        "[legal_research] <- doc_chat %d chars in %.1fs", len(content), time.monotonic() - started
+    )
     edits = _extract_proposed_edits(content)
 
     # Retry path: when the model promised an edit in prose but forgot the
