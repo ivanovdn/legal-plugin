@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     preferences_dir: str = "data/attorneys"   # USER.md at <preferences_dir>/<attorney_id>/USER.md
     preferences_max_chars: int = 8000         # cap on prefs injected into a prompt (counts to chat budget)
 
+    # Tester feedback capture — written reports + interaction telemetry
+    feedback_enabled: bool = True               # False = /api/feedback 403s, /api/events discards
+    feedback_snapshot_max_chars: int = 200000   # per-field cap on the replay snapshot, truncation-marked
+
     # O365 SSO (slice 3) — dormant until sso_enabled; False = trust X-User-ID (today)
     sso_enabled: bool = False
     sso_tenant_id: str = ""      # Azure AD tenant (directory) id

@@ -29,6 +29,39 @@ class PreferencesUpdate(BaseModel):
     markdown: str = Field("", description="Full markdown content of the attorney's USER.md")
 
 
+class FeedbackSubmission(BaseModel):
+    """An attorney's written report about one turn.
+
+    attorney_id is deliberately absent — identity comes from the auth seam.
+    """
+    turn_id: str = Field("", description="The turn being reported on")
+    trace_id: str = Field("", description="OTel trace id for that turn, when tracing is on")
+    session_id: str = Field("", description="Pane session the turn belongs to")
+    document_id: str = Field("", description="Stable document id")
+    surface: str = Field("general", description="findings | chat | general")
+    target_kind: str = Field("", description="finding | edit | reply; empty for unattached feedback")
+    target_ref: str = Field("", description="Issue id, clause, or target-text excerpt")
+    comment: str = Field(..., description="The attorney's own words")
+    snapshot: dict | None = Field(None, description="Replayable input context; capped server-side")
+
+
+class InteractionEvent(BaseModel):
+    """One recorded interaction with an assistant suggestion."""
+    turn_id: str = ""
+    session_id: str = ""
+    document_id: str = ""
+    surface: str = ""
+    action: str
+    target_kind: str = ""
+    target_ref: str = ""
+    detail: str = Field("", description="Error text on failures; the count on per-turn counters")
+
+
+class InteractionEventBatch(BaseModel):
+    """A burst of interactions in one request."""
+    events: list[InteractionEvent] = Field(default_factory=list)
+
+
 class ApiResponse(BaseModel):
     """Standard response envelope."""
     status: str = "ok"

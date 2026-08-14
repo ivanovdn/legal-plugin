@@ -48,8 +48,10 @@ from api.routes.health import router as health_router
 from api.routes.query import router as query_router
 from api.routes.documents import router as documents_router
 from api.routes.preferences import router as preferences_router
+from api.routes.feedback import router as feedback_router
 
 app.include_router(health_router)
 app.include_router(query_router)
 app.include_router(documents_router)
 app.include_router(preferences_router)
+app.include_router(feedback_router)
