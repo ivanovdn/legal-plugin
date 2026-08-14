@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sendFeedback, type FlagTarget } from "../feedback";
 
 // In-pane, deliberately NOT Office.context.ui.displayDialogAsync: a dialog is a
@@ -26,6 +26,19 @@ export default function FeedbackPanel({
 }) {
   const [comment, setComment] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  // Tracks the sent-state auto-close timer so it can be cancelled on
+  // unmount. Without this, a completed send schedules onClose 1200ms out;
+  // if the attorney then flags something else before it fires (new `key`,
+  // this instance unmounts, a fresh one mounts), the stale timer still
+  // calls the shared onClose and silently closes the NEW panel — and
+  // whatever the attorney had started typing into it — out from under them.
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+    };
+  }, []);
 
   const onSend = async () => {
     if (!comment.trim() || status.kind === "sending") return;
@@ -33,7 +46,7 @@ export default function FeedbackPanel({
     try {
       await sendFeedback(target, comment.trim());
       setStatus({ kind: "sent" });
-      setTimeout(onClose, 1200);
+      closeTimer.current = setTimeout(onClose, 1200);
     } catch (e) {
       setStatus({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }

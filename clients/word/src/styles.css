@@ -854,6 +854,18 @@ button.secondary:disabled {
   align-items: center;
   margin-bottom: 6px;
 }
+/* Close affordance in the feedback panel header — mirrors .link-button
+   (below) minus the underline/margin, which suit an inline text link but
+   not a bare "✕" icon. */
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.link:hover { color: var(--fg); }
 .feedback-input {
   width: 100%;
   box-sizing: border-box;

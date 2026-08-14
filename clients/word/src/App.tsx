@@ -5,7 +5,7 @@ import ChatTab, { type ChatMessage } from "./components/ChatTab";
 import PreferencesTab from "./components/PreferencesTab";
 import FinalizeBar from "./components/FinalizeBar";
 import FeedbackPanel from "./components/FeedbackPanel";
-import { buildSnapshot, onFlagRequested, EMPTY_TURN, type FlagTarget } from "./feedback";
+import { buildSnapshot, onFlagRequested, requestFlag, EMPTY_TURN, type FlagTarget } from "./feedback";
 import { readBody } from "./word";
 import type { ReviewSummary } from "./parser";
 
@@ -45,8 +45,14 @@ export default function App() {
         <button
           className="secondary feedback-open"
           onClick={() =>
-            setFlagTarget({
-              turn: EMPTY_TURN,
+            // Route through requestFlag (not setFlagTarget directly) so this
+            // shares the document-attach path registered below — otherwise
+            // the panel's "sends the document text" promise is false for the
+            // one entry point (the miss) that has no card to hang off.
+            // Seed sessionId (already in scope) rather than a fully-empty
+            // EMPTY_TURN, so a miss report still has something to correlate.
+            requestFlag({
+              turn: { ...EMPTY_TURN, sessionId },
               surface: "general",
               targetKind: "",
               targetRef: "",
@@ -87,7 +93,15 @@ export default function App() {
         />
       </div>
       {flagTarget && (
-        <FeedbackPanel target={flagTarget} onClose={() => setFlagTarget(null)} />
+        // Keyed on target identity: switching from one card's flag to
+        // another's without closing in between must remount the panel, not
+        // reuse the instance — otherwise typed-but-unsent text (and status)
+        // from the old target survives onto the new one.
+        <FeedbackPanel
+          key={`${flagTarget.surface}:${flagTarget.targetKind}:${flagTarget.targetRef}:${flagTarget.turn.turnId}`}
+          target={flagTarget}
+          onClose={() => setFlagTarget(null)}
+        />
       )}
       {/* Document-level action, available regardless of the active tab. */}
       <FinalizeBar />
