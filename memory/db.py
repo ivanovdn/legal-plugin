@@ -99,6 +99,13 @@ _STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_event_turn ON interaction_event (turn_id, action)",
+    # The attorney's own question, on the chat counter events only. Without it,
+    # "did we propose edits on a purely factual question?" — the spurious-edit
+    # rate, a High-priority roadmap item — needs a manual trace lookup per turn
+    # and cannot be computed in SQL at all. Added by ALTER rather than in the
+    # CREATE above because CREATE TABLE IF NOT EXISTS will not add a column to
+    # a table that already exists (same pattern as audit_log.user_name).
+    "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS request TEXT NOT NULL DEFAULT ''",
 ]
 
 

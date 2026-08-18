@@ -124,9 +124,18 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
       ]);
       // Denominators. Without these you only ever see cards the attorney acted
       // on, and "ignored" is a different signal from "discarded".
-      recordEvent(turn, "chat", "edits_proposed", { detail: String(proposedEdits.length) });
+      //
+      // `request` carries the attorney's own words. It is what makes the
+      // spurious-edit rate ("edits proposed on a purely factual question")
+      // computable in SQL — without it, classifying a turn means opening its
+      // trace by hand, one at a time.
+      recordEvent(turn, "chat", "edits_proposed", {
+        detail: String(proposedEdits.length),
+        request: question,
+      });
       recordEvent(turn, "chat", "preferences_suggested", {
         detail: String(proposedPreferences.length),
+        request: question,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

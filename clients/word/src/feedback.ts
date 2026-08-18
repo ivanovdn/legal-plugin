@@ -68,7 +68,7 @@ export function recordEvent(
   turn: TurnRef,
   surface: string,
   action: string,
-  extra: { targetKind?: string; targetRef?: string; detail?: string } = {},
+  extra: { targetKind?: string; targetRef?: string; detail?: string; request?: string } = {},
 ): void {
   try {
     void fetch("/api/events", {
@@ -85,6 +85,7 @@ export function recordEvent(
             target_kind: extra.targetKind ?? "",
             target_ref: (extra.targetRef ?? "").slice(0, 200),
             detail: (extra.detail ?? "").slice(0, 500),
+            request: (extra.request ?? "").slice(0, 500),
           },
         ],
       }),

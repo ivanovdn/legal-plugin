@@ -296,10 +296,12 @@ that, and this is a deliberate choice, not an oversight this doc failed to descr
 `target_ref` (capped at 200 chars) carries a quoted excerpt of the clause the
 interaction targeted, and on `edit_failed` specifically, `detail` (capped at 500 chars)
 carries the matcher's own error string, which itself quotes the excerpt it searched for:
-`Couldn't find "<clause text>" in the document.` No full document text and no model
-*output* travel through the event log — that boundary holds — but short fragments of
-the client's contract text do, on every event whose `target_ref`/`detail` happens to
-carry one.
+`Couldn't find "<clause text>" in the document.` And since iteration 2, `request`
+(capped at 500 chars) carries the attorney's own question verbatim on the two chat
+per-turn counters. No full document text and no model *output* travel through the event
+log — that boundary holds — but short fragments of the client's contract text do, on
+every event whose `target_ref`/`detail` happens to carry one, and the attorney's own
+words do on every chat turn.
 
 The excerpt earns its place. Without it, `edit_failed` tells you only that
 `body.search` missed, and nothing about which clause — a bare tally of "how often,"
@@ -312,6 +314,15 @@ anecdote, never data. The excerpt is what turns the count into something actiona
 category of exposure the "On storing contract text" section below already accepts for
 the flagged-item snapshot — the same database, the same host, the same tenancy — just
 at a much smaller size per row.
+
+`request` earns its place the same way, for a different question. The
+spurious-edit item — the model answering "who signs?" correctly and then emitting
+three unrequested edit cards — is a **rate** question, and classifying a turn as
+factual-vs-edit-request requires knowing what was asked. Without `request` that
+means opening each turn's trace by hand, one at a time, which is not a rate; it is
+the anecdote-gathering this whole feature exists to replace. `edit_proposal_turns()`
+puts question, proposal count, and the attorney's applied/discarded verdict on one
+row, so the bug is visible by scanning rather than by investigation.
 
 ### On storing contract text
 

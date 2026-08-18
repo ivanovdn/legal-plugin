@@ -7,6 +7,7 @@ import FinalizeBar from "./components/FinalizeBar";
 import FeedbackPanel from "./components/FeedbackPanel";
 import { buildSnapshot, onFlagRequested, requestFlag, EMPTY_TURN, type FlagTarget } from "./feedback";
 import { readBody } from "./word";
+import { resolveDocumentId } from "./docIdentity";
 import type { ReviewSummary } from "./parser";
 
 export default function App() {
@@ -32,7 +33,17 @@ export default function App() {
       // Attach the document at flag time, not at card-render time — the doc may
       // have changed since the turn, and what we want is what they are looking at.
       const documentText = await readBody().catch(() => "");
-      setFlagTarget({ ...t, snapshot: { ...t.snapshot, ...buildSnapshot({ documentText }) } });
+      // Card flags inherit a documentId from the turn that produced them; the
+      // header ("miss") flag has no turn, so resolve it here. Without this a
+      // miss report — the entry point with no card, and the one class of
+      // failure nothing else can catch — cannot be grouped with any other
+      // feedback on the same contract.
+      const documentId = t.turn.documentId || (await resolveDocumentId().catch(() => ""));
+      setFlagTarget({
+        ...t,
+        turn: { ...t.turn, documentId },
+        snapshot: { ...t.snapshot, ...buildSnapshot({ documentText }) },
+      });
     });
     return () => onFlagRequested(null);
   }, []);

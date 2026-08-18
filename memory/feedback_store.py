@@ -100,6 +100,7 @@ def _insert_event(
     target_kind: str,
     target_ref: str,
     detail: str,
+    request: str,
 ) -> None:
     """Raw insert — RAISES. The quiet policy lives in the two callers below, so
     record_events can count what actually landed instead of what it attempted."""
@@ -107,12 +108,12 @@ def _insert_event(
         conn.execute(
             """INSERT INTO interaction_event
                (timestamp, turn_id, session_id, document_id, attorney_id,
-                surface, action, target_kind, target_ref, detail)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                surface, action, target_kind, target_ref, detail, request)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 datetime.now(timezone.utc).isoformat(),
                 turn_id, session_id, document_id, attorney_id,
-                surface, action, target_kind, target_ref, detail,
+                surface, action, target_kind, target_ref, detail, request,
             ),
         )
 
@@ -128,6 +129,7 @@ def record_event(
     target_kind: str = "",
     target_ref: str = "",
     detail: str = "",
+    request: str = "",
 ) -> None:
     """Insert one interaction event. NEVER raises — telemetry is not load-bearing."""
     try:
@@ -135,6 +137,7 @@ def record_event(
             turn_id=turn_id, session_id=session_id, document_id=document_id,
             attorney_id=attorney_id, surface=surface, action=action,
             target_kind=target_kind, target_ref=target_ref, detail=detail,
+            request=request,
         )
     except Exception as e:
         logger.warning("interaction_event write failed (%s): %s", action, e)
@@ -155,6 +158,7 @@ def record_events(events: list[dict], *, attorney_id: str) -> int:
                 target_kind=event.get("target_kind", ""),
                 target_ref=event.get("target_ref", ""),
                 detail=event.get("detail", ""),
+                request=event.get("request", ""),
             )
             written += 1
         except Exception as e:
@@ -162,20 +166,48 @@ def record_events(events: list[dict], *, attorney_id: str) -> int:
     return written
 
 
-def recent_feedback(limit: int = 50) -> list[dict]:
+def _filters(since: str, document_id: str, attorney_id: str) -> tuple[str, list]:
+    """Build an AND-joined WHERE fragment (no leading AND/WHERE) + its params.
+
+    Shared by both tables — `feedback` and `interaction_event` carry the same
+    three filter columns. `timestamp` is TEXT, but every writer stores
+    `datetime.now(timezone.utc).isoformat()`, so all values share one format and
+    one offset and a lexicographic `>=` is a correct chronological comparison.
+    """
+    clauses: list[str] = []
+    params: list = []
+    if since:
+        clauses.append("timestamp >= %s")
+        params.append(since)
+    if document_id:
+        clauses.append("document_id = %s")
+        params.append(document_id)
+    if attorney_id:
+        clauses.append("attorney_id = %s")
+        params.append(attorney_id)
+    return " AND ".join(clauses), params
+
+
+def recent_feedback(
+    limit: int = 50, *, since: str = "", document_id: str = "", attorney_id: str = "",
+) -> list[dict]:
     """Most recent feedback rows, newest first. Snapshot deliberately omitted
     (it's the large replayable payload, not the read-back summary — pull it
     directly with `WHERE id = ...` once you have the id from here).
 
     Keys: id, timestamp, turn_id, trace_id, document_id, attorney_id,
     user_name, surface, target_kind, target_ref, comment.
+
+    Optional filters narrow to one pilot window, contract, or tester.
     """
+    where, params = _filters(since, document_id, attorney_id)
     with get_pool().connection() as conn:
         cur = conn.execute(
-            """SELECT id, timestamp, turn_id, trace_id, document_id, attorney_id,
-                      user_name, surface, target_kind, target_ref, comment
-               FROM feedback ORDER BY id DESC LIMIT %s""",
-            (limit,),
+            f"""SELECT id, timestamp, turn_id, trace_id, document_id, attorney_id,
+                       user_name, surface, target_kind, target_ref, comment
+                FROM feedback {'WHERE ' + where if where else ''}
+                ORDER BY id DESC LIMIT %s""",
+            (*params, limit),
         )
         rows = cur.fetchall()
     keys = ("id", "timestamp", "turn_id", "trace_id", "document_id", "attorney_id",
@@ -183,7 +215,9 @@ def recent_feedback(limit: int = 50) -> list[dict]:
     return [dict(zip(keys, r)) for r in rows]
 
 
-def event_counts() -> list[dict]:
+def event_counts(
+    *, since: str = "", document_id: str = "", attorney_id: str = "",
+) -> list[dict]:
     """Interaction counts grouped by surface and action — the denominators.
 
     A raw COUNT(*): correct for per-item actions (edit_applied, ...), but for
@@ -193,16 +227,21 @@ def event_counts() -> list[dict]:
     caller's job (see scripts/feedback_report.py) not to present the two as
     comparable.
     """
+    where, params = _filters(since, document_id, attorney_id)
     with get_pool().connection() as conn:
         cur = conn.execute(
-            """SELECT surface, action, COUNT(*) FROM interaction_event
-               GROUP BY surface, action ORDER BY surface, action"""
+            f"""SELECT surface, action, COUNT(*) FROM interaction_event
+                {'WHERE ' + where if where else ''}
+                GROUP BY surface, action ORDER BY surface, action""",
+            params,
         )
         rows = cur.fetchall()
     return [{"surface": r[0], "action": r[1], "count": r[2]} for r in rows]
 
 
-def counter_totals() -> list[dict]:
+def counter_totals(
+    *, since: str = "", document_id: str = "", attorney_id: str = "",
+) -> list[dict]:
     """Turns fired vs. summed magnitude, for the three per-turn counters only.
 
     Returns one dict per (surface, action) actually present, with:
@@ -216,6 +255,7 @@ def counter_totals() -> list[dict]:
     action filter alone to keep it clean — it contributes 0 to `total` and
     never raises; the row still counts toward `turns`.
     """
+    where, params = _filters(since, document_id, attorney_id)
     with get_pool().connection() as conn:
         placeholders = ", ".join(["%s"] * len(COUNTER_ACTIONS))
         cur = conn.execute(
@@ -224,8 +264,45 @@ def counter_totals() -> list[dict]:
                                           THEN detail::bigint ELSE 0 END), 0)
                 FROM interaction_event
                 WHERE action IN ({placeholders})
+                {'AND ' + where if where else ''}
                 GROUP BY surface, action ORDER BY surface, action""",
-            COUNTER_ACTIONS,
+            (*COUNTER_ACTIONS, *params),
         )
         rows = cur.fetchall()
     return [{"surface": r[0], "action": r[1], "turns": r[2], "total": r[3]} for r in rows]
+
+
+def edit_proposal_turns(
+    limit: int = 50, *, since: str = "", document_id: str = "", attorney_id: str = "",
+) -> list[dict]:
+    """One row per chat turn that proposed edits: what was asked, and what the
+    attorney did with what came back. Newest first.
+
+    This is the surface for the spurious-edit question — "did we propose edits
+    on a purely factual question?" A turn whose `request` reads as a question
+    ("who signs?") but whose `proposed` is non-zero is the bug reproducing, and
+    `applied`/`discarded` record the attorney's verdict on each one. Reading it
+    needs no trace lookup, which is what makes the rate computable at all.
+
+    Keys: timestamp, turn_id, request, proposed, applied, discarded, failed.
+    """
+    where, params = _filters(since, document_id, attorney_id)
+    with get_pool().connection() as conn:
+        cur = conn.execute(
+            f"""SELECT e.timestamp, e.turn_id, e.request,
+                       CASE WHEN e.detail ~ '^[0-9]+$' THEN e.detail::bigint ELSE 0 END,
+                       (SELECT COUNT(*) FROM interaction_event a
+                         WHERE a.turn_id = e.turn_id AND a.action = 'edit_applied'),
+                       (SELECT COUNT(*) FROM interaction_event d
+                         WHERE d.turn_id = e.turn_id AND d.action = 'edit_discarded'),
+                       (SELECT COUNT(*) FROM interaction_event f
+                         WHERE f.turn_id = e.turn_id AND f.action = 'edit_failed')
+                FROM interaction_event e
+                WHERE e.action = 'edits_proposed'
+                {'AND ' + where if where else ''}
+                ORDER BY e.id DESC LIMIT %s""",
+            (*params, limit),
+        )
+        rows = cur.fetchall()
+    keys = ("timestamp", "turn_id", "request", "proposed", "applied", "discarded", "failed")
+    return [dict(zip(keys, r)) for r in rows]

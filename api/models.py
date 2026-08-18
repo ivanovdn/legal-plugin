@@ -62,6 +62,12 @@ class InteractionEvent(BaseModel):
     )
     target_ref: str = ""
     detail: str = Field("", description="Error text on failures; the count on per-turn counters")
+    request: str = Field(
+        "",
+        description="The attorney's own question, on the chat per-turn counters only. "
+        "Makes 'did we propose edits on a factual question?' answerable in SQL "
+        "instead of one manual trace lookup per turn.",
+    )
 
 
 class InteractionEventBatch(BaseModel):
