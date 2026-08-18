@@ -109,7 +109,7 @@ This is the part of the pilot that matters most. **Work on real contracts the wa
 
 **Where it goes:** to the development team, so we can reproduce the exact case. **It does not train the assistant** — flagging something will not change its behaviour tomorrow. It gets the problem fixed properly instead.
 
-> **Save your document before you close it.** On an unsaved document, Word can't store the id that ties your feedback to that contract, so reports from a closed-unsaved draft can't be grouped with later ones. (Known bug, being fixed.)
+> **Save your document before you close it.** On an unsaved document, Word can't store the id that ties your feedback to that contract, so reports from a closed-unsaved draft can't be grouped with later ones. **The pane tells you when this applies** — a blue "This document isn't saved yet" notice above the tabs. Save the file and it clears. If you don't see the notice, you're fine. (The underlying limitation is a known bug; the notice is so it never costs you work silently.)
 
 ---
 

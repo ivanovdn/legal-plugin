@@ -884,3 +884,19 @@ button.secondary:disabled {
    read like a primary call to action. */
 .feedback-open { margin-top: 6px; align-self: flex-start; }
 .disclosure { font-size: 11px; color: #605e5c; margin-top: 4px; }
+
+/* Unsaved-document notice. Blue/informational ON PURPOSE — the amber
+   .status.warning already means "this turn wasn't remembered", and this means
+   "nothing about this document will be remembered after you close it". If the
+   two looked alike, the one that fires on almost every pilot document would
+   train testers to ignore the one that fires rarely. */
+.unsaved-notice {
+  color: var(--fg);
+  background: #eaf3fb;
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  padding: 8px 10px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}

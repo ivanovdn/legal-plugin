@@ -7,7 +7,7 @@ import FinalizeBar from "./components/FinalizeBar";
 import FeedbackPanel from "./components/FeedbackPanel";
 import { buildSnapshot, onFlagRequested, requestFlag, EMPTY_TURN, type FlagTarget } from "./feedback";
 import { readBody } from "./word";
-import { resolveDocumentId } from "./docIdentity";
+import { isDocumentUnsaved, resolveDocumentId } from "./docIdentity";
 import type { ReviewSummary } from "./parser";
 
 export default function App() {
@@ -25,6 +25,28 @@ export default function App() {
   const [prefMarkdown, setPrefMarkdown] = useState<string>("");
   const [prefLoaded, setPrefLoaded] = useState<boolean>(false);
   const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
+  const [unsaved, setUnsaved] = useState<boolean>(false);
+
+  // The document id lives in Office settings, which persist only WITH the file.
+  // On an unsaved document that id dies when the document closes, orphaning this
+  // contract's review history, chat and feedback rows — permanently unjoinable
+  // from any later work on the same contract. Nothing here prevents that; this
+  // ends the silence, which was the actual complaint. Re-checked on focus so
+  // saving the file in Word and coming back to the pane clears the notice.
+  useEffect(() => {
+    let alive = true;
+    const check = () => {
+      isDocumentUnsaved()
+        .then((u) => { if (alive) setUnsaved(u); })
+        .catch(() => { /* never let a probe break the pane */ });
+    };
+    check();
+    window.addEventListener("focus", check);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", check);
+    };
+  }, []);
 
   // One panel for the whole pane; cards reach it through the feedback module's
   // one-slot channel rather than four levels of prop drilling.
@@ -78,6 +100,18 @@ export default function App() {
           can measure what it gets wrong.
         </p>
       </header>
+      {/* Deliberately NOT the amber .status.warning used for memory_degraded.
+          That one means "this turn wasn't remembered"; this means "nothing
+          about this document will be remembered after you close it" — a
+          document-level fact, which is also why it sits above the tabs rather
+          than inside one. Two identical-looking banners would blur both. */}
+      {unsaved && (
+        <p className="unsaved-notice" role="status">
+          <strong>This document isn't saved yet.</strong> Its review history, chat
+          and any feedback you send stop being linked to this contract once you
+          close it. Save the file first.
+        </p>
+      )}
       <Tabs active={tab} onChange={setTab} />
       {/* Both tabs always mounted; visibility toggled via CSS so state persists. */}
       <div className={`tab-pane ${tab === "findings" ? "" : "hidden"}`}>
