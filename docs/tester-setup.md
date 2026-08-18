@@ -95,6 +95,22 @@ Pick your Word surface:
 ### 6. Identify yourself
 Open the add-in → **Preferences tab → "Your name"** → enter your name. It tags your activity in the audit log (backend attribution; there's no login yet).
 
+### 7. Telling us what it got wrong
+
+This is the part of the pilot that matters most. **Work on real contracts the way you normally would** — the point is to find where the assistant is wrong, not to exercise every button.
+
+**The ⚑ button** sits on every finding, every proposed edit, and every chat reply. Use it whenever something is wrong: a finding that isn't a real problem, an edit that changes the wrong thing, an answer that's incorrect. One sentence is plenty — *"this clause is fine as written"*, *"wrong field"*, *"we never require this"*.
+
+**The "Send feedback" button at the top** is for what the assistant **missed** — *"it didn't flag the assignment clause"*. Please use it. A missed issue leaves no trace anywhere; if you don't tell us, nothing else can.
+
+**You don't need to report anything else.** Which edits you Apply and which you Discard is already recorded, so a Discard is itself a signal. Just work normally.
+
+**What gets sent:** your note, the text of the document you're working on, and the specific finding or edit you flagged. Your name is attached.
+
+**Where it goes:** to the development team, so we can reproduce the exact case. **It does not train the assistant** — flagging something will not change its behaviour tomorrow. It gets the problem fixed properly instead.
+
+> **Save your document before you close it.** On an unsaved document, Word can't store the id that ties your feedback to that contract, so reports from a closed-unsaved draft can't be grouped with later ones. (Known bug, being fixed.)
+
 ---
 
 ## Troubleshooting

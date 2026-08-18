@@ -33,7 +33,7 @@ clients/
 rag/                Qdrant search tools (search_legal, get_document, escalate)
 docs/wiki.md        Architecture + shipped/follow-up log — keep current
 docs/playbook_cross_reference.md   Crosswalk: Playbook × SKILL.md × References
-docs/deploy-vm.md   VM deploy runbook (Docker: backend image + Caddy + compose overlay; Ollama on Spark 172.20.0.22)
+docs/deploy-vm.md   VM deploy runbook (backend image + Caddy + compose overlay; Ollama on Spark 172.20.0.22) · feedback-loop.md = running/reading the tester loop
 scripts/start.sh    Boots backend + Chainlit (Word add-in is `npm run dev` in clients/word/)
 scripts/build_playbook.py   .docx + team skill folders → playbook/ markdown (idempotent)
 ```
