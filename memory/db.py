@@ -110,13 +110,29 @@ _STATEMENTS = [
 
 
 def get_pool() -> ConnectionPool:
-    """Return the app-wide pool, opening it on first use."""
+    """Return the app-wide pool, opening it on first use.
+
+    The pool is bounded on purpose. psycopg_pool waits 30 s for a connection by
+    default, and since every store call in the app goes through this one pool,
+    that default is what turned an `app-db` outage into a half-minute hang in
+    the Word pane — even on the recall reads that already catch their failure
+    and degrade correctly, but only after burning the full wait first.
+    `timeout` bounds waiting for a pooled connection; `connect_timeout` bounds
+    establishing a new one, which a refused connection ends instantly but a
+    blackholed host (VPN drop, a VM that stops answering) does not.
+    """
     global _pool
     if _pool is None:
-        dsn = get_settings().database_url
-        _pool = ConnectionPool(dsn, min_size=1, max_size=10,
-                               kwargs={"autocommit": True}, open=True)
-        logger.info("Postgres pool opened")
+        settings = get_settings()
+        timeout = settings.db_pool_timeout
+        # libpq takes whole seconds and silently treats 1 as 2.
+        connect_timeout = max(2, round(timeout))
+        _pool = ConnectionPool(
+            settings.database_url, min_size=1, max_size=10, timeout=timeout,
+            kwargs={"autocommit": True, "connect_timeout": connect_timeout},
+            open=True,
+        )
+        logger.info("Postgres pool opened (timeout=%ss)", timeout)
     return _pool
 
 

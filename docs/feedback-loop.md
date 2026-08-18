@@ -127,7 +127,7 @@ confirming after any deploy:
 # quiet: telemetry must never break an Apply
 curl -s -X POST localhost:8000/api/events -H 'Content-Type: application/json' \
   -H 'X-User-ID: probe' -d '{"events":[{"action":"probe","surface":"probe"}]}'
-# -> 200 {"recorded":1}   (and 200 {"recorded":0} with app-db down, in ~2ms)
+# -> 200 {"recorded":1}   (and 200 {"recorded":0} with app-db down)
 
 # loud: the attorney was shown "Sent ✓", so a lost report is a lie
 curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/api/feedback \
@@ -138,6 +138,13 @@ docker compose exec -T app-db psql -U legal -d legal \
   -c "DELETE FROM feedback WHERE attorney_id='probe';" \
   -c "DELETE FROM interaction_event WHERE attorney_id='probe';"
 ```
+
+**On timing.** With `app-db` down both calls now settle within `config.db_pool_timeout`
+(3.0s), and return instantly when the pool is already holding broken connections.
+Before that bound they inherited `psycopg_pool`'s 30s default — measured 30.00s
+against an unreachable host, versus 3.00s after. If a probe hangs appreciably
+longer than 3s, the setting is not reaching the pool; check for a stale backend
+(`uvicorn` does not reload config changes) rather than assuming Postgres is slow.
 
 Design rationale, including why events carry short contract excerpts and why
 there are two tables rather than one:

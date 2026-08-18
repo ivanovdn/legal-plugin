@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     chainlit_port: int = 8080
     database_url: str = "postgresql://legal:legal@localhost:5434/legal"
+    db_pool_timeout: float = 3.0              # seconds to wait for a pooled connection; psycopg_pool's own default is 30s, long enough that an app-db outage reads as a hang rather than a degrade
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
