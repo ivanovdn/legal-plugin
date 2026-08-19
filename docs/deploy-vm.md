@@ -39,6 +39,13 @@ curl http://172.20.0.22:11434/api/tags
 
 ## Step 1 — Configure (Bucket A)
 
+Shorthand used throughout this doc — every compose command needs both files, so
+set it once per shell:
+
+```bash
+DC="docker compose -f docker-compose.yml -f docker-compose.remote.yml"
+```
+
 ```bash
 cp .env.remote.example .env
 ```
@@ -156,12 +163,48 @@ If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-co
 curl -k https://<hostname>/api/preferences -H "X-User-ID: test"   # expect 200
 ```
 
+**Confirm the served pane is the commit you just deployed.** A green
+`docker ps` says nothing about which bundle Caddy is handing out — that is
+exactly how the VM served an 11-Aug bundle against a twice-redeployed backend
+with nothing reporting the mismatch. Probe the bundle for strings only the new
+frontend contains:
+
+```bash
+HOST=$(grep -E '^ADDIN_ORIGIN_HOST=' .env | cut -d= -f2)
+ASSET=$(curl -sk --resolve "$HOST:443:127.0.0.1" "https://$HOST/taskpane.html" \
+  | grep -o '/assets/taskpane-[^"]*\.js')
+BUNDLE=$(curl -sk --resolve "$HOST:443:127.0.0.1" "https://$HOST$ASSET")
+for str in "saved yet" "Send feedback" "usually the wrong field"; do
+  printf '%-26s %s\n' "$str" "$(printf '%s' "$BUNDLE" | grep -o -F "$str" | wc -l)"
+done
+```
+
+Each must be ≥ 1. Use `grep -o … | wc -l`, **not** `grep -c`: a Vite bundle is
+essentially one line, so `grep -c` with several `-e` patterns returns `1` when
+*any* single pattern matches and tells you nothing about the others.
+
+**Confirm the backend is logging.** App records only reach the log because
+`api/main.py::configure_logging()` runs at import — uvicorn configures its own
+loggers and leaves root at WARNING. A restart is enough to test it:
+
+```bash
+$DC restart backend
+$DC logs --since 2m backend | grep "Legal plugin API started"
+```
+
+Empty output means app-level logging is dead: every `logger.info` is being
+discarded, including the in-flight turn lines that are the only way to tell a
+slow LLM from a wedged one. Check `LOG_LEVEL` in `.env`.
+
 Then load the pane in Word (see Step 6) and run a review. Confirm it persisted:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   exec app-db psql -U legal -d legal -c "SELECT count(*) FROM review_store;"
 ```
+
+Finally, the two feedback endpoints and the report — see
+[`docs/feedback-loop.md`](feedback-loop.md) "Health check" and "Read it back".
 
 ---
 
@@ -195,3 +238,48 @@ Note: `manifest.prod.xml` reuses the dev manifest's `<Id>` (`D57831EF-…`), sin
 - **Office.js refuses to load the add-in at all:** almost always the cert — confirm it's trusted (not self-signed) on the tester's machine, per Step 2.
 - **Backend can't reach the LLM:** re-run the Spark `curl` check from Prerequisites; also confirm `LLM_MODEL` is actually pulled on Spark.
 - **`app-db` unhealthy / backend won't start:** `docker compose -f docker-compose.yml -f docker-compose.remote.yml logs app-db` — usually `APP_DB_PASSWORD` mismatch between `.env` and a stale volume from a prior password.
+
+### `ValueError: bad marshal data (invalid reference)` on any `python` in the backend container
+
+Hit on SRV-AGENT-01 2026-08-19. A corrupt `.pyc` inside the image's
+`site-packages`, baked by `pip`'s byte-compilation and then **frozen in the
+build cache** — so `up -d --build` reported `Built 3.4s`, reused the poisoned
+layer, and could never fix it. The fix is to make the pip layer re-run:
+
+```bash
+docker builder prune -f
+$DC build --no-cache backend
+$DC up -d backend
+$DC run --rm --no-deps backend python -c "import config; print('ok')"
+```
+
+**Two things make this dangerous rather than merely annoying.**
+
+The *running* backend keeps working — it holds its modules in memory — so the
+symptom shows up only when you start a second process (the feedback report, a
+one-off script). Everything looks healthy right up until the container is
+recreated or the VM reboots, at which point the backend does not come back.
+Treat a failed `run --rm … python -c "import config"` as an outage waiting to
+happen, not a tooling annoyance.
+
+And `rm -rf __pycache__` inside the running container *appears* to fix it. It
+does not: that writes an overlayfs whiteout into one container's writable
+layer, which is discarded on recreation. Confirm the fix against a **fresh
+container** (`run --rm`), never `exec`.
+
+Diagnosis, if you want to confirm before rebuilding — a valid magic number with
+a plausible size rules out truncation and a partial write, which points at the
+cached layer rather than the disk:
+
+```bash
+$DC exec backend python -c "
+import importlib.util
+p='/usr/local/lib/python3.12/site-packages/pydantic/plugin/__pycache__/_schema_validator.cpython-312.pyc'
+d=open(p,'rb').read()
+print('size', len(d), 'magic', d[:4].hex(), 'expected', importlib.util.MAGIC_NUMBER.hex())"
+```
+
+If it recurs after a `--no-cache` rebuild, stop treating it as bad luck and
+remove the bytecode from the image entirely: `pip install --no-compile` plus
+`ENV PYTHONDONTWRITEBYTECODE=1`. Costs a couple of seconds of startup compile
+and is immune to the whole class.

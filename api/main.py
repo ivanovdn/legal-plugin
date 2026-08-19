@@ -14,6 +14,41 @@ from observability.otel import init_observability
 logger = logging.getLogger(__name__)
 
 
+def configure_logging() -> None:
+    """Give the root logger a handler and a level, so app records survive.
+
+    Uvicorn configures only its own `uvicorn*` loggers and leaves root at
+    WARNING with no handler. Records from api/, graph/, memory/ and skills/
+    propagate up to that root, find nothing that will handle them, and are
+    dropped — everything below ERROR silently, since `logging.lastResort` only
+    covers WARNING and above. The in-flight turn logging, which exists so a slow
+    LLM can be told apart from a wedged one, was invisible in production for
+    exactly this reason.
+
+    Called at import rather than in the lifespan: uvicorn imports the app after
+    configuring its own logging, so this runs late enough to see an unconfigured
+    root and early enough to catch anything logged during startup.
+
+    `basicConfig` is a no-op when root already has handlers, which is the
+    behaviour we want in both directions — it will not fight pytest's capture
+    plugin, and `force=True` would tear that capture out from under every other
+    test. uvicorn's `uvicorn` and `uvicorn.access` loggers set propagate=False,
+    so their records stop at uvicorn's own handler and are not double-printed
+    by the one installed here.
+    """
+    try:
+        level = get_settings().log_level
+    except Exception:  # noqa: BLE001 — a bad .env must still get a readable traceback
+        level = "INFO"
+    logging.basicConfig(
+        level=level.upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+
+configure_logging()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: init observability; init_db() creates all Postgres store tables

@@ -17,12 +17,28 @@ is the denominator, and it was being generated and thrown away.
 
 ## Read it back
 
+Locally:
+
 ```bash
 uv run python -m scripts.feedback_report                    # everything, all time
 uv run python -m scripts.feedback_report --days 7           # this week
 uv run python -m scripts.feedback_report --attorney <id>    # one tester
 uv run python -m scripts.feedback_report --document <id>    # one contract
 ```
+
+**On the VM there is no `uv`** — the backend image installs with plain pip, and
+`app-db` publishes only `127.0.0.1:5434`, so this cannot be run from your own
+machine either. Use a throwaway container off the same image:
+
+```bash
+DC="docker compose -f docker-compose.yml -f docker-compose.remote.yml"
+$DC run --rm --no-deps backend python -m scripts.feedback_report --days 7
+```
+
+`run --rm` rather than `exec` so a long report can't be tied to the serving
+container's lifetime; `--no-deps` so reading the data never restarts anything.
+`scripts/` is in the image (`.dockerignore` excludes `tests/`, `docs/` and
+`clients/`, not `scripts/`).
 
 Unfiltered it is cumulative for all time, so pilot week one and week ten look
 identical. `--days` is what makes a trend visible.
@@ -81,6 +97,14 @@ Once there is volume — and only then:
 | **Finding engagement** | `finding_commented` ÷ `findings_rendered` *total* | whether findings are actionable enough to act on |
 | **Spurious proposal rate** | see below | whether we propose edits on questions that asked for none |
 
+⚠️ **`finding_commented` does NOT mean the attorney commented on a finding.**
+It fires when the add-in inserts a Word comment into the document — the
+*Show in document* button ([FindingCard.tsx](../clients/word/src/components/FindingCard.tsx)),
+not the ⚑ flag. A flagged finding writes a `feedback` row and no
+`interaction_event` at all, so zero here alongside real feedback rows is
+correct, not a dropped write. Verified on the VM 2026-08-19.
+
+
 `edit_failed` carries the matcher's own error string in `detail`. That is the
 only field measurement this project has ever had of `findClauseRange`,
 `searchCandidates`, the 85% completeness guard, wildcard escaping and
@@ -121,16 +145,29 @@ does, and it needs no trace lookup — which is what made it computable at all.
 ## Health check
 
 Both endpoints are designed to fail in opposite directions, and it is worth
-confirming after any deploy:
+confirming after any deploy.
+
+**On the VM, `localhost:8000` does not exist** — `docker-compose.remote.yml`
+publishes no host port for the backend, so `/api/*` is reachable only through
+Caddy. Set `BASE` for wherever you are and the rest is identical:
+
+```bash
+# local
+BASE="http://localhost:8000"; CURL="curl -s"
+
+# VM (from the VM itself; --resolve avoids depending on its own /etc/hosts)
+HOST=$(grep -E '^ADDIN_ORIGIN_HOST=' .env | cut -d= -f2)
+BASE="https://$HOST"; CURL="curl -sk --resolve $HOST:443:127.0.0.1"
+```
 
 ```bash
 # quiet: telemetry must never break an Apply
-curl -s -X POST localhost:8000/api/events -H 'Content-Type: application/json' \
+$CURL -X POST "$BASE/api/events" -H 'Content-Type: application/json' \
   -H 'X-User-ID: probe' -d '{"events":[{"action":"probe","surface":"probe"}]}'
 # -> 200 {"recorded":1}   (and 200 {"recorded":0} with app-db down)
 
 # loud: the attorney was shown "Sent ✓", so a lost report is a lie
-curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/api/feedback \
+$CURL -o /dev/null -w '%{http_code}\n' -X POST "$BASE/api/feedback" \
   -H 'Content-Type: application/json' -H 'X-User-ID: probe' -d '{"comment":"probe"}'
 # -> 200   (and 500 with app-db down, writing nothing)
 
@@ -138,6 +175,10 @@ docker compose exec -T app-db psql -U legal -d legal \
   -c "DELETE FROM feedback WHERE attorney_id='probe';" \
   -c "DELETE FROM interaction_event WHERE attorney_id='probe';"
 ```
+
+Delete the probe rows even on a green run — they are indistinguishable from
+real tester rows in the report, and `attorney_id='probe'` is the only thing
+that separates them.
 
 **On timing.** With `app-db` down both calls now settle within `config.db_pool_timeout`
 (3.0s), and return instantly when the pool is already holding broken connections.

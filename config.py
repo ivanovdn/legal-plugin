@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     chainlit_port: int = 8080
     database_url: str = "postgresql://legal:legal@localhost:5434/legal"
     db_pool_timeout: float = 3.0              # seconds to wait for a pooled connection; psycopg_pool's own default is 30s, long enough that an app-db outage reads as a hang rather than a degrade
+    log_level: str = "INFO"                   # root log level; a real settings field because pydantic-settings forbids extra .env keys, so a bare os.environ read would crash the backend the moment an operator set it in .env
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
