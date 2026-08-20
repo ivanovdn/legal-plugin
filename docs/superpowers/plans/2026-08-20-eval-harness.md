@@ -384,8 +384,10 @@ try {
   threw = true;
 }
 pass(threw, "rule1: a 256-char query throws");
-pass(search(["y".repeat(300)], "y".repeat(255)).length === 1, "rule1: 255 chars is allowed");
-pass(search(["z".repeat(300)], "z".repeat(210)).length === 1, "rule1: 201-255 is allowed by Word even though word.ts filters at 200");
+// The paragraph is exactly the needle: `occurrences` advances by one character,
+// so a needle of 255 y's inside a paragraph of 300 y's would match 46 times.
+pass(search(["y".repeat(255)], "y".repeat(255)).length === 1, "rule1: 255 chars is allowed");
+pass(search(["z".repeat(210)], "z".repeat(210)).length === 1, "rule1: 201-255 is allowed by Word even though word.ts filters at 200");
 
 // --- Rule 2: never crosses a paragraph break ---
 pass(search(DOC, "1. GOVERNING LAW\nSigned by:").length === 0, "rule2: a needle with \\n never matches");
@@ -580,7 +582,7 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd clients/word && npx tsx src/wordFake.test.ts`
-Expected: 16 `PASS:` lines, exit 0.
+Expected: 18 `PASS:` lines, exit 0.
 
 - [ ] **Step 6: Prove every rule is load-bearing (mutation)**
 
@@ -601,10 +603,18 @@ For each of the eight rules, break it in `wordFake.ts`, confirm a **named** asse
 
 - [ ] **Step 7: Raise the assertion count and run the full gate**
 
-`clients/word/src/wordFake.test.ts` adds 16 assertions. Edit `scripts/check.sh`: `EXPECTED_PASS_COUNT=221` → `EXPECTED_PASS_COUNT=237`.
+`clients/word/src/wordFake.test.ts` adds **18** assertions, taking the total from 221 to 239.
+
+**Derive the number, do not trust it.** Run the file and count:
+
+```bash
+cd clients/word && npx tsx src/wordFake.test.ts | grep -c '^PASS: '
+```
+
+Set `EXPECTED_PASS_COUNT` in `scripts/check.sh` to `221 + that count`. If it is not 239, the test file was transcribed with an assertion missing or added — find out which before moving on.
 
 Run: `bash scripts/check.sh`
-Expected: `all checks passed`, with `237/237 PASS`.
+Expected: `all checks passed`, with `239/239 PASS`.
 
 - [ ] **Step 8: Commit**
 
@@ -956,7 +966,7 @@ Note: `paras` must become mutable for `applyMutation`. Change its declaration fr
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd clients/word && npx tsx src/wordFake.test.ts`
-Expected: 16 + 12 = 28 `PASS:` lines, exit 0.
+Expected: 18 + 12 = 30 `PASS:` lines, exit 0.
 
 If `noUnusedParameters` rejects `_prop`, confirm the leading underscore is present — the compiler exempts underscore-prefixed parameters.
 
@@ -978,10 +988,16 @@ Revert each after confirming.
 
 - [ ] **Step 7: Raise the assertion count and run the full gate**
 
-Edit `scripts/check.sh`: `EXPECTED_PASS_COUNT=237` → `EXPECTED_PASS_COUNT=249`.
+This task adds **12** more assertions, taking the total from 239 to 251. Derive it the same way:
+
+```bash
+cd clients/word && npx tsx src/wordFake.test.ts | grep -c '^PASS: '
+```
+
+That count is now the whole file's total (30). Set `EXPECTED_PASS_COUNT` to `221 + 30 = 251`.
 
 Run: `bash scripts/check.sh`
-Expected: `all checks passed`, `249/249 PASS`.
+Expected: `all checks passed`, `251/251 PASS`.
 
 - [ ] **Step 8: Commit**
 
@@ -1235,9 +1251,21 @@ async function runCase(c: Case): Promise<boolean> {
   return true; // other kinds land in later tasks
 }
 
-async function main(): Promise<void> {
-  const baseline = loadBaseline();
-  const cases = loadCases().filter((c) => c.kind === "match");
+/**
+ * Run every case of one kind and print its score line.
+ *
+ * Scoring is per kind but the contract is identical to the Python runner's:
+ * a baseline entry only lowers the bar for a case that actually ran, and a
+ * baselined case that PASSES is reported as loudly as a regression.
+ *
+ * Returns false if this kind regressed or produced an unexpected pass.
+ */
+async function runKind(
+  kind: Case["kind"],
+  all: Case[],
+  baseline: Record<string, string>,
+): Promise<boolean> {
+  const cases = all.filter((c) => c.kind === kind);
   const results: Array<[string, boolean]> = [];
   for (const c of cases) results.push([c.id, await runCase(c)]);
 
@@ -1254,8 +1282,22 @@ async function main(): Promise<void> {
     console.log(`  [now-passing] ${id} — in baseline but passed; remove the entry or check the case`);
   }
   const known = results.length - expected;
-  console.log(`match ${passed}/${results.length}${known ? `   (${known} known-failing)` : ""}`);
-  if (regressions.length > 0 || unexpectedPasses.length > 0) process.exitCode = 1;
+  console.log(`${kind} ${passed}/${results.length}${known ? `   (${known} known-failing)` : ""}`);
+  return regressions.length === 0 && unexpectedPasses.length === 0;
+}
+
+// Kinds are added here as later tasks implement them: Task 5 adds "apply",
+// Task 6 adds "parse".
+const KINDS = ["match"] as const;
+
+async function main(): Promise<void> {
+  const baseline = loadBaseline();
+  const all = loadCases();
+  let clean = true;
+  for (const kind of KINDS) {
+    if (!(await runKind(kind, all, baseline))) clean = false;
+  }
+  if (!clean) process.exitCode = 1;
 }
 
 await main();
@@ -1471,13 +1513,11 @@ async function runCase(c: Case): Promise<boolean> {
 }
 ```
 
-Replace `main`'s single-kind body with a per-kind loop. Change:
+Register the kind — this is the whole change to `main`, which already loops:
 
 ```ts
-  const cases = loadCases().filter((c) => c.kind === "match");
+const KINDS = ["match", "apply"] as const;
 ```
-
-into a loop over `["match", "apply"] as const`, reporting and gating each kind separately, and setting `process.exitCode = 1` if any kind regresses. Keep the existing per-kind printing exactly as it is; only the surrounding loop is new.
 
 - [ ] **Step 3: Run the runner to verify apply cases fail**
 
@@ -1620,7 +1660,22 @@ async function runParse(c: Case): Promise<boolean> {
 }
 ```
 
-Add `if (c.kind === "parse") return runParse(c);` to `runCase`, and add `"parse"` to the kind loop in `main`.
+Add the parse branch to `runCase` (it replaces the `return true;` fallthrough):
+
+```ts
+async function runCase(c: Case): Promise<boolean> {
+  if (c.kind === "parse") return runParse(c);
+  if (c.kind === "match") return runMatch(c);
+  if (c.kind === "apply") return runApply(c);
+  return false; // an unknown kind is a corpus error, not a pass
+}
+```
+
+And register the kind:
+
+```ts
+const KINDS = ["parse", "match", "apply"] as const;
+```
 
 - [ ] **Step 4: Run the runner to verify the parse cases fail**
 
