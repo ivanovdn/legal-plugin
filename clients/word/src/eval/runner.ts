@@ -106,12 +106,41 @@ async function runApply(c: Case): Promise<boolean> {
 // comparing (a comparison fix, not a case fix; see Task 6's report).
 const sameEdits = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * `expect.edits` is the BACKEND's raw output — `_extract_proposed_edits(prose)`,
+ * asserted verbatim by evals/run_parse.py. It is NOT "pre-normalization output
+ * from both parsers": `extractEditBlocks` (this file's import) bakes
+ * `normalizeProposals` into its own return value internally
+ * (parseEditBlocks.ts:400-406), so the frontend has no raw/pre-normalization
+ * stage to compare against at all — only the backend does.
+ *
+ * `expect.normalized` (optional) is `extractEditBlocks(prose).blocks` — the
+ * frontend's own (already-normalized) output. Defaults to `expect.edits` when
+ * absent, which is correct for inputs that trigger no normalization (the 3
+ * Task 1 cases: TS's extraction is a no-op there, so its output equals the
+ * backend's raw output).
+ *
+ * This mirrors the real data flow, not a hypothetical shared "extraction"
+ * stage: in production, ChatTab.tsx prefers the backend's `proposed_edits`
+ * whenever non-empty and runs `normalizeProposals` on whichever list wins
+ * (CLAUDE.md: "normalize at the point of use, not only inside
+ * extractEditBlocks"). So the invariant that actually matters — the one whose
+ * violation would silently hand an attorney one edit where they should get
+ * two — is `normalizeProposals(backend_raw) === frontend_output`, asserted
+ * below as check 2. Comparing raw backend output against already-normalized
+ * frontend output (the previous design) compares two different pipeline
+ * stages and calls the mismatch a divergence; it is not one.
+ */
 async function runParse(c: Case): Promise<boolean> {
   const { blocks } = extractEditBlocks(c.input.prose ?? "");
-  if (!sameEdits(blocks, c.expect.edits)) return false;
-  if (c.expect.normalized !== undefined) {
-    if (!sameEdits(normalizeProposals(blocks), c.expect.normalized)) return false;
-  }
+  // 1. Pin extractEditBlocks's OWN output (its already-normalized "blocks").
+  const expectedOwn = c.expect.normalized ?? c.expect.edits;
+  if (!sameEdits(blocks, expectedOwn)) return false;
+  // 2. Cross-language agreement, in the sense that matters: normalizing the
+  //    backend's raw extraction must produce exactly what the frontend's own
+  //    extraction already returns. This is the actual production invariant
+  //    (see docstring above) and the reason this eval kind exists.
+  if (!sameEdits(normalizeProposals(c.expect.edits ?? []), blocks)) return false;
   return true;
 }
 

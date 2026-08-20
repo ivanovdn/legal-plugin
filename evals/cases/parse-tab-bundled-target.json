@@ -1,13 +1,12 @@
 {
   "kind": "parse",
-  "why": "The LLM prepends a two-column neighbour with a tab. body.search cannot reach across a tab, so the bundled target fails. reduceTabSegment keeps only the segment that changed. Trace 9e5b804c. NOTE: reduceTabSegment is only invoked from inside splitMultilineFieldEdits's per-line diff loop, which itself requires a multi-line (>= 2 line) target with 2+ genuinely differing lines -- the brief's original single-line reproduction (no \\n at all) returns from splitMultilineFieldEdits at its very first line-count check and never reaches the tab-reduction logic. This input adds a second field line ('Title: [__]') so the block has two real diffs: the tab-bundled line reduces to its changed segment, and the second line splits normally alongside it -- mirroring the two-card structure already pinned in parseEditBlocks.test.ts test #11. As with the other two new cases, expect.edits/expect.normalized are the SPLIT form extractEditBlocks() actually returns; the backend never splits or reduces tab segments, so this is baselined as a confirmed cross-parser divergence.",
+  "why": "The LLM prepends a two-column neighbour with a tab. body.search cannot reach across a tab, so the bundled target fails. reduceTabSegment keeps only the segment that changed. Trace 9e5b804c. NOTE: reduceTabSegment is only invoked from inside splitMultilineFieldEdits's per-line diff loop, which itself requires a multi-line (>= 2 line) target with 2+ genuinely differing lines -- the brief's original single-line reproduction (no \\n at all) returns from splitMultilineFieldEdits at its very first line-count check and never reaches the tab-reduction logic. This input adds a second field line ('Title: [__]') so the block has two real diffs: the tab-bundled line reduces to its changed segment, and the second line splits normally alongside it -- mirroring the two-card structure already pinned in parseEditBlocks.test.ts test #11. expect.edits is the BACKEND's raw output (single unsplit 2-line replace, tab and all); expect.normalized is extractEditBlocks(prose).blocks. normalizeProposals(expect.edits) === extractEditBlocks(prose).blocks holds: normalizing the backend's raw output drops the tab segment and splits per field, producing exactly the 2 replace_all edits below.",
   "input": {
     "prose": "```json\n{\"action\": \"replace\", \"target_text\": \"............\\tSigned by: [__]\\nTitle: [__]\", \"new_text\": \"............\\tSigned by: Suzy Quatro\\nTitle: Chief Executive Officer\"}\n```\n"
   },
   "expect": {
     "edits": [
-      {"action": "replace_all", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"},
-      {"action": "replace_all", "target_text": "Title: [__]", "new_text": "Title: Chief Executive Officer"}
+      {"action": "replace", "target_text": "............\tSigned by: [__]\nTitle: [__]", "new_text": "............\tSigned by: Suzy Quatro\nTitle: Chief Executive Officer"}
     ],
     "normalized": [
       {"action": "replace_all", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"},

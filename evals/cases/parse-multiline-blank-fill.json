@@ -1,13 +1,12 @@
 {
   "kind": "parse",
-  "why": "The LLM collapses a whole signature block into ONE replace across several 'Label: value' lines. body.search cannot cross paragraph breaks, so only the first line matches and the 85% guard rejects it. splitMultilineFieldEdits must split it per line, and a labelled blank becomes replace_all because blanks recur across blocks. Traces 02e41ead, ce45b899. NOTE: extractEditBlocks() bakes normalizeProposals() into its return value (confirmed by reading src/parseEditBlocks.ts:400-406 and by direct probing) -- 'blocks' is already the post-split form, there is no public seam for pre-normalization output. So expect.edits here is the SPLIT form (what extractEditBlocks actually returns), matching expect.normalized exactly (re-normalizing an already-normalized list is a documented no-op). The backend's _extract_proposed_edits never splits (no counterpart), so it returns the original single 2-line replace unchanged -- a confirmed, permanent cross-parser divergence, baselined in evals/baseline.json.",
+  "why": "The LLM collapses a whole signature block into ONE replace across several 'Label: value' lines. body.search cannot cross paragraph breaks, so only the first line matches and the 85% guard rejects it. splitMultilineFieldEdits must split it per line, and a labelled blank becomes replace_all because blanks recur across blocks. Traces 02e41ead, ce45b899. expect.edits is the BACKEND's raw output (_extract_proposed_edits never splits a multi-line replace -- no counterpart to splitMultilineFieldEdits). expect.normalized is extractEditBlocks(prose).blocks -- the frontend's own already-normalized output (normalizeProposals is baked into its return value internally, parseEditBlocks.ts:400-406, so there is no pre-normalization frontend stage to compare against). The runner additionally asserts normalizeProposals(expect.edits) === extractEditBlocks(prose).blocks -- the real production invariant (ChatTab normalizes whichever list wins, backend-preferred) -- which holds here: normalizing the backend's single 2-line replace produces exactly the 2 replace_all edits below.",
   "input": {
     "prose": "I'll fill both fields.\n\n```json\n{\"action\": \"replace\", \"target_text\": \"Signed by: [__]\\nTitle: [__]\", \"new_text\": \"Signed by: Suzy Quatro\\nTitle: Chief Executive Officer\"}\n```\n"
   },
   "expect": {
     "edits": [
-      {"action": "replace_all", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"},
-      {"action": "replace_all", "target_text": "Title: [__]", "new_text": "Title: Chief Executive Officer"}
+      {"action": "replace", "target_text": "Signed by: [__]\nTitle: [__]", "new_text": "Signed by: Suzy Quatro\nTitle: Chief Executive Officer"}
     ],
     "normalized": [
       {"action": "replace_all", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"},
