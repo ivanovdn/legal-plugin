@@ -43,6 +43,12 @@ pass(search(["z".repeat(210)], "z".repeat(210)).length === 1, "rule1: 201-255 is
 pass(search(DOC, "1. GOVERNING LAW\nSigned by:").length === 0, "rule2: a needle with \\n never matches");
 pass(search(DOC, "GOVERNING LAW").length === 1, "rule2: within one paragraph matches");
 
+// A case author can embed a newline inside a single paragraph string; the
+// guard is what stops the fake matching across it. Without this assertion the
+// rule is invisible, because paragraphs are separate array elements and no
+// para.raw in the DOC fixture contains a newline at all.
+pass(search(["Alpha\nBeta"], "Alpha\nBeta").length === 0, "rule2: never matches across an embedded paragraph mark");
+
 // --- Rule 3: bracket metacharacters miss in literal mode ---
 pass(search(DOC, "Signed by: [__]").length === 0, "rule3: literal mode misses a bracketed blank");
 pass(search(DOC, "Signed by:").length === 1, "rule3: the clean leading run still matches");
@@ -79,3 +85,7 @@ pass(
   "rule8: a needle containing a tab never matches",
 );
 pass(search(["Signed by: Ann\tSigned by: Boris"], "Signed by: Boris").length === 1, "rule8: a tab-free segment still matches");
+
+// No wildcard metacharacters in this needle, so rule 3 cannot reject it first
+// — the tab guard is the only thing that can, which is what isolates it.
+pass(search(["Signed by: Ann\tSigned by: Boris"], "Ann\tSigned by").length === 0, "rule8: a tab-containing needle misses even with no metacharacters");
