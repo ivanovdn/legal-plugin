@@ -7,7 +7,8 @@
 # Requires Docker (tests/conftest.py spins an ephemeral Postgres).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
 
 echo "==> backend tests"
 uv run pytest tests/ -q
@@ -37,5 +38,9 @@ if [ "$actual_pass_count" -ne "$EXPECTED_PASS_COUNT" ]; then
   exit 1
 fi
 echo "==> word add-in assertions: $actual_pass_count/$EXPECTED_PASS_COUNT PASS"
+
+echo "==> eval harness"
+cd "$REPO_ROOT"
+bash scripts/eval.sh
 
 echo "==> all checks passed"

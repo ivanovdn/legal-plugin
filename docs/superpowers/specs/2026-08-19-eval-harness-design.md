@@ -155,6 +155,22 @@ genuinely not the same length:
 | `expect.edits` | both runners | what the parser extracted, before any normalization |
 | `expect.normalized` | TS only, optional | the list after `normalizeProposals` |
 
+> **Superseded during implementation.** The `expect.edits` row above ("what the parser
+> extracted, before any normalization, asserted by both runners") turned out to describe a
+> stage that cannot be observed: `extractEditBlocks` bakes `normalizeProposals` into its own
+> return value internally (`parseEditBlocks.ts:406`), so there is no pre-normalization
+> frontend output to compare against the backend's. Comparing the backend's raw output to
+> the frontend's already-normalized output compares two different pipeline stages, not a
+> divergence. This spec is left as a point-in-time snapshot rather than rewritten; the
+> corrected semantics actually implemented are: `expect.edits` is the **backend's raw
+> output** (asserted by the Python runner); `expect.normalized` is `extractEditBlocks().blocks`
+> (the frontend's own already-normalized output), defaulting to `expect.edits` when
+> extraction is a no-op; and the TS runner additionally asserts
+> `normalizeProposals(expect.edits) === extractEditBlocks().blocks` — the real production
+> invariant, since `ChatTab` normalizes whichever edit list wins before applying it. See
+> `docs/wiki.md` ("Deterministic eval harness (Tier 1)", `feat/eval-harness`) for the shipped
+> record.
+
 Two fields, no flags. `kind` alone decides which runners see a case.
 
 `normalizeProposals` (`splitMultilineFieldEdits` → `reduceTabSegment` →
