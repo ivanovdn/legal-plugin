@@ -1,0 +1,12 @@
+{
+  "kind": "parse",
+  "why": "When the LLM line-wraps a long string value, the raw newline makes json.loads/JSON.parse throw. Recovered by _tolerant_json_loads (py) and tolerantParse (ts) — written twice, so they can drift.",
+  "input": {
+    "prose": "```json\n{\"action\": \"replace\", \"target_text\": \"Confidential Information means any information\ndisclosed by either party.\", \"new_text\": \"Confidential Information means any non-public information disclosed by either party.\"}\n```\n"
+  },
+  "expect": {
+    "edits": [
+      {"action": "replace", "target_text": "Confidential Information means any information\ndisclosed by either party.", "new_text": "Confidential Information means any non-public information disclosed by either party."}
+    ]
+  }
+}

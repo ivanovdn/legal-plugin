@@ -1,0 +1,13 @@
+{
+  "kind": "parse",
+  "why": "A fenced block can hold stacked top-level objects, not just one object or an array. Parsed by _iter_json_values (py) and iterJsonValues (ts) — written twice, so they can drift. Traces cea50c6b, f15f8a9b.",
+  "input": {
+    "prose": "I'll update both places.\n\n```json\n{\"action\": \"replace\", \"target_text\": \"Governing Law. This Agreement shall be governed by the laws of Delaware.\", \"new_text\": \"Governing Law. This Agreement shall be governed by the laws of England and Wales.\"}\n{\"action\": \"replace\", \"target_text\": \"the courts of Delaware\", \"new_text\": \"the courts of England and Wales\"}\n```\n"
+  },
+  "expect": {
+    "edits": [
+      {"action": "replace", "target_text": "Governing Law. This Agreement shall be governed by the laws of Delaware.", "new_text": "Governing Law. This Agreement shall be governed by the laws of England and Wales."},
+      {"action": "replace", "target_text": "the courts of Delaware", "new_text": "the courts of England and Wales"}
+    ]
+  }
+}

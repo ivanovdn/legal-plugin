@@ -1,0 +1,13 @@
+{
+  "kind": "parse",
+  "why": "Local LLMs consolidate multi-location requests into an array inside one fence. Both parsers accept it independently, so agreement is unproven.",
+  "input": {
+    "prose": "Here are the two changes:\n\n```json\n[{\"action\": \"replace\", \"target_text\": \"thirty (30) days\", \"new_text\": \"sixty (60) days\"}, {\"action\": \"delete\", \"target_text\": \"This Agreement shall renew automatically.\"}]\n```\n"
+  },
+  "expect": {
+    "edits": [
+      {"action": "replace", "target_text": "thirty (30) days", "new_text": "sixty (60) days"},
+      {"action": "delete", "target_text": "This Agreement shall renew automatically."}
+    ]
+  }
+}
