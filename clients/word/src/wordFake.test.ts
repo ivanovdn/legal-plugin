@@ -1,0 +1,81 @@
+// The Word fake's eight semantic rules, each a documented CLAUDE.md gotcha.
+// Run with: npx tsx src/wordFake.test.ts
+//
+// These are unit tests of OUR fake, not of word.ts. If one fails, either the
+// fake is wrong or a gotcha we believed about Word is wrong — both need a human.
+import { createFakeWord } from "./eval/wordFake";
+import { pass } from "./testAssert";
+
+const DOC = ["1. GOVERNING LAW", "Signed by: [__]", "Title: Chief Executive", "entitled to notice"];
+
+const search = (
+  paragraphs: string[],
+  query: string,
+  opts: { matchCase?: boolean; matchWildcards?: boolean; matchWholeWord?: boolean } = {},
+): string[] => {
+  const fake = createFakeWord(paragraphs);
+  fake.install();
+  try {
+    return fake.searchSync(query, {
+      matchCase: opts.matchCase ?? false,
+      matchWildcards: opts.matchWildcards ?? false,
+      matchWholeWord: opts.matchWholeWord ?? false,
+    });
+  } finally {
+    fake.uninstall();
+  }
+};
+
+// --- Rule 1: over 255 chars throws (Word's real limit, not word.ts's 200) ---
+let threw = false;
+try {
+  search(DOC, "x".repeat(256));
+} catch {
+  threw = true;
+}
+pass(threw, "rule1: a 256-char query throws");
+// The paragraph is exactly the needle: `occurrences` advances by one character,
+// so a needle of 255 y's inside a paragraph of 300 y's would match 46 times.
+pass(search(["y".repeat(255)], "y".repeat(255)).length === 1, "rule1: 255 chars is allowed");
+pass(search(["z".repeat(210)], "z".repeat(210)).length === 1, "rule1: 201-255 is allowed by Word even though word.ts filters at 200");
+
+// --- Rule 2: never crosses a paragraph break ---
+pass(search(DOC, "1. GOVERNING LAW\nSigned by:").length === 0, "rule2: a needle with \\n never matches");
+pass(search(DOC, "GOVERNING LAW").length === 1, "rule2: within one paragraph matches");
+
+// --- Rule 3: bracket metacharacters miss in literal mode ---
+pass(search(DOC, "Signed by: [__]").length === 0, "rule3: literal mode misses a bracketed blank");
+pass(search(DOC, "Signed by:").length === 1, "rule3: the clean leading run still matches");
+
+// --- Rule 4: escaped metacharacters match literally in wildcard mode ---
+pass(
+  search(DOC, "Signed by: \\[__\\]", { matchWildcards: true }).length === 1,
+  "rule4: escaped brackets match in wildcard mode",
+);
+
+// --- Rule 5: case-insensitive by default ---
+pass(search(DOC, "governing law").length === 1, "rule5: matchCase false is insensitive");
+pass(search(DOC, "governing law", { matchCase: true }).length === 0, "rule5: matchCase true is sensitive");
+
+// --- Rule 6: whole-word bounds ---
+pass(search(DOC, "title", { matchWholeWord: true }).length === 1, "rule6: whole word matches a standalone word");
+pass(search(DOC, "title", { matchWholeWord: false }).length === 2, "rule6: substring mode also matches inside 'entitled'");
+pass(search(DOC, "entitle", { matchWholeWord: true }).length === 0, "rule6: whole word rejects a prefix of a longer word");
+
+// --- Rule 7: searches RAW text, including tracked deletions ---
+const tracked = createFakeWord([{ raw: "Signed by: [__]Suzy Quatro", reviewed: "Signed by: Suzy Quatro" }]);
+tracked.install();
+pass(
+  tracked.searchSync("\\[__\\]", { matchCase: false, matchWildcards: true, matchWholeWord: false }).length === 1,
+  "rule7: a tracked deletion is still findable in the raw text",
+);
+pass(tracked.reviewedText() === "Signed by: Suzy Quatro", "rule7: reviewed text drops the deletion");
+pass(tracked.rawText().includes("[__]"), "rule7: raw text keeps the deletion");
+tracked.uninstall();
+
+// --- Rule 8: a literal tab never matches ---
+pass(
+  search(["Signed by: [__]\tSigned by: Boris"], "Signed by: [__]\tSigned by: Boris").length === 0,
+  "rule8: a needle containing a tab never matches",
+);
+pass(search(["Signed by: Ann\tSigned by: Boris"], "Signed by: Boris").length === 1, "rule8: a tab-free segment still matches");
