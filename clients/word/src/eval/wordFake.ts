@@ -18,15 +18,18 @@
 // expandTo across tables, list renumbering, content controls, and wildcard
 // MATCHING (only escaped-literal wildcard queries are supported — see
 // searchSync). A case asserts which characters, never how they look.
-// ALSO: a mutation's reviewed-side edit reuses the raw-side local offset (see
-// applyMutation) rather than mapping between two independent coordinate
-// spaces. That's exact whenever the paragraph is untouched going into this
-// sync() batch. It is NOT modelled for a paragraph fixture that already
-// carries an unaccepted tracked change baked directly into its `{raw,
-// reviewed}` pair and is then mutated at a position after that divergence —
-// raw and reviewed no longer share an offset space there, so the reviewed
-// side is silently left unmodified rather than guessed at. No case in this
-// suite constructs that combination.
+//
+// MODEL NOTE: `reviewed` is never stored. A paragraph is `raw` plus a list of
+// deletion spans (raw coordinates); `reviewed` is always `raw` with those
+// spans removed, computed on demand (see `reviewedOf`). Storing two strings
+// that mutation code must keep in agreement by hand was tried in an earlier
+// revision of this file and broke: whichever side wasn't the offset of
+// record drifted the moment a tracked deletion and a later untracked edit
+// coexisted in the same paragraph. Deriving `reviewed` structurally makes
+// that class of bug impossible instead of merely fixed. A `{raw, reviewed}`
+// fixture pair must differ by exactly one contiguous span (longest-common-
+// prefix/suffix locates it) — anything else throws at construction time,
+// naming the paragraph, rather than silently producing wrong ground truth.
 
 export type FakeParagraph = string | { raw: string; reviewed: string };
 
@@ -40,10 +43,55 @@ export type SearchOptions = {
 const WILDCARD_META = /[[\]{}()<>?*]/;
 const WORD_CHAR = /[A-Za-z0-9_]/;
 
-type Para = { raw: string; reviewed: string };
+type Deletion = { start: number; end: number };
+type Para = { raw: string; deletions: Deletion[] };
 
-const toPara = (p: FakeParagraph): Para =>
-  typeof p === "string" ? { raw: p, reviewed: p } : { raw: p.raw, reviewed: p.reviewed };
+/**
+ * Derive the single contiguous deletion span implied by a `{raw, reviewed}`
+ * fixture pair via longest-common-prefix + longest-common-suffix: whatever
+ * `raw` has in the unmatched middle is the deleted span. Throws if `reviewed`
+ * cannot be reached from `raw` by removing exactly one contiguous span — a
+ * multi-span or non-deletion difference isn't representable by this model, so
+ * a case author finds out immediately instead of quietly getting wrong ground
+ * truth. A multi-span fixture is not needed by this corpus.
+ */
+const deriveDeletions = (raw: string, reviewed: string, label: string): Deletion[] => {
+  if (raw === reviewed) return [];
+  const minLen = Math.min(raw.length, reviewed.length);
+  let prefixLen = 0;
+  while (prefixLen < minLen && raw[prefixLen] === reviewed[prefixLen]) prefixLen++;
+  const maxSuffix = minLen - prefixLen;
+  let suffixLen = 0;
+  while (suffixLen < maxSuffix && raw[raw.length - 1 - suffixLen] === reviewed[reviewed.length - 1 - suffixLen]) {
+    suffixLen++;
+  }
+  const rawMiddleStart = prefixLen;
+  const rawMiddleEnd = raw.length - suffixLen;
+  const reviewedMiddleStart = prefixLen;
+  const reviewedMiddleEnd = reviewed.length - suffixLen;
+  if (reviewedMiddleStart !== reviewedMiddleEnd) {
+    throw new Error(
+      `FakeParagraph ${label}: reviewed cannot be derived from raw by removing exactly one contiguous ` +
+        `span (raw=${JSON.stringify(raw)}, reviewed=${JSON.stringify(reviewed)})`,
+    );
+  }
+  return [{ start: rawMiddleStart, end: rawMiddleEnd }];
+};
+
+const toPara = (p: FakeParagraph, label: string): Para =>
+  typeof p === "string" ? { raw: p, deletions: [] } : { raw: p.raw, deletions: deriveDeletions(p.raw, p.reviewed, label) };
+
+/** `raw` with every deletion span removed — the reviewed view of one paragraph. */
+const reviewedOf = (para: Para): string => {
+  let out = "";
+  let cursor = 0;
+  for (const d of para.deletions) {
+    out += para.raw.slice(cursor, d.start);
+    cursor = d.end;
+  }
+  out += para.raw.slice(cursor);
+  return out;
+};
 
 const isWholeWordAt = (haystack: string, index: number, length: number): boolean => {
   const before = index > 0 ? haystack[index - 1] : "";
@@ -71,7 +119,7 @@ const occurrences = (
 };
 
 export function createFakeWord(paragraphs: FakeParagraph[]) {
-  const paras: Para[] = paragraphs.map(toPara);
+  const paras: Para[] = paragraphs.map((p, i) => toPara(p, `#${i}`));
 
   /**
    * The eight rules. Returns the matching substrings, per paragraph, in
@@ -209,20 +257,36 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     const { index, local } = paraAt(m.start);
     const para = paras[index];
     const length = m.end - m.start;
-    const original = para.raw.slice(local, local + length);
-    // Tracked: the original stays in RAW (struck) and is dropped from REVIEWED.
-    // Untracked: it is gone from both.
-    para.raw = para.raw.slice(0, local) + (m.tracked ? original : "") + m.text + para.raw.slice(local + length);
-    // The reviewed-side edit is located by the SAME `local` offset as the raw
-    // edit, not by re-searching for `original`'s content. Two mutations with
-    // identical matched text but different replacements would otherwise both
-    // resolve to indexOf's first occurrence, silently swapping the edits.
-    // Reusing `local` is valid because every Mutation's offset was captured
-    // from a search over the RAW text before this batch ran, and raw/reviewed
-    // are byte-identical up to `local` in a paragraph this batch hasn't
-    // touched yet — true for every case in this suite (see BLIND SPOTS).
-    if (para.reviewed.slice(local, local + length) === original) {
-      para.reviewed = para.reviewed.slice(0, local) + m.text + para.reviewed.slice(local + length);
+    const s = local;
+    const e = local + length;
+    if (m.tracked) {
+      // Tracked: the original span stays in RAW (struck), with the new text
+      // appended right after it — nothing before `e` moves. Record `[s, e)`
+      // as a deletion so reviewedOf() excludes it; any deletion already at or
+      // after the insertion point shifts right by the inserted length.
+      para.raw = para.raw.slice(0, e) + m.text + para.raw.slice(e);
+      for (const d of para.deletions) {
+        if (d.start >= e) {
+          d.start += m.text.length;
+          d.end += m.text.length;
+        }
+      }
+      para.deletions.push({ start: s, end: e });
+      para.deletions.sort((a, b) => a.start - b.start);
+    } else {
+      // Untracked: the span is genuinely removed from RAW. Any deletion at or
+      // after the edit shifts by the net length delta (new text vs. removed
+      // span) so its offsets stay correct in the new, shorter-or-longer raw.
+      para.raw = para.raw.slice(0, s) + m.text + para.raw.slice(e);
+      const delta = m.text.length - (e - s);
+      if (delta !== 0) {
+        for (const d of para.deletions) {
+          if (d.start >= e) {
+            d.start += delta;
+            d.end += delta;
+          }
+        }
+      }
     }
   };
 
@@ -293,7 +357,7 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
   return {
     searchSync,
     rawText: rawTextOf,
-    reviewedText: () => paras.map((p) => p.reviewed).join("\r"),
+    reviewedText: () => paras.map(reviewedOf).join("\r"),
     trackingModeLog: () => [...modeLog],
     install: () => {
       (globalThis as Record<string, unknown>).Word = namespace;

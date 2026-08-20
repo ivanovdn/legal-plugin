@@ -216,3 +216,34 @@ await withFake(["Field: BLANK and Field: BLANK"], async (fake) => {
   pass(fake.rawText() === "Field: AAA and Field: BBB", "distinct-fill: raw keeps occurrence order");
   pass(fake.reviewedText() === "Field: AAA and Field: BBB", "distinct-fill: reviewed does not swap identical-text occurrences");
 });
+
+// a tracked edit in one sync() must not corrupt an UNTRACKED edit to a
+// different part of the same paragraph in a LATER, separate sync() — the
+// tracked edit makes raw and reviewed diverge in length, so a reviewed-side
+// update that assumes they're still byte-identical would drop the second
+// edit entirely.
+await withFake(["Signed by: Boris and CEO title block"], async (fake) => {
+  await Word.run(async (context) => {
+    const doc = context.document;
+    const results = doc.body.search("Boris", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+    results.items[0].insertText("Suzy", Word.InsertLocation.replace);
+    await context.sync();
+    doc.changeTrackingMode = Word.ChangeTrackingMode.off;
+    await context.sync();
+  });
+  await Word.run(async (context) => {
+    const results = context.document.body.search("title", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    results.items[0].insertText("Officer", Word.InsertLocation.replace);
+    await context.sync();
+  });
+  pass(fake.rawText() === "Signed by: BorisSuzy and CEO Officer block", "cross-sync: raw carries both edits");
+  pass(
+    fake.reviewedText() === "Signed by: Suzy and CEO Officer block",
+    "cross-sync: reviewed carries both edits, not just the tracked one",
+  );
+});
