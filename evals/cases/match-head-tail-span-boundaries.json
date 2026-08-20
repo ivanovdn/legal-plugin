@@ -1,0 +1,11 @@
+{
+  "kind": "match",
+  "why": "For a long quote the span must run from the HEAD match's start to the TAIL match's end — match boundaries, never whole paragraphs, or a fragment rewrite over-replaces. CLAUDE.md findClauseRange head+tail gotcha.",
+  "input": {
+    "paragraphs": [
+      "Preamble text that must not be absorbed. ALPHA the confidentiality obligations set out in this clause shall survive termination of this Agreement for a period of five years from the effective date and shall bind each receiving party OMEGA trailing text that must not be absorbed either."
+    ],
+    "target": "ALPHA the confidentiality obligations set out in this clause shall survive termination of this Agreement for a period of five years from the effective date and shall bind each receiving party OMEGA"
+  },
+  "expect": { "matched": "ALPHA the confidentiality obligations set out in this clause shall survive termination of this Agreement for a period of five years from the effective date and shall bind each receiving party OMEGA" }
+}

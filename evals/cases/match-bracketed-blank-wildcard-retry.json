@@ -1,0 +1,9 @@
+{
+  "kind": "match",
+  "why": "Word for Mac treats [ ] as wildcards even at matchWildcards:false, so a labelled blank silently misses in literal mode. The escaped wildcard retry in searchFirst is the only thing that finds it. CLAUDE.md wildcard-escape gotcha.",
+  "input": {
+    "paragraphs": ["1. PARTIES", "Signed by: [__]", "Title: Chief Executive Officer"],
+    "target": "Signed by: [__]"
+  },
+  "expect": { "matched": "Signed by: [__]" }
+}

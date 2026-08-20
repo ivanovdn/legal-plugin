@@ -146,11 +146,27 @@ const occurrences = (
 export function createFakeWord(paragraphs: FakeParagraph[]) {
   const paras: Para[] = paragraphs.map((p, i) => toPara(p, `#${i}`));
 
+  type Hit = { start: number; end: number; text: string };
+
   /**
-   * The eight rules. Returns the matching substrings, per paragraph, in
-   * document order.
+   * The eight rules, resolved ONCE to hits carrying an absolute raw-document
+   * offset alongside the matched text. `searchSync` and `searchRanges` both
+   * derive from this single pass so a match decided here (in particular a
+   * matchWholeWord accept/reject) can never be re-decided differently
+   * downstream.
+   *
+   * An earlier revision had `searchRanges` re-locate positions with a SECOND,
+   * whole-word-UNAWARE, case-insensitive substring scan of the text
+   * `searchSync` returned. That silently mis-located a match: found by Task 4's
+   * "Title" vs "entitled" case (CLAUDE.md's `shouldMatchWholeWord` gotcha) —
+   * `occurrences()` correctly rejected "title" inside "entitled" and accepted
+   * standalone "Title", but the old `searchRanges` then re-searched for the
+   * literal text "Title" case-insensitively from the start of the document and
+   * landed on the earlier, whole-word-REJECTED "entitled" substring instead.
+   * Not a fidelity gap worth stating (see file header) — an actual bug, since
+   * it made the fake disagree with its own `occurrences()` computation.
    */
-  const searchSync = (query: string, opts: SearchOptions): string[] => {
+  const locate = (query: string, opts: SearchOptions): Hit[] => {
     // Rule 1 — Word's real limit is 255; word.ts filters at a conservative 200.
     if (query.length > 255) {
       throw new Error("SearchStringInvalidOrTooLong");
@@ -176,15 +192,24 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     }
     if (!needle) return [];
 
-    const found: string[] = [];
-    for (const para of paras) {
+    const hits: Hit[] = [];
+    const offsets = paraOffsets();
+    paras.forEach((para, i) => {
       // Rule 7 — always the RAW text, tracked deletions included.
       for (const at of occurrences(para.raw, needle, opts.matchCase, opts.matchWholeWord)) {
-        found.push(para.raw.slice(at, at + needle.length));
+        hits.push({
+          start: offsets[i] + at,
+          end: offsets[i] + at + needle.length,
+          text: para.raw.slice(at, at + needle.length),
+        });
       }
-    }
-    return found;
+    });
+    return hits;
   };
+
+  /** The eight rules. Returns the matching substrings, per paragraph, in document order. */
+  const searchSync = (query: string, opts: SearchOptions): string[] =>
+    locate(query, opts).map((hit) => hit.text);
 
   // Values are hand-written literals, checked against the real Word.* enums
   // via `satisfies` — see the FIDELITY LIMIT note in the file header.
@@ -352,23 +377,9 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     return collection;
   };
 
-  /** searchSync, but returning ranges in raw-document coordinates. */
-  const searchRanges = (query: string, opts: SearchOptions): FakeRange[] => {
-    const hits = searchSync(query, opts);
-    if (hits.length === 0) return [];
-    const raw = rawTextOf();
-    const ranges: FakeRange[] = [];
-    let from = 0;
-    for (const hit of hits) {
-      const at = opts.matchCase
-        ? raw.indexOf(hit, from)
-        : raw.toLowerCase().indexOf(hit.toLowerCase(), from);
-      if (at === -1) continue;
-      ranges.push(makeRange(at, at + hit.length));
-      from = at + 1;
-    }
-    return ranges;
-  };
+  /** locate(), but returning ranges in raw-document coordinates rather than text. */
+  const searchRanges = (query: string, opts: SearchOptions): FakeRange[] =>
+    locate(query, opts).map((hit) => makeRange(hit.start, hit.end));
 
   const document = {
     get changeTrackingMode(): string {

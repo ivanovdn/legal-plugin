@@ -1,0 +1,11 @@
+{
+  "kind": "match",
+  "why": "body.search matches the RAW document including tracked-change deletions, which is why readBody uses getReviewedText('current') for the LLM but the matcher still sees struck text. Trace 5f188799.",
+  "input": {
+    "paragraphs": [
+      { "raw": "Signed by: [__]Suzy Quatro", "reviewed": "Signed by: Suzy Quatro" }
+    ],
+    "target": "Signed by: [__]"
+  },
+  "expect": { "matched": "Signed by: [__]" }
+}

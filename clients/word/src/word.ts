@@ -301,7 +301,7 @@ async function searchFirst(
  * replaces exactly the fragment, while a full-clause quote still spans the
  * whole clause. If no tail is found, the head match alone is returned.
  */
-async function findClauseRange(
+export async function findClauseRange(
   context: Word.RequestContext,
   currentText: string,
 ): Promise<Word.Range | null> {

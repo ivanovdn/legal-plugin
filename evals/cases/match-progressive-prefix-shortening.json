@@ -1,0 +1,12 @@
+{
+  "kind": "match",
+  "why": "body.search matches the RAW doc while the needle is normalized; when they differ mid-phrase the full quote misses even though the text is present. searchCandidates falls back to progressively shorter word-aligned prefixes. CLAUDE.md body.search-vs-normalized gotcha.",
+  "input": {
+    "paragraphs": [
+      "7. GOVERNING LAW",
+      "This Agreement and any dispute arising out of it shall be governed by and construed in accordance with the laws of England and Wales, and the parties submit to the exclusive jurisdiction of the courts of England and Wales."
+    ],
+    "target": "This Agreement and any dispute arising out of it shall be governed by and construed in accordance with the laws of England and Wales, and the parties irrevocably submit to the exclusive jurisdiction of the courts of England and Wales."
+  },
+  "expect": { "matched": "This Agreement and any dispute arising out of it shall be governed by and construed in accordance with the laws of England and Wales, and the parties submit to the exclusive jurisdiction of the courts of England and Wales." }
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "match",
+  "why": "Single-word clause-name anchors search whole-word-only so 'Title' cannot match inside 'entitled'. shouldMatchWholeWord in word.ts.",
+  "input": {
+    "paragraphs": ["Each party is entitled to notice.", "Title: Chief Executive Officer"],
+    "target": "Title"
+  },
+  "expect": { "matched": "Title" }
+}

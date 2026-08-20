@@ -1,0 +1,9 @@
+{
+  "kind": "match",
+  "why": "For needles under 200 chars findClauseRange returns the head match and must NOT expand to a separately-found tail — expansion would absorb everything up to the next occurrence of that tail word, which is often a recurring heading.",
+  "input": {
+    "paragraphs": ["Termination for convenience", "Either party may terminate on notice.", "Termination for cause"],
+    "target": "Termination for convenience"
+  },
+  "expect": { "matched": "Termination for convenience" }
+}

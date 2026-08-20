@@ -1,0 +1,9 @@
+{
+  "kind": "match",
+  "why": "body.search ignores raw tab characters, so a two-column signature block target spanning the tab cannot match. A documented limitation — pinned so it cannot change silently in either direction. CLAUDE.md table-tab gotcha.",
+  "input": {
+    "paragraphs": ["Signed by: [__]\tSigned by: Boris Bukengolts"],
+    "target": "Signed by: [__]\tSigned by: Boris Bukengolts"
+  },
+  "expect": { "matched": null }
+}
