@@ -274,7 +274,14 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
         return range._text;
       },
       getRange(loc: string) {
-        return loc === RangeLocation.end ? makeRange(range.end, range.end) : makeRange(range.start, range.start);
+        if (loc === RangeLocation.start) return makeRange(range.start, range.start);
+        if (loc === RangeLocation.end) return makeRange(range.end, range.end);
+        // Refuse rather than guess (this file's own stated design principle):
+        // `whole` is declared in RangeLocation for shape-fidelity against the
+        // real enum, but no caller collapses a range to itself today, and
+        // guessing which point it should resolve to would be inventing
+        // behavior nobody has validated against real Word.
+        throw new Error(`fake supports only RangeLocation.start/end, got ${loc}`);
       },
       expandTo(other: FakeRange) {
         return makeRange(Math.min(range.start, other.start), Math.max(range.end, other.end));

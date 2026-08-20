@@ -11,6 +11,7 @@
   },
   "expect": {
     "ok": true,
-    "reviewed": "Signed by: Suzy Quatro\rTitle: Chief Executive Officer"
+    "reviewed": "Signed by: Suzy Quatro\rTitle: Chief Executive Officer",
+    "trackingModeLog": ["TrackAll", "Off"]
   }
 }

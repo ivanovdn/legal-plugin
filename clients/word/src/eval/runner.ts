@@ -63,12 +63,16 @@ const loadBaseline = (): Record<string, string> => {
 };
 
 async function runMatch(c: Case): Promise<boolean> {
+  // `matched` is the only field a `match` case can omit and still name a real
+  // expectation ("no match" is a value, not an absence). A typo'd field name
+  // must fail the case, not silently fall back to "expected no match" via `??`.
+  if (!("matched" in c.expect)) return false;
   const fake = createFakeWord(c.input.paragraphs ?? []);
   fake.install();
   try {
     return await Word.run(async (context) => {
       const range = await findClauseRange(context, c.input.target ?? "");
-      if (range === null) return (c.expect.matched ?? null) === null;
+      if (range === null) return c.expect.matched === null;
       range.load("text");
       await context.sync();
       return range.text === c.expect.matched;
@@ -147,8 +151,7 @@ async function runParse(c: Case): Promise<boolean> {
 async function runCase(c: Case): Promise<boolean> {
   if (c.kind === "parse") return runParse(c);
   if (c.kind === "match") return runMatch(c);
-  if (c.kind === "apply") return runApply(c);
-  return false; // an unknown kind is a corpus error, not a pass
+  return runApply(c); // only "apply" remains — main() rejects any other kind before this runs
 }
 
 /**
@@ -187,10 +190,23 @@ async function runKind(
 }
 
 const KINDS = ["parse", "match", "apply"] as const;
+const KNOWN_KINDS = new Set<string>(KINDS);
 
 async function main(): Promise<void> {
   const baseline = loadBaseline();
   const all = loadCases();
+
+  // A case whose "kind" isn't recognized never matches any of the three
+  // `c.kind === kind` filters below, so it would otherwise run in NO kind and
+  // the corpus would silently be short one case. Catch it here, before any
+  // kind runs, rather than letting it vanish.
+  const unknown = all.filter((c) => !KNOWN_KINDS.has(c.kind)).map((c) => c.id);
+  if (unknown.length > 0) {
+    console.log(`  [corpus] unknown kind in: ${unknown.join(", ")}`);
+    process.exitCode = 1;
+    return;
+  }
+
   let clean = true;
   for (const kind of KINDS) {
     if (!(await runKind(kind, all, baseline))) clean = false;

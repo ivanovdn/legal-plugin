@@ -22,6 +22,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CASES_DIR = REPO_ROOT / "evals" / "cases"
 BASELINE_PATH = REPO_ROOT / "evals" / "baseline.json"
 
+# The set of kinds either runner recognizes. A case whose "kind" isn't in here
+# never matches any runner's `kind ==` filter, so it would otherwise run
+# nowhere and pass silently — see the corpus check in main().
+KINDS = {"parse", "match", "apply"}
+
 
 def load_cases(cases_dir: Path) -> list[dict]:
     cases = []
@@ -64,7 +69,13 @@ def main() -> int:
     parser.add_argument("--baseline", type=Path, default=BASELINE_PATH)
     args = parser.parse_args()
 
-    cases = [c for c in load_cases(args.cases) if c.get("kind") == "parse"]
+    all_cases = load_cases(args.cases)
+    unknown = [c["id"] for c in all_cases if c.get("kind") not in KINDS]
+    if unknown:
+        print(f"  [corpus] unknown kind in: {', '.join(unknown)}")
+        return 1
+
+    cases = [c for c in all_cases if c.get("kind") == "parse"]
     baseline = load_baseline(args.baseline)
     results = [(c["id"], run_case(c)) for c in cases]
     s = score(results, baseline)
@@ -79,7 +90,7 @@ def main() -> int:
     known = s["total"] - s["expected"]
     suffix = f"   ({known} known-failing)" if known else ""
     print(f"parse-py {s['passed']}/{s['total']}{suffix}")
-    return 0 if s["passed"] >= s["expected"] and not s["unexpected_passes"] else 1
+    return 0 if not s["regressions"] and not s["unexpected_passes"] else 1
 
 
 if __name__ == "__main__":
