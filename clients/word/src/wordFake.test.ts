@@ -199,3 +199,20 @@ await withFake(["fee here and fee there"], async (fake) => {
   });
   pass(fake.rawText() === "charge here and charge there", "snapshot: both replacements land correctly");
 });
+
+// two identical occurrences given DIFFERENT replacements must not swap on the
+// reviewed side — a content search (indexOf) for the matched text would
+// always resolve to the first occurrence, no matter which mutation is being
+// applied, silently mis-assigning the fills.
+await withFake(["Field: BLANK and Field: BLANK"], async (fake) => {
+  await Word.run(async (context) => {
+    const results = context.document.body.search("BLANK", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    results.items[0].insertText("AAA", Word.InsertLocation.replace);
+    results.items[1].insertText("BBB", Word.InsertLocation.replace);
+    await context.sync();
+  });
+  pass(fake.rawText() === "Field: AAA and Field: BBB", "distinct-fill: raw keeps occurrence order");
+  pass(fake.reviewedText() === "Field: AAA and Field: BBB", "distinct-fill: reviewed does not swap identical-text occurrences");
+});

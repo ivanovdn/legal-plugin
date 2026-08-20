@@ -18,6 +18,15 @@
 // expandTo across tables, list renumbering, content controls, and wildcard
 // MATCHING (only escaped-literal wildcard queries are supported — see
 // searchSync). A case asserts which characters, never how they look.
+// ALSO: a mutation's reviewed-side edit reuses the raw-side local offset (see
+// applyMutation) rather than mapping between two independent coordinate
+// spaces. That's exact whenever the paragraph is untouched going into this
+// sync() batch. It is NOT modelled for a paragraph fixture that already
+// carries an unaccepted tracked change baked directly into its `{raw,
+// reviewed}` pair and is then mutated at a position after that divergence —
+// raw and reviewed no longer share an offset space there, so the reviewed
+// side is silently left unmodified rather than guessed at. No case in this
+// suite constructs that combination.
 
 export type FakeParagraph = string | { raw: string; reviewed: string };
 
@@ -204,10 +213,16 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     // Tracked: the original stays in RAW (struck) and is dropped from REVIEWED.
     // Untracked: it is gone from both.
     para.raw = para.raw.slice(0, local) + (m.tracked ? original : "") + m.text + para.raw.slice(local + length);
-    const reviewedAt = para.reviewed.indexOf(original);
-    if (reviewedAt !== -1) {
-      para.reviewed =
-        para.reviewed.slice(0, reviewedAt) + m.text + para.reviewed.slice(reviewedAt + original.length);
+    // The reviewed-side edit is located by the SAME `local` offset as the raw
+    // edit, not by re-searching for `original`'s content. Two mutations with
+    // identical matched text but different replacements would otherwise both
+    // resolve to indexOf's first occurrence, silently swapping the edits.
+    // Reusing `local` is valid because every Mutation's offset was captured
+    // from a search over the RAW text before this batch ran, and raw/reviewed
+    // are byte-identical up to `local` in a paragraph this batch hasn't
+    // touched yet — true for every case in this suite (see BLIND SPOTS).
+    if (para.reviewed.slice(local, local + length) === original) {
+      para.reviewed = para.reviewed.slice(0, local) + m.text + para.reviewed.slice(local + length);
     }
   };
 
