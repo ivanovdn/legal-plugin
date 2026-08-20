@@ -1,0 +1,13 @@
+{
+  "kind": "apply",
+  "why": "replaceAll must snapshot every match BEFORE mutating: Track Changes leaves the original visible to body.search, so any re-search inside the same Word.run keeps finding the same spot. Also pins the try/finally restore of changeTrackingMode. CLAUDE.md struck-text re-find and Track-Changes-restore gotchas.",
+  "input": {
+    "paragraphs": ["The Service Fee is due monthly.", "Any late Service Fee accrues interest."],
+    "proposal": { "action": "replace_all", "target_text": "Service Fee", "new_text": "Subscription Fee" }
+  },
+  "expect": {
+    "ok": true,
+    "reviewed": "The Subscription Fee is due monthly.\rAny late Subscription Fee accrues interest.",
+    "trackingModeLog": ["TrackAll", "Off"]
+  }
+}

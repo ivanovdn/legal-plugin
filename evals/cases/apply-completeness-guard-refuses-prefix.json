@@ -1,0 +1,19 @@
+{
+  "kind": "apply",
+  "why": "searchCandidates falls back to shorter prefixes. Without the 85% completeness guard, acceptRedline would inject the full long new_text into a short prefix match — a silently-wrong tracked change. CLAUDE.md completeness-threshold gotcha.",
+  "input": {
+    "paragraphs": [
+      "Limitation of Liability. Neither party shall be liable for indirect damages."
+    ],
+    "proposal": {
+      "action": "replace",
+      "target_text": "Limitation of Liability. Neither party shall be liable for indirect, incidental, special, consequential or punitive damages arising out of or relating to this Agreement, however caused and under any theory of liability.",
+      "new_text": "Limitation of Liability. Neither party shall be liable for indirect damages, and each party's aggregate liability shall not exceed the fees paid in the preceding twelve months."
+    }
+  },
+  "expect": {
+    "ok": false,
+    "errorContains": "Couldn't find the exact target text",
+    "reviewed": "Limitation of Liability. Neither party shall be liable for indirect damages."
+  }
+}

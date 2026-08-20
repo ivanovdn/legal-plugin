@@ -1,0 +1,13 @@
+{
+  "kind": "apply",
+  "why": "A label-less blank names no field, and plain replace takes the FIRST match — in an NDA that is the signature block's 'Signed by: [__]', so a company name lands where a person's name belongs. Trace cc81804f.",
+  "input": {
+    "paragraphs": ["Signed by: [__]", "Title: [__]", "for and on behalf of [__]"],
+    "proposal": { "action": "replace", "target_text": "[__]", "new_text": "Blizzard Corp" }
+  },
+  "expect": {
+    "ok": false,
+    "errorContains": "usually the wrong field",
+    "reviewed": "Signed by: [__]\rTitle: [__]\rfor and on behalf of [__]"
+  }
+}

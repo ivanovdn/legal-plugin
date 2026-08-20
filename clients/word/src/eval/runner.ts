@@ -11,7 +11,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { findClauseRange } from "../word";
+import { applyEdit, findClauseRange } from "../word";
 import type { EditProposal } from "../parseEditBlocks";
 import { createFakeWord, type FakeParagraph } from "./wordFake";
 
@@ -78,9 +78,30 @@ async function runMatch(c: Case): Promise<boolean> {
   }
 }
 
+async function runApply(c: Case): Promise<boolean> {
+  if (!c.input.proposal) return false;
+  const fake = createFakeWord(c.input.paragraphs ?? []);
+  fake.install();
+  try {
+    const result = await applyEdit(c.input.proposal);
+    if (result.ok !== c.expect.ok) return false;
+    if (c.expect.errorContains !== undefined) {
+      if (result.ok || !result.error.includes(c.expect.errorContains)) return false;
+    }
+    if (c.expect.reviewed !== undefined && fake.reviewedText() !== c.expect.reviewed) return false;
+    if (c.expect.trackingModeLog !== undefined) {
+      if (fake.trackingModeLog().join(",") !== c.expect.trackingModeLog.join(",")) return false;
+    }
+    return true;
+  } finally {
+    fake.uninstall();
+  }
+}
+
 async function runCase(c: Case): Promise<boolean> {
   if (c.kind === "match") return runMatch(c);
-  return true; // other kinds land in later tasks
+  if (c.kind === "apply") return runApply(c);
+  return true; // parse lands in Task 6
 }
 
 /**
@@ -118,9 +139,8 @@ async function runKind(
   return regressions.length === 0 && unexpectedPasses.length === 0;
 }
 
-// Kinds are added here as later tasks implement them: Task 5 adds "apply",
-// Task 6 adds "parse".
-const KINDS = ["match"] as const;
+// Kinds are added here as later tasks implement them: Task 6 adds "parse".
+const KINDS = ["match", "apply"] as const;
 
 async function main(): Promise<void> {
   const baseline = loadBaseline();

@@ -1,0 +1,16 @@
+{
+  "kind": "apply",
+  "why": "When target_text and new_text are both multi-line and differ on exactly one line, simplifyMultilineReplace collapses to a single-line replace — body.search cannot span paragraph breaks and head+tail expansion would absorb the intervening line. CLAUDE.md multi-line collapse gotcha.",
+  "input": {
+    "paragraphs": ["Signed by: Boris Bukengolts", "Title: Chief Executive Officer"],
+    "proposal": {
+      "action": "replace",
+      "target_text": "Signed by: Boris Bukengolts\nTitle: Chief Executive Officer",
+      "new_text": "Signed by: Suzy Quatro\nTitle: Chief Executive Officer"
+    }
+  },
+  "expect": {
+    "ok": true,
+    "reviewed": "Signed by: Suzy Quatro\rTitle: Chief Executive Officer"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "kind": "apply",
+  "why": "The same blank, the other action: replace_all would put one value in every field (name, title, entity). Both actions must be refused, with an action-specific message. Trace cc81804f.",
+  "input": {
+    "paragraphs": ["Signed by: [__]", "Title: [__]", "for and on behalf of [__]"],
+    "proposal": { "action": "replace_all", "target_text": "[__]", "new_text": "Blizzard Corp" }
+  },
+  "expect": {
+    "ok": false,
+    "errorContains": "every field",
+    "reviewed": "Signed by: [__]\rTitle: [__]\rfor and on behalf of [__]"
+  }
+}
