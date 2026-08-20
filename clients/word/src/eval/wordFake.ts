@@ -7,8 +7,10 @@
 // FIDELITY LIMIT: this does not implement Word.RequestContext structurally
 // (that would be hundreds of members), so it is installed on globalThis and
 // cast at the boundary. The compiler therefore does NOT verify shape
-// conformance against @types/office-js. What it does verify is that the enum
-// values below are read from the real Word.* enums, so enum drift is caught.
+// conformance against @types/office-js. Nothing here references the Word
+// namespace yet; once Task 3 sources the enum values from the real Word.*
+// enums, tsc catches enum drift and that becomes the one genuine compiler
+// check this file gets.
 //
 // BLIND SPOTS, stated rather than discovered later: revision rendering,
 // expandTo across tables, list renumbering, content controls, and wildcard
