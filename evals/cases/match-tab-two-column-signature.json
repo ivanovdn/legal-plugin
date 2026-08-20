@@ -1,6 +1,6 @@
 {
   "kind": "match",
-  "why": "body.search ignores raw tab characters, so a two-column signature block target spanning the tab cannot match. A documented limitation — pinned so it cannot change silently in either direction. CLAUDE.md table-tab gotcha.",
+  "why": "searchCandidates runs every candidate through normalizeForSearch, which collapses \\s+ (tabs included) to a single space before any query is built — so findClauseRange never issues a query containing a raw tab at all. Verified by spying on body.search against the real, unmodified word.ts: it issues 4 queries for this input, none containing \\t (the tab is replaced by a space in every one). Each of those space-joined candidates then fails to match the raw tab-separated document text, so the result is correctly null, but via query normalization, not tab rejection — a two-column signature block target spanning a raw tab genuinely cannot be located this way. A documented limitation, pinned so it cannot change silently in either direction. (word.ts's own Rule-8-equivalent tab handling belongs to the fake, not to findClauseRange, and is covered independently by wordFake.test.ts's rule8 assertions.)",
   "input": {
     "paragraphs": ["Signed by: [__]\tSigned by: Boris Bukengolts"],
     "target": "Signed by: [__]\tSigned by: Boris Bukengolts"

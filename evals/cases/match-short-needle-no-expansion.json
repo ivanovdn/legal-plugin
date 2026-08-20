@@ -1,9 +1,12 @@
 {
   "kind": "match",
-  "why": "For needles under 200 chars findClauseRange returns the head match and must NOT expand to a separately-found tail — expansion would absorb everything up to the next occurrence of that tail word, which is often a recurring heading.",
+  "why": "For needles under 200 chars findClauseRange returns the head match and must NOT expand to a separately-found tail — expansion would absorb everything up to the next occurrence of that tail word/phrase, which is often unrelated text. The target here is 52 chars (well above tailCandidates' own 40-char floor, so tailCandidates genuinely produces real candidates rather than short-circuiting empty) and the document contains an earlier, unrelated paragraph that happens to quote the target's own tail phrase verbatim. Verified by mutation: against the real, unmodified word.ts this issues exactly 1 body.search query and returns the full target; against a scratch copy with only the <200 bail deleted, it issues a second query, latches onto the earlier decoy occurrence of the tail phrase, and expandTo produces a short, wrong span — proving the bail (not the tailCandidates length floor) is what keeps this case correct.",
   "input": {
-    "paragraphs": ["Termination for convenience", "Either party may terminate on notice.", "Termination for cause"],
-    "target": "Termination for convenience"
+    "paragraphs": [
+      "This document does not itself grant any right that a party may terminate for convenience on notice.",
+      "Either party may terminate for convenience on notice"
+    ],
+    "target": "Either party may terminate for convenience on notice"
   },
-  "expect": { "matched": "Termination for convenience" }
+  "expect": { "matched": "Either party may terminate for convenience on notice" }
 }

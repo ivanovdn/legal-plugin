@@ -1,11 +1,11 @@
 {
   "kind": "match",
-  "why": "For a long quote the span must run from the HEAD match's start to the TAIL match's end — match boundaries, never whole paragraphs, or a fragment rewrite over-replaces. CLAUDE.md findClauseRange head+tail gotcha.",
+  "why": "For a long quote the span must run from the HEAD match's start to the TAIL match's end — match boundaries, never whole paragraphs, or a fragment rewrite over-replaces. The target is 293 chars (over the 200-char findClauseRange bail), so the full string can never be searched in one shot and genuine head+tail bridging (progressively-shortened head candidate, tail candidate, expandTo) is exercised: verified by spying on body.search against the real, unmodified word.ts (2 queries: one ~200-char head slice, one tail slice) and by mutation-testing a scratch copy with the bridging step deleted, which returns only the head slice and fails this case. CLAUDE.md findClauseRange head+tail gotcha.",
   "input": {
     "paragraphs": [
-      "Preamble text that must not be absorbed. ALPHA the confidentiality obligations set out in this clause shall survive termination of this Agreement for a period of five years from the effective date and shall bind each receiving party OMEGA trailing text that must not be absorbed either."
+      "Preamble text that must not be absorbed under any circumstances even though it appears in the very same paragraph as the clause. ALPHA the confidentiality obligations set out in this clause shall survive any termination or expiration of this Agreement for a period of five full years measured from the effective date hereof and shall fully bind each receiving party together with its successors and permitted assigns OMEGA Trailing text that must also never be absorbed by the returned range under any circumstances whatsoever no matter how long the clause becomes."
     ],
-    "target": "ALPHA the confidentiality obligations set out in this clause shall survive termination of this Agreement for a period of five years from the effective date and shall bind each receiving party OMEGA"
+    "target": "ALPHA the confidentiality obligations set out in this clause shall survive any termination or expiration of this Agreement for a period of five full years measured from the effective date hereof and shall fully bind each receiving party together with its successors and permitted assigns OMEGA"
   },
-  "expect": { "matched": "ALPHA the confidentiality obligations set out in this clause shall survive termination of this Agreement for a period of five years from the effective date and shall bind each receiving party OMEGA" }
+  "expect": { "matched": "ALPHA the confidentiality obligations set out in this clause shall survive any termination or expiration of this Agreement for a period of five full years measured from the effective date hereof and shall fully bind each receiving party together with its successors and permitted assigns OMEGA" }
 }
