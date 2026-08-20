@@ -247,3 +247,35 @@ await withFake(["Signed by: Boris and CEO title block"], async (fake) => {
     "cross-sync: reviewed carries both edits, not just the tracked one",
   );
 });
+
+// an edit that re-touches a region already containing a tracked deletion is
+// refused, not guessed at — real Word's semantics there (absorb / preserve /
+// nest the strike) are not established anywhere this fake can check.
+await withFake(["Signed by: Boris and CEO title block"], async (_fake) => {
+  await Word.run(async (context) => {
+    const doc = context.document;
+    const results = doc.body.search("Boris", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+    results.items[0].insertText("Suzy", Word.InsertLocation.replace);
+    await context.sync();
+    doc.changeTrackingMode = Word.ChangeTrackingMode.off;
+    await context.sync();
+  });
+  let threw = false;
+  try {
+    await Word.run(async (context) => {
+      const results = context.document.body.search("BorisSuzy", {
+        matchCase: false, matchWildcards: false, matchWholeWord: false,
+      });
+      results.load("items");
+      await context.sync();
+      results.items[0].insertText("X", Word.InsertLocation.replace);
+      await context.sync();
+    });
+  } catch {
+    threw = true;
+  }
+  pass(threw, "overlap: an edit spanning a tracked deletion throws instead of silently corrupting reviewed");
+});

@@ -18,6 +18,13 @@
 // expandTo across tables, list renumbering, content controls, and wildcard
 // MATCHING (only escaped-literal wildcard queries are supported — see
 // searchSync). A case asserts which characters, never how they look.
+// ALSO: an edit whose raw span overlaps an existing tracked deletion throws
+// (see applyMutation) instead of being modelled. This is not merely
+// unimplemented — what real Word does when you re-edit a region that already
+// contains a tracked deletion (absorb the strike, preserve it, nest it) is
+// not established anywhere this fake can check (CLAUDE.md, Office.js docs).
+// Guessing would mean inventing fidelity nobody can validate, which is worse
+// than refusing.
 //
 // MODEL NOTE: `reviewed` is never stored. A paragraph is `raw` plus a list of
 // deletion spans (raw coordinates); `reviewed` is always `raw` with those
@@ -91,6 +98,24 @@ const reviewedOf = (para: Para): string => {
   }
   out += para.raw.slice(cursor);
   return out;
+};
+
+/**
+ * Belt-and-braces: confirms a paragraph's deletions are still sorted and
+ * non-overlapping after a mutation batch. Should be unreachable once
+ * applyMutation's overlap check (which refuses an edit that re-touches an
+ * existing deletion) is doing its job — if this ever fires, that check has a
+ * gap, not just this one paragraph.
+ */
+const assertDeletionsWellFormed = (para: Para, label: string): void => {
+  for (let i = 1; i < para.deletions.length; i++) {
+    if (para.deletions[i].start < para.deletions[i - 1].end) {
+      throw new Error(
+        `FakeParagraph ${label}: deletions invariant violated after sync() — spans ` +
+          `${JSON.stringify(para.deletions)} are not sorted and non-overlapping.`,
+      );
+    }
+  }
 };
 
 const isWholeWordAt = (haystack: string, index: number, length: number): boolean => {
@@ -259,6 +284,20 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     const length = m.end - m.start;
     const s = local;
     const e = local + length;
+    // Refuse rather than guess: real Word's behavior when an edit re-touches
+    // a region that already contains a tracked deletion is not established
+    // (see BLIND SPOTS). Detect and throw here, at the moment an author trips
+    // it, instead of leaving it to silently corrupt reviewedOf()'s output.
+    const overlapping = para.deletions.find((d) => d.start < e && d.end > s);
+    if (overlapping) {
+      throw new Error(
+        `FakeParagraph #${index}: edit at raw [${s}, ${e}) overlaps an existing tracked deletion at ` +
+          `[${overlapping.start}, ${overlapping.end}). Whether real Word absorbs, preserves, or nests a ` +
+          `strike when you re-edit a region that already contains one is not established anywhere this ` +
+          `fake can check — this needs a real-Word observation before it can be modelled, not a fix to ` +
+          `this fake.`,
+      );
+    }
     if (m.tracked) {
       // Tracked: the original span stays in RAW (struck), with the new text
       // appended right after it — nothing before `e` moves. Record `[s, e)`
@@ -296,6 +335,7 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     pendingMutations.sort((a, b) => b.start - a.start);
     for (const m of pendingMutations) applyMutation(m);
     pendingMutations.length = 0;
+    paras.forEach((para, i) => assertDeletionsWellFormed(para, `#${i}`));
     for (const load of pendingLoads) load();
     pendingLoads.length = 0;
   };
