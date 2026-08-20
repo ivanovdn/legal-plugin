@@ -3,7 +3,7 @@
 //
 // These are unit tests of OUR fake, not of word.ts. If one fails, either the
 // fake is wrong or a gotcha we believed about Word is wrong — both need a human.
-import { createFakeWord } from "./eval/wordFake";
+import { createFakeWord, type FakeParagraph } from "./eval/wordFake";
 import { pass } from "./testAssert";
 
 const DOC = ["1. GOVERNING LAW", "Signed by: [__]", "Title: Chief Executive", "entitled to notice"];
@@ -89,3 +89,113 @@ pass(search(["Signed by: Ann\tSigned by: Boris"], "Signed by: Boris").length ===
 // No wildcard metacharacters in this needle, so rule 3 cannot reject it first
 // — the tab guard is the only thing that can, which is what isolates it.
 pass(search(["Signed by: Ann\tSigned by: Boris"], "Ann\tSigned by").length === 0, "rule8: a tab-containing needle misses even with no metacharacters");
+
+// --- Ranges, lazy loading, and tracked mutation ---
+const withFake = async <T>(paras: FakeParagraph[], fn: (f: ReturnType<typeof createFakeWord>) => Promise<T>): Promise<T> => {
+  const fake = createFakeWord(paras);
+  fake.install();
+  try {
+    return await fn(fake);
+  } finally {
+    fake.uninstall();
+  }
+};
+
+// items is empty until sync
+await withFake(["Governing Law applies here"], async () => {
+  await Word.run(async (context) => {
+    const results = context.document.body.search("Governing Law", {
+      matchCase: false, matchWildcards: false, matchWholeWord: false,
+    });
+    results.load("items");
+    pass(results.items.length === 0, "lazy: items empty before sync");
+    await context.sync();
+    pass(results.items.length === 1, "lazy: items populated after sync");
+  });
+});
+
+// text throws until loaded
+await withFake(["Governing Law applies here"], async () => {
+  await Word.run(async (context) => {
+    const results = context.document.body.search("Governing Law", {
+      matchCase: false, matchWildcards: false, matchWholeWord: false,
+    });
+    results.load("items");
+    await context.sync();
+    let threwOnText = false;
+    try {
+      void results.items[0].text;
+    } catch {
+      threwOnText = true;
+    }
+    pass(threwOnText, "lazy: range.text throws before load");
+    results.items[0].load("text");
+    await context.sync();
+    pass(results.items[0].text === "Governing Law", "lazy: range.text readable after load");
+  });
+});
+
+// expandTo spans head start -> tail end, by match boundary not paragraph
+await withFake(["ALPHA middle text OMEGA tail"], async (fake) => {
+  await Word.run(async (context) => {
+    const body = context.document.body;
+    const heads = body.search("ALPHA", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    const tails = body.search("OMEGA", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    heads.load("items");
+    tails.load("items");
+    await context.sync();
+    const span = heads.items[0]
+      .getRange(Word.RangeLocation.start)
+      .expandTo(tails.items[0].getRange(Word.RangeLocation.end));
+    span.load("text");
+    await context.sync();
+    pass(span.text === "ALPHA middle text OMEGA", "range: expandTo spans head start to tail end");
+    pass(fake.rawText() === "ALPHA middle text OMEGA tail", "range: expandTo does not mutate");
+  });
+});
+
+// tracked replacement: raw keeps the deletion, reviewed does not
+await withFake(["Signed by: Boris"], async (fake) => {
+  await Word.run(async (context) => {
+    const doc = context.document;
+    const results = doc.body.search("Boris", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+    results.items[0].insertText("Suzy", Word.InsertLocation.replace);
+    await context.sync();
+    doc.changeTrackingMode = Word.ChangeTrackingMode.off;
+    await context.sync();
+  });
+  pass(fake.reviewedText() === "Signed by: Suzy", "tracked: reviewed shows the replacement");
+  pass(fake.rawText() === "Signed by: BorisSuzy", "tracked: raw keeps the struck original");
+  pass(
+    fake.trackingModeLog().join(",") === "TrackAll,Off",
+    "tracked: every changeTrackingMode assignment is logged in order",
+  );
+});
+
+// untracked replacement leaves no struck text
+await withFake(["Signed by: Boris"], async (fake) => {
+  await Word.run(async (context) => {
+    const results = context.document.body.search("Boris", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    results.items[0].insertText("Suzy", Word.InsertLocation.replace);
+    await context.sync();
+  });
+  pass(fake.rawText() === "Signed by: Suzy", "untracked: raw has no struck original");
+});
+
+// a snapshot of ranges survives replacing earlier ones
+await withFake(["fee here and fee there"], async (fake) => {
+  await Word.run(async (context) => {
+    const results = context.document.body.search("fee", { matchCase: false, matchWildcards: false, matchWholeWord: false });
+    results.load("items");
+    await context.sync();
+    pass(results.items.length === 2, "snapshot: both matches collected upfront");
+    for (const m of results.items) m.insertText("charge", Word.InsertLocation.replace);
+    await context.sync();
+  });
+  pass(fake.rawText() === "charge here and charge there", "snapshot: both replacements land correctly");
+});

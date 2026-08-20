@@ -22,7 +22,7 @@ echo "==> word add-in assertions"
 # skips its later assertions but still exits 0) or a new *.test.ts that doesn't
 # match the glob would silently run fewer assertions than intended and still
 # print "all checks passed" — exactly the failure mode this gate exists to catch.
-EXPECTED_PASS_COUNT=241
+EXPECTED_PASS_COUNT=253
 pass_log="$(mktemp)"
 trap 'rm -f "$pass_log"' EXIT
 for f in src/*.test.ts; do
