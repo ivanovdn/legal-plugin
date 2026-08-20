@@ -1,0 +1,17 @@
+{
+  "kind": "parse",
+  "why": "Same collapse, but the target lines hold real values rather than blanks -- so each changed line becomes a plain replace (one occurrence), not replace_all. Trace 32deb028. NOTE: the brief's original 2-line reproduction (only one line differing) never actually invokes splitMultilineFieldEdits -- the function requires 2+ genuinely differing lines (diffs.length < 2 returns the block unchanged; a single-diff block is left to the apply-time simplifyMultilineReplace collapse instead, a DIFFERENT mechanism in word.ts). This input mirrors the already-pinned parseEditBlocks.test.ts test #12 shape (3 lines, 2 differ, 1 unchanged) so it genuinely exercises the split. As with parse-multiline-blank-fill, expect.edits/expect.normalized are the SPLIT form extractEditBlocks() actually returns (normalization is baked into its return value); the backend never splits, so this is baselined as a confirmed cross-parser divergence.",
+  "input": {
+    "prose": "```json\n{\"action\": \"replace\", \"target_text\": \"Signed by: Boris Bukengolts\\nTitle: Chief Growth Officer\\nfor and on behalf of Trinetix Inc.\", \"new_text\": \"Signed by: Suzy Quatro\\nTitle: CTO\\nfor and on behalf of Trinetix Inc.\"}\n```\n"
+  },
+  "expect": {
+    "edits": [
+      {"action": "replace", "target_text": "Signed by: Boris Bukengolts", "new_text": "Signed by: Suzy Quatro"},
+      {"action": "replace", "target_text": "Title: Chief Growth Officer", "new_text": "Title: CTO"}
+    ],
+    "normalized": [
+      {"action": "replace", "target_text": "Signed by: Boris Bukengolts", "new_text": "Signed by: Suzy Quatro"},
+      {"action": "replace", "target_text": "Title: Chief Growth Officer", "new_text": "Title: CTO"}
+    ]
+  }
+}

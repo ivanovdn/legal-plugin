@@ -12,7 +12,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { applyEdit, findClauseRange } from "../word";
-import type { EditProposal } from "../parseEditBlocks";
+import { extractEditBlocks, normalizeProposals, type EditProposal } from "../parseEditBlocks";
 import { createFakeWord, type FakeParagraph } from "./wordFake";
 
 declare const process: { exitCode?: number; cwd(): string };
@@ -98,10 +98,28 @@ async function runApply(c: Case): Promise<boolean> {
   }
 }
 
+// Serialized-JSON comparison: `undefined`-valued keys are dropped by
+// `JSON.stringify` on both sides, but key ORDER still matters. Verified this
+// doesn't bite any of the 3 new cases (case files were written directly from
+// the parser's own JSON.stringify output, so field order already matches) —
+// if a future case fails only on key order, stable-sort keys here before
+// comparing (a comparison fix, not a case fix; see Task 6's report).
+const sameEdits = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+async function runParse(c: Case): Promise<boolean> {
+  const { blocks } = extractEditBlocks(c.input.prose ?? "");
+  if (!sameEdits(blocks, c.expect.edits)) return false;
+  if (c.expect.normalized !== undefined) {
+    if (!sameEdits(normalizeProposals(blocks), c.expect.normalized)) return false;
+  }
+  return true;
+}
+
 async function runCase(c: Case): Promise<boolean> {
+  if (c.kind === "parse") return runParse(c);
   if (c.kind === "match") return runMatch(c);
   if (c.kind === "apply") return runApply(c);
-  return true; // parse lands in Task 6
+  return false; // an unknown kind is a corpus error, not a pass
 }
 
 /**
@@ -139,8 +157,7 @@ async function runKind(
   return regressions.length === 0 && unexpectedPasses.length === 0;
 }
 
-// Kinds are added here as later tasks implement them: Task 6 adds "parse".
-const KINDS = ["match", "apply"] as const;
+const KINDS = ["parse", "match", "apply"] as const;
 
 async function main(): Promise<void> {
   const baseline = loadBaseline();

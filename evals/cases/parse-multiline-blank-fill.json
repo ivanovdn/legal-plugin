@@ -1,0 +1,17 @@
+{
+  "kind": "parse",
+  "why": "The LLM collapses a whole signature block into ONE replace across several 'Label: value' lines. body.search cannot cross paragraph breaks, so only the first line matches and the 85% guard rejects it. splitMultilineFieldEdits must split it per line, and a labelled blank becomes replace_all because blanks recur across blocks. Traces 02e41ead, ce45b899. NOTE: extractEditBlocks() bakes normalizeProposals() into its return value (confirmed by reading src/parseEditBlocks.ts:400-406 and by direct probing) -- 'blocks' is already the post-split form, there is no public seam for pre-normalization output. So expect.edits here is the SPLIT form (what extractEditBlocks actually returns), matching expect.normalized exactly (re-normalizing an already-normalized list is a documented no-op). The backend's _extract_proposed_edits never splits (no counterpart), so it returns the original single 2-line replace unchanged -- a confirmed, permanent cross-parser divergence, baselined in evals/baseline.json.",
+  "input": {
+    "prose": "I'll fill both fields.\n\n```json\n{\"action\": \"replace\", \"target_text\": \"Signed by: [__]\\nTitle: [__]\", \"new_text\": \"Signed by: Suzy Quatro\\nTitle: Chief Executive Officer\"}\n```\n"
+  },
+  "expect": {
+    "edits": [
+      {"action": "replace_all", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"},
+      {"action": "replace_all", "target_text": "Title: [__]", "new_text": "Title: Chief Executive Officer"}
+    ],
+    "normalized": [
+      {"action": "replace_all", "target_text": "Signed by: [__]", "new_text": "Signed by: Suzy Quatro"},
+      {"action": "replace_all", "target_text": "Title: [__]", "new_text": "Title: Chief Executive Officer"}
+    ]
+  }
+}
