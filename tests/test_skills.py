@@ -3,6 +3,7 @@
 
 import importlib
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from config import get_settings
@@ -1641,3 +1642,53 @@ def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
     get_settings.cache_clear()
     joined = "\n".join(m["content"] for m in captured["messages"])
     assert "PLAYBOOK_BUNDLE" in joined   # toggle off → attached despite non-triggering question
+# --- _cap_chat_context truncation reporting ---
+
+
+def test_cap_chat_context_returns_none_when_within_budget(monkeypatch):
+    """Nothing cut -> None, so callers can distinguish 'fine' from 'truncated'.
+
+    Must be None rather than a zero-truncation dict: the pane renders on
+    truthiness, and a dict would fire the notice on every healthy turn.
+    """
+    from skills.legal_research import context as ctx
+
+    monkeypatch.setattr(ctx, "get_settings", lambda: SimpleNamespace(chat_context_max_chars=10_000))
+    doc = "x" * 100
+    messages = [{"role": "user", "content": doc}]
+    assert ctx._cap_chat_context(messages, doc, "q") is None
+
+
+def test_cap_chat_context_reports_what_it_cut(monkeypatch):
+    """Overflow -> the real numbers, so the attorney can be told how much is missing."""
+    from skills.legal_research import context as ctx
+
+    monkeypatch.setattr(ctx, "get_settings", lambda: SimpleNamespace(chat_context_max_chars=1_000))
+    doc = "x" * 5_000
+    messages = [{"role": "system", "content": "y" * 500}, {"role": "user", "content": doc}]
+    result = ctx._cap_chat_context(messages, doc, "q")
+
+    assert result is not None
+    assert result["doc_chars"] == 5_000
+    assert 0 < result["kept_chars"] < 5_000
+    assert result["kept_pct"] == result["kept_chars"] * 100 // 5_000
+    # The document really was shortened in place, not merely reported on.
+    assert len(messages[-1]["content"]) < 5_000 + 200
+
+
+def test_cap_chat_context_reports_zero_pct_when_document_fully_dropped(monkeypatch):
+    """max(0, ...) can reduce the document to nothing; that must report 0%, not crash.
+
+    This is the worst case and the one most worth naming: the turn proceeds and
+    answers legal questions having seen none of the contract.
+    """
+    from skills.legal_research import context as ctx
+
+    monkeypatch.setattr(ctx, "get_settings", lambda: SimpleNamespace(chat_context_max_chars=10))
+    doc = "x" * 5_000
+    messages = [{"role": "system", "content": "y" * 9_000}, {"role": "user", "content": doc}]
+    result = ctx._cap_chat_context(messages, doc, "q")
+
+    assert result is not None
+    assert result["kept_chars"] == 0
+    assert result["kept_pct"] == 0

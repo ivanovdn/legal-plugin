@@ -160,14 +160,26 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
     return playbook, msa_block
 
 
-def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> None:
+def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> dict | None:
     """If total assembled content exceeds the budget, truncate ONLY the document
     portion of the trailing user message — never the grounding. Mutates messages
-    in place; marks + logs the truncation. Crude on purpose (Phase 3)."""
+    in place.
+
+    Returns None when nothing was cut, else what was lost:
+        {"doc_chars": int, "kept_chars": int, "kept_pct": int}
+
+    The return value exists because a log line is invisible to the attorney. A
+    truncated contract means the answer may be legally unsound — measured
+    2026-08-21, a real MSA turn kept only 58% of the document at the old budget
+    and 23% with a full history window, and the cut is a TAIL cut, so what goes
+    missing is liability, indemnity, term/termination, governing law and the
+    signature blocks. The caller routes this to the report so the pane can say
+    so. See docs/superpowers/specs/2026-08-21-context-budget-design.md.
+    """
     budget = get_settings().chat_context_max_chars
     total = sum(len(m["content"]) for m in messages)
     if total <= budget:
-        return
+        return None
     overflow = total - budget
     keep = max(0, len(uploaded_text) - overflow - len("\n\n[document truncated for context budget]"))
     truncated_doc = uploaded_text[:keep] + "\n\n[document truncated for context budget]"
@@ -179,3 +191,9 @@ def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) ->
     )
     logger.warning("[legal_research] chat context %d > budget %d — truncated document to %d chars",
                    total, budget, keep)
+    doc_chars = len(uploaded_text)
+    return {
+        "doc_chars": doc_chars,
+        "kept_chars": keep,
+        "kept_pct": (keep * 100 // doc_chars) if doc_chars else 0,
+    }
