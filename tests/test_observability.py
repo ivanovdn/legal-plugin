@@ -320,7 +320,8 @@ def test_doc_chat_routes_llm_through_traced_invoke(monkeypatch):
 def test_llm_caller_sends_num_ctx_in_options(monkeypatch):
     """llm_caller must include num_ctx in the options dict posted to Ollama.
     Without it Ollama defaults to ~4096 tokens, which truncates large prompts.
-    The value comes from settings.ollama_num_ctx (default 32768)."""
+    The value comes from settings.ollama_num_ctx (default 131072 — pinned to the
+    window Spark serves; see config.py for why it must be EQUAL, not larger)."""
     from graph.nodes import llm_caller as mod
     from config import get_settings
 

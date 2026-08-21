@@ -104,11 +104,14 @@ class Settings(BaseSettings):
     # history compaction is about bounding prefill rather than about fitting.
     chat_context_max_chars: int = 150000
     # Measured on real legal text, not a rule of thumb: the Trinetix MSA plus
-    # its playbook bundle is 123,612 chars = 25,270 real prompt tokens. The
-    # familiar chars/4 estimate overstates token counts by ~22%, which is why
-    # every budget comment that used it was wrong. Used for the budget
-    # invariants in tests/test_config.py and the review-path overflow guard in
-    # graph/nodes/llm_caller.py.
+    # its playbook bundle is 123,612 chars = 25,270 real prompt tokens (the
+    # assembled prompt sent to Ollama, including --- ATTACHED DOCUMENT --- /
+    # --- END --- / User request: wrappers); the raw component sum is 123,446
+    # (84,859 doc + 38,587 playbook, with no wrapper — the figure in
+    # test_review_headroom_fits_a_real_contract). The familiar chars/4 estimate
+    # overstates token counts by ~22%, which is why every budget comment that
+    # used it was wrong. Used for the budget invariants in tests/test_config.py
+    # and the review-path overflow guard in graph/nodes/llm_caller.py.
     est_chars_per_token: float = 4.89
     chat_conditional_grounding: bool = True   # gate playbook/MSA on _needs_grounding; False = always attach (A/B + future cloud path)
     msa_max_chars: int = 24000             # MSA cap, shared by review + chat paths

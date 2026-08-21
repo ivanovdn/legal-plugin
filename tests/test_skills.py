@@ -1429,7 +1429,9 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
 def test_build_llm_sets_num_ctx(monkeypatch):
     """_build_llm must forward ollama_num_ctx to ChatOllama so Ollama uses the
     correct context window instead of its small default (~4096 tokens).
-    qwen3.6 supports 262k; we pin a project-level default of 32768."""
+    qwen3.6 supports 262k; we pin a project-level default of 131072 to match the
+    window the inference server actually loads — a mismatch in either direction
+    forces a 4.7s model reload."""
     lr = importlib.import_module("skills.legal_research.legal_research")
     from config import get_settings
     monkeypatch.setenv("OLLAMA_NUM_CTX", "12345")
