@@ -12,6 +12,7 @@ import { applyFindingFilters, ALL_RISKS, ownerKey, type FindingFilters } from ".
 import { readBody } from "../word";
 import { recordEvent, type TurnRef, EMPTY_TURN } from "../feedback";
 import { resolveDocumentId } from "../docIdentity";
+import { truncationNotice } from "../contextNotice";
 import FindingCard from "./FindingCard";
 
 type Status =
@@ -30,6 +31,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [rawResponse, setRawResponse] = useState<string>("");
   const [persistError, setPersistError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState<string | null>(null);
   const [turn, setTurn] = useState<TurnRef>(EMPTY_TURN);
 
   const onReview = async () => {
@@ -74,6 +76,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
       recordEvent(reviewTurn, "findings", "findings_rendered", {
         detail: String(parsed.findings.length),
       });
+      setTruncated(truncationNotice(res.data?.report?.context_truncated));
       const rpe = res.data?.report?.review_persist_error;
       if (rpe) setPersistError(rpe);
       setStatus({ kind: "idle" });
@@ -98,6 +101,11 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
         </div>
       )}
       {status.kind === "error" && <div className="status error">Error: {status.message}</div>}
+      {truncated && (
+        <div className="context-truncated" role="alert">
+          ⚠ <strong>Part of this document was not sent</strong> — {truncated} Treat this review as incomplete.
+        </div>
+      )}
       {persistError && (
         <div className="status error">
           ⚠ This review could not be saved ({persistError}) — it won't be recalled in chat. Re-run the review.

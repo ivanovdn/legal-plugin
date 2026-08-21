@@ -10,6 +10,7 @@ import { extractPreferenceBlocks } from "../parsePreferenceBlocks";
 import { readBody } from "../word";
 import { buildSnapshot, recordEvent, requestFlag, type TurnRef, EMPTY_TURN } from "../feedback";
 import { resolveDocumentId } from "../docIdentity";
+import { truncationNotice } from "../contextNotice";
 import EditProposalCard from "./EditProposalCard";
 import PreferenceSuggestionCard from "./PreferenceSuggestionCard";
 
@@ -55,6 +56,7 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memoryDegraded, setMemoryDegraded] = useState(false);
+  const [truncated, setTruncated] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom on new messages.
@@ -75,6 +77,7 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
       if (res.status === "error") {
         setError((res.errors ?? ["unknown error"])[0]);
         setMemoryDegraded(false);
+        setTruncated(null);
         return;
       }
       const turn: TurnRef = {
@@ -84,6 +87,7 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
         documentId: await resolveDocumentId(),
       };
       setMemoryDegraded(Boolean(res.data?.memory_degraded));
+      setTruncated(truncationNotice(res.data?.report?.context_truncated));
       const rawAnswer =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "(no response)";
       // Strip fenced JSON blocks for display; prefer the backend's authoritative
@@ -217,6 +221,11 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
         )}
       </div>
 
+      {truncated && (
+        <div className="context-truncated" role="alert">
+          ⚠ <strong>Part of this document was not sent</strong> — {truncated}
+        </div>
+      )}
       {memoryDegraded && (
         <div className="status warning" role="alert">
           ⚠ <strong>Memory unavailable this turn</strong> — this reply and any review won't be remembered.

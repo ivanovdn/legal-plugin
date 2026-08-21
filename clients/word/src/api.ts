@@ -4,6 +4,7 @@
 import type { EditProposal } from "./parseEditBlocks";
 import { resolveDocumentId } from "./docIdentity";
 import { userHeaders } from "./attorneyIdentity";
+import type { ContextTruncated, TokenUsage } from "./contextNotice";
 
 export interface QueryResponse {
   status: "ok" | "error";
@@ -23,6 +24,8 @@ export interface QueryResponse {
       proposed_preferences?: string[];
       contract_type_detected?: string;
       review_persist_error?: string;
+      context_truncated?: ContextTruncated | null;
+      tokens?: TokenUsage | null;
     };
     interrupt_payload?: {
       task_type?: string;

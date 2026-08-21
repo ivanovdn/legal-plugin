@@ -900,3 +900,21 @@ button.secondary:disabled {
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* Truncated-context notice. Deliberately NOT .status.warning: that amber box
+   already means "this turn wasn't remembered", and styles.css documents the
+   rule that two different meanings must not look alike, or the one that fires
+   often trains testers to ignore the one that fires rarely.
+   This is the most severe of the three — memory loss costs convenience, an
+   unsaved document costs future recall, but a truncated contract means THIS
+   ANSWER may be legally unsound — so it reads as more serious than amber. */
+.context-truncated {
+  color: var(--red-fg);
+  background: var(--red-bg);
+  border: 1px solid var(--red-fg);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 12px;
+}
