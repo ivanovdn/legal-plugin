@@ -56,7 +56,26 @@ class Settings(BaseSettings):
     chat_history_trim_chars: int = 300
     max_review_iterations: int = 3
     checkpoint_ttl_seconds: int = 86400
-    ollama_num_ctx: int = 32768            # context window for grounded LLM calls (playbook+MSA+doc+answer); qwen3.6 supports 262k. Raise/lower per hardware (bigger = more KV-cache RAM).
+    # Pinned to the window the inference server actually loads. This must be
+    # EQUAL to the server's, not merely large enough: Ollama reloads the model
+    # whenever a request's num_ctx differs from the resident one, in EITHER
+    # direction. Measured 2026-08-21 on Spark — requesting 32768 against a
+    # resident 131072 forced a 4.7s reload and dropped it to 27.07GB — so a
+    # "conservatively smaller" value is not safe, it thrashes a 24GB model in
+    # and out and contends with every other consumer of that box.
+    #
+    # 131072 is what Spark (172.20.0.22) serves. KV costs only ~49.5 MB per 1k
+    # tokens because qwen3.6 is a hybrid SSM/attention MoE
+    # (full_attention_interval=4 over block_count=40 => ~10 attention layers;
+    # the other 30 are SSM layers holding constant-size state), so 131072 costs
+    # ~6.34GB and even the full 262144 window costs ~12.7GB. Memory is not the
+    # constraint here; prefill latency is (see chat_context_max_chars).
+    #
+    # COUPLING: this tracks the server's OLLAMA_CONTEXT_LENGTH. If the service
+    # is retuned we get reload thrash — a visible 4.7s penalty, not silent
+    # truncation, which is the right failure mode. Verify after deploy:
+    #   curl http://<ollama-host>:11434/api/ps   -> ctx must equal this value.
+    ollama_num_ctx: int = 131072
     # Hard ceiling on GENERATED tokens. Unset, Ollama generates until the
     # context window fills — so a degenerate repetition loop runs for ~21k
     # tokens and the turn presents as hung. Observed 2026-08-14 on the VM: the
@@ -70,7 +89,27 @@ class Settings(BaseSettings):
     # truncated answer instead of a multi-minute stall.
     ollama_num_predict_chat: int = 2048
     ollama_num_predict_review: int = 8192
-    chat_context_max_chars: int = 100000   # assembled chat-context budget; must stay below ollama_num_ctx (in tokens ≈ chars/4) with answer headroom — at 32768 tokens that is ~100k chars plus ~7k tokens answer room.
+    # Derived from a 30s turn ceiling, not chosen. Measured on Spark 2026-08-21
+    # (qwen3.6: prefill 1,397 tok/s, generation 51.4 tok/s):
+    #     answer   400 tok / 51.4 tok/s        =   7.8s
+    #     prefill  (30 - 7.8) * 1,397 tok/s    =  31,013 tokens
+    #     chars    31,013 * 4.89               = ~151,653  -> 150,000
+    #
+    # At 150k the full Trinetix MSA (84,859) + MSA playbook bundle (38,587) +
+    # a prior-review block (~5,000) all fit, leaving ~21,500 for history.
+    #
+    # NOTE the constraint has moved: 150k chars is ~30.7k tokens against a
+    # 131,072 window — 4x headroom. The WINDOW is no longer binding, PREFILL
+    # LATENCY is. That is why this is not simply set to the window, and why
+    # history compaction is about bounding prefill rather than about fitting.
+    chat_context_max_chars: int = 150000
+    # Measured on real legal text, not a rule of thumb: the Trinetix MSA plus
+    # its playbook bundle is 123,612 chars = 25,270 real prompt tokens. The
+    # familiar chars/4 estimate overstates token counts by ~22%, which is why
+    # every budget comment that used it was wrong. Used for the budget
+    # invariants in tests/test_config.py and the review-path overflow guard in
+    # graph/nodes/llm_caller.py.
+    est_chars_per_token: float = 4.89
     chat_conditional_grounding: bool = True   # gate playbook/MSA on _needs_grounding; False = always attach (A/B + future cloud path)
     msa_max_chars: int = 24000             # MSA cap, shared by review + chat paths
     conversation_store_enabled: bool = True   # durable per-(document,attorney) chat store; False = Redis-only history

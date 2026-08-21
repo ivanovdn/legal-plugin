@@ -140,3 +140,38 @@ def test_legacy_tracing_keys_removed():
     s = Settings()
     for attr in ("langfuse_host", "langfuse_public_key", "langfuse_secret_key", "phoenix_host"):
         assert not hasattr(s, attr), f"{attr} should be removed"
+
+
+def test_chat_budget_fits_context_window():
+    """The assembled chat budget plus the answer must fit inside the pinned window.
+
+    This invariant was violated before 2026-08-21: chat_context_max_chars was
+    set without reference to ollama_num_ctx, so a full MSA turn overflowed and
+    Ollama silently middle-dropped the prompt — which removes exactly the
+    playbook/MSA. Asserting it here makes a future mis-tune fail loudly.
+    """
+    s = get_settings()
+    est_input_tokens = s.chat_context_max_chars / s.est_chars_per_token
+    assert est_input_tokens + s.ollama_num_predict_chat < s.ollama_num_ctx, (
+        f"chat budget {s.chat_context_max_chars} chars "
+        f"(~{est_input_tokens:.0f} tok) + {s.ollama_num_predict_chat} answer tokens "
+        f"does not fit num_ctx={s.ollama_num_ctx}"
+    )
+
+
+def test_review_headroom_fits_a_real_contract():
+    """contract_review has NO input cap, so the window must hold the largest
+    real document we have plus its playbook bundle.
+
+    Measured 2026-08-21: the Trinetix Model MSA extracts to 84,859 chars and
+    the MSA playbook bundle assembles to 38,587 — 123,446 together. At the old
+    num_ctx=32768 with num_predict_review=8192 the headroom was 24,576 tokens
+    against a measured 25,270-token input, so MSA reviews ran under-grounded.
+    """
+    s = get_settings()
+    headroom_chars = (s.ollama_num_ctx - s.ollama_num_predict_review) * s.est_chars_per_token
+    assert headroom_chars > 123_446, (
+        f"review headroom {headroom_chars:.0f} chars cannot hold a real MSA review "
+        f"(123,446 chars): num_ctx={s.ollama_num_ctx}, "
+        f"num_predict_review={s.ollama_num_predict_review}"
+    )

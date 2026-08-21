@@ -1454,6 +1454,51 @@ def test_build_json_llm_sets_num_ctx(monkeypatch):
     get_settings.cache_clear()
 
 
+def test_all_num_ctx_sites_read_the_same_setting(monkeypatch):
+    """All three consumers must read settings.ollama_num_ctx — one field, no drift.
+
+    If any site acquired its own constant or its own config field, a request
+    could go out with a num_ctx different from the resident model's, and Ollama
+    reloads the model on ANY mismatch, in either direction (measured 4.7s for a
+    24GB model on Spark). The three existing per-site tests would each still
+    pass in that world; this one would not.
+    """
+    import httpx
+    from config import get_settings
+    from graph.nodes import llm_caller as caller
+
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    sentinel = 54321
+    monkeypatch.setenv("OLLAMA_NUM_CTX", str(sentinel))
+    get_settings.cache_clear()
+    lr._llm_cache.clear()
+    try:
+        assert getattr(lr._build_llm(), "num_ctx", None) == sentinel
+        assert getattr(lr._build_json_llm(), "num_ctx", None) == sentinel
+
+        captured: dict = {}
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"message": {"content": "ok"}}
+
+        def _fake_post(url, json=None, timeout=None):
+            captured.update(json or {})
+            return _Resp()
+
+        monkeypatch.setattr(httpx, "post", _fake_post)
+        caller.llm_caller(
+            {"request": "q", "task_type": "contract_review", "retrieved_chunks": []}
+        )
+        assert captured["options"]["num_ctx"] == sentinel
+    finally:
+        lr._llm_cache.clear()
+        get_settings.cache_clear()
+
+
 def test_prior_review_block_strips_suggested_redlines(monkeypatch):
     """The prior-review block injected into doc-chat must NOT include the
     'Suggested Redlines / Fallbacks' section — carrying it forward primes the
