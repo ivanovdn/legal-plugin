@@ -969,3 +969,35 @@ def test_output_formatter_contract_type_detected_defaults_empty(monkeypatch):
     state = _make_state(task_type="research", llm_response="...")
     result = output_formatter(state)
     assert result["report"]["contract_type_detected"] == ""
+
+
+def test_output_formatter_maps_context_truncated_and_tokens():
+    """The two new state fields must reach the report — that is the only path
+    to the pane, since query.py returns report wholesale."""
+    from graph.nodes.output_formatter import output_formatter
+
+    truncation = {"doc_chars": 84859, "kept_chars": 49537, "kept_pct": 58}
+    usage = {"input": 25270, "output": 412, "total": 25682, "unit": "TOKENS"}
+    state = {
+        "task_type": "research",
+        "llm_response": "answer",
+        "context_truncated": truncation,
+        "token_usage": usage,
+    }
+    result = output_formatter(state)
+    assert result["report"]["context_truncated"] == truncation
+    assert result["report"]["tokens"] == usage
+
+
+def test_output_formatter_defaults_new_fields_to_none():
+    """A healthy turn reports null, not a zero-filled object.
+
+    output_formatter names every key explicitly, so these are always PRESENT in
+    the payload; the client tests truthiness. 'Absent' is not achievable with
+    this pattern and must not be specified.
+    """
+    from graph.nodes.output_formatter import output_formatter
+
+    result = output_formatter({"task_type": "research", "llm_response": "answer"})
+    assert result["report"]["context_truncated"] is None
+    assert result["report"]["tokens"] is None

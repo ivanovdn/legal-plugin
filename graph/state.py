@@ -60,3 +60,5 @@ class LegalAgentState(TypedDict):
     document_id: str                       # NEW — stable id for the open document (review-store key)
     memory_degraded: bool                  # NEW — True when a memory read/store was unavailable this turn
     user_name: str                         # NEW — display-only name (self-entered now; SSO `name` claim later); NEVER a key
+    context_truncated: dict | None         # NEW — set when the document was cut to fit the budget; None on a healthy turn
+    token_usage: dict | None               # NEW — real prompt/completion counts from the LLM response (observability.tracing shape)

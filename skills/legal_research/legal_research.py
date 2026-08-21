@@ -11,7 +11,7 @@ from langgraph.prebuilt import create_react_agent
 from config import get_settings
 from graph.state import LegalAgentState
 from observability.spans import traced
-from observability.tracing import traced_invoke, traced_agent_invoke
+from observability.tracing import message_usage, traced_agent_invoke, traced_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
@@ -178,7 +178,12 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         {"role": "user", "content": user_message},   # changes → trailing tokens
     ]
 
-    _cap_chat_context(messages, uploaded_text, request)
+    # Truncation is set on state, not returned, because _run_doc_chat already
+    # receives state and _load_prior_review_block sets memory_degraded the same
+    # way. Set here, INSIDE the skill, it runs before output_formatter and so
+    # reaches the report; a flag set in memory_writer would not (it runs after)
+    # — the hazard recorded in CLAUDE.md.
+    state["context_truncated"] = _cap_chat_context(messages, uploaded_text, request)
 
     # Same reason as llm_caller: without a pre-call line an in-flight doc-chat
     # turn leaves no trace anywhere until it finishes, so a slow shared Ollama
@@ -193,6 +198,10 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     llm = _build_llm()
     response = traced_invoke(llm, messages, name="doc_chat")
     content = response.content if hasattr(response, "content") else str(response)
+    # observability/tracing.py already extracts this for OTel spans; route the
+    # same value to state so the pane can show real token counts. Do not
+    # re-implement the extraction.
+    state["token_usage"] = message_usage(response)
     logger.info(
         "[legal_research] <- doc_chat %d chars in %.1fs", len(content), time.monotonic() - started
     )
@@ -339,10 +348,14 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
     """
     uploaded_text = _extract_uploaded_text(state)
 
-    # Always reset proposed_edits at the start so a turn that produces no
-    # edit block doesn't carry the prior turn's proposal forward.
+    # Always reset per-turn outputs at the start so a turn that produces none
+    # doesn't carry the prior turn's values forward. For context_truncated this
+    # matters visibly: a stale flag would show "I could only read 58% of this
+    # document" on a turn where the whole document fit.
     state["proposed_edits"] = []
     state["proposed_preferences"] = []
+    state["context_truncated"] = None
+    state["token_usage"] = None
 
     try:
         if uploaded_text:

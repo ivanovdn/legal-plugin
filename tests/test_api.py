@@ -461,3 +461,38 @@ def test_submit_query_passes_document_uuid_as_document_id(monkeypatch):
 
     state_arg = mock_graph.invoke.call_args.args[0]
     assert state_arg["document_id"] == "doc-uuid-abc"
+
+
+def test_query_returns_context_truncated_and_tokens_in_payload(monkeypatch):
+    """Report keys must survive to the client, not just into the report dict.
+
+    query.py returns the report wholesale; this locks that in. Note this test
+    mocks the graph, so it deliberately does NOT exercise output_formatter —
+    tests/test_nodes.py covers that half. Together they cover the whole path.
+    """
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    truncation = {"doc_chars": 84859, "kept_chars": 49537, "kept_pct": 58}
+    usage = {"input": 25270, "output": 412, "total": 25682, "unit": "TOKENS"}
+
+    def _invoke(state, config=None):
+        state = _mock_graph_invoke(state, config)
+        state["report"]["context_truncated"] = truncation
+        state["report"]["tokens"] = usage
+        return state
+
+    with patch("api.routes.query._get_graph") as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = _invoke
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        client = TestClient(app)
+        response = client.post("/api/query", json={"request": "q"})
+
+    assert response.status_code == 200
+    report = response.json()["data"]["report"]
+    assert report["context_truncated"] == truncation
+    assert report["tokens"] == usage
