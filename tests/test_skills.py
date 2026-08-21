@@ -1389,6 +1389,10 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
 
     class FakeResp:
         content = "answer"
+        # Lets message_usage() (observability/tracing.py) extract real numbers,
+        # so this test can assert token_usage the same way it asserts
+        # context_truncated — on values, not just truthiness.
+        usage_metadata = {"input_tokens": 500, "output_tokens": 20, "total_tokens": 520}
 
     monkeypatch.setattr(lr, "_build_llm", lambda: object())
     monkeypatch.setattr(lr, "traced_invoke",
@@ -1407,6 +1411,22 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     )
     lr.legal_research(state)
     get_settings.cache_clear()
+
+    # The headline fix: legal_research.py:186 must actually ROUTE _cap_chat_context's
+    # result onto state, not just call it. Assert on the real values (not mere
+    # truthiness) so reverting that line's `state["context_truncated"] = ` back to a
+    # bare call (dropping the assignment) is caught here — dropping it would leave
+    # `context_truncated` at whatever legal_research seeded it to (None), which is
+    # exactly what a passing-but-blind assertion would fail to notice.
+    truncation = state["context_truncated"]
+    assert truncation is not None
+    assert truncation["kept_pct"] < 100
+    assert truncation["doc_chars"] == len(big_doc)
+    assert truncation["kept_chars"] < truncation["doc_chars"]
+
+    assert state["token_usage"] == {
+        "input": 500, "output": 20, "total": 520, "unit": "TOKENS",
+    }
 
     total = sum(len(m["content"]) for m in captured["messages"])
     # Fixed grounding (system prompt + playbook + MSA note) is never cut — the
