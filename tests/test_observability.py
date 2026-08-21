@@ -438,3 +438,50 @@ def test_llm_caller_does_not_flag_review_within_headroom(monkeypatch):
     state = {"request": "short request", "task_type": "contract_review", "retrieved_chunks": []}
     result = mod.llm_caller(state)
     assert result.get("context_truncated") is None
+
+
+def test_llm_caller_clears_stale_context_truncated_flag(monkeypatch):
+    """A stale flag from a PRIOR over-budget turn must not bleed into this one.
+
+    State persists per thread via the Redis checkpointer, and initial_state
+    never seeds context_truncated — so a key absent from this turn's input
+    keeps its checkpointed value unless the producing node resets it itself.
+    """
+    import httpx
+    from graph.nodes import llm_caller as mod
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": "review"}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
+        llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
+        ollama_num_predict_chat=2048, ollama_num_predict_review=8192,
+        est_chars_per_token=4.89,
+    ))
+    state = {
+        "request": "short request", "task_type": "contract_review", "retrieved_chunks": [],
+        "context_truncated": {"doc_chars": 999, "kept_chars": 1, "kept_pct": 0},
+    }
+    result = mod.llm_caller(state)
+    assert result["context_truncated"] is None
+
+
+def test_llm_caller_early_return_leaves_chat_path_flag_untouched(monkeypatch):
+    """When legal_research already answered (chat path), llm_caller must hit
+    the early-return BEFORE any reset — so it must not clobber the flag
+    legal_research just set for this same turn."""
+    from graph.nodes import llm_caller as mod
+
+    state = {
+        "llm_response": "already answered",
+        "context_truncated": {"doc_chars": 999, "kept_chars": 1, "kept_pct": 0},
+        "token_usage": {"input": 1, "output": 2},
+    }
+    result = mod.llm_caller(state)
+    assert result["context_truncated"] == {"doc_chars": 999, "kept_chars": 1, "kept_pct": 0}
+    assert result["token_usage"] == {"input": 1, "output": 2}

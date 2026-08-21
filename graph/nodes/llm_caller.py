@@ -50,6 +50,22 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         return state
 
     settings = get_settings()
+
+    # Reset per-turn outputs so a turn that doesn't trigger them doesn't carry
+    # a PRIOR turn's value forward. State persists per thread via the Redis
+    # checkpointer, and api/routes/query.py's initial_state does not seed
+    # context_truncated/token_usage (unlike memory_degraded, which is an
+    # OR-accumulator written by several nodes and must survive mid-turn — a
+    # different shape, hence not reset here). Without this, one over-budget
+    # review leaves context_truncated set and every later healthy turn in that
+    # session shows a false "part of this document was not sent" banner.
+    # Symmetric with skills/legal_research/legal_research.py's reset. Must sit
+    # AFTER the early-return above: on a chat turn legal_research already set
+    # these, and llm_caller then hits that early-return — resetting before it
+    # would wipe the chat path's flag and silently undo that turn's work.
+    state["context_truncated"] = None
+    state["token_usage"] = None
+
     chunks = state.get("retrieved_chunks", [])
     context = _build_context(chunks)
 
@@ -111,7 +127,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         state["context_truncated"] = {
             "doc_chars": chars,
             "kept_chars": headroom_chars,
-            "kept_pct": headroom_chars * 100 // chars,
+            "kept_pct": (headroom_chars * 100 // chars) if chars else 0,
         }
 
     logger.info(
