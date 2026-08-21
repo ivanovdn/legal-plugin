@@ -145,10 +145,14 @@ def test_legacy_tracing_keys_removed():
 def test_chat_budget_fits_context_window():
     """The assembled chat budget plus the answer must fit inside the pinned window.
 
-    This invariant was violated before 2026-08-21: chat_context_max_chars was
-    set without reference to ollama_num_ctx, so a full MSA turn overflowed and
-    Ollama silently middle-dropped the prompt — which removes exactly the
-    playbook/MSA. Asserting it here makes a future mis-tune fail loudly.
+    This is a forward guard, not a regression test for a shipped bug: the
+    invariant has held at every config this project has actually run —
+    100 000 chars against the old 32768-token window, and 150 000 chars
+    against today's 131072. Chat has never silently overflowed in practice;
+    the review path did (see test_review_headroom_fits_a_real_contract below,
+    which covers that real incident). This test exists so a FUTURE
+    chat_context_max_chars increase that outgrows ollama_num_ctx fails loudly
+    here instead of quietly middle-dropping prompts in production.
     """
     s = get_settings()
     est_input_tokens = s.chat_context_max_chars / s.est_chars_per_token

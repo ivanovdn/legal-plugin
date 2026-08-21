@@ -78,6 +78,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
         parsed.contractType = detected.toUpperCase();
       }
       setResult(parsed);
+      setTruncated(truncationNotice(res.data?.report?.context_truncated));
       const reviewTurn: TurnRef = {
         turnId: res.data?.turn_id ?? "",
         traceId: res.data?.trace_id ?? "",
@@ -88,7 +89,6 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
       recordEvent(reviewTurn, "findings", "findings_rendered", {
         detail: String(parsed.findings.length),
       });
-      setTruncated(truncationNotice(res.data?.report?.context_truncated));
       const rpe = res.data?.report?.review_persist_error;
       if (rpe) setPersistError(rpe);
       setStatus({ kind: "idle" });
