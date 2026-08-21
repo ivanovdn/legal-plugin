@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import json
+from types import SimpleNamespace
+
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -359,3 +361,80 @@ def test_intake_stamps_identity_on_root(monkeypatch):
     root = _spans_by_name("query")[0]
     assert root.attributes.get("user.id") == "u42"
     assert root.attributes.get("session.id") == "s7"
+
+
+def test_llm_caller_routes_token_usage_to_state(monkeypatch):
+    """The usage llm_caller already computes for spans must also reach state,
+    so the review path can report real token counts to the pane."""
+    import httpx
+    from graph.nodes import llm_caller as mod
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": "review"}, "prompt_eval_count": 25270,
+                    "eval_count": 412}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    state = {"request": "review", "task_type": "contract_review", "retrieved_chunks": []}
+    result = mod.llm_caller(state)
+    assert result["token_usage"]["input"] == 25270
+    assert result["token_usage"]["output"] == 412
+
+
+def test_llm_caller_flags_review_input_over_headroom(monkeypatch):
+    """A review whose assembled input exceeds the window's headroom must SAY so.
+
+    contract_review has no input cap, so at some document size Ollama
+    middle-drops the prompt — removing exactly the playbook/MSA. Detection turns
+    a silently-wrong review into a visibly-degraded one. It must never block the
+    review.
+    """
+    import httpx
+    from graph.nodes import llm_caller as mod
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": "review"}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    # num_ctx 1000 - num_predict_review 500 = 500 tokens * 4.0 chars = 2000 chars headroom
+    monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
+        llm_model="m", ollama_base_url="http://x", ollama_num_ctx=1000,
+        ollama_num_predict_chat=100, ollama_num_predict_review=500,
+        est_chars_per_token=4.0,
+    ))
+    state = {"request": "x" * 5000, "task_type": "contract_review", "retrieved_chunks": []}
+    result = mod.llm_caller(state)
+
+    assert result["llm_response"] == "review"          # never blocked
+    assert result["context_truncated"] is not None
+    assert result["context_truncated"]["kept_pct"] < 100
+
+
+def test_llm_caller_does_not_flag_review_within_headroom(monkeypatch):
+    """A review that fits leaves the flag alone, so the notice cannot cry wolf."""
+    import httpx
+    from graph.nodes import llm_caller as mod
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"message": {"content": "review"}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
+        llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
+        ollama_num_predict_chat=2048, ollama_num_predict_review=8192,
+        est_chars_per_token=4.89,
+    ))
+    state = {"request": "short request", "task_type": "contract_review", "retrieved_chunks": []}
+    result = mod.llm_caller(state)
+    assert result.get("context_truncated") is None

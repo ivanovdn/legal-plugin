@@ -88,6 +88,32 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     # in-flight turn was completely invisible: "queued behind another tenant on
     # the shared Ollama" and "wedged" looked identical in `docker logs`.
     chars = sum(len(m.get("content", "")) for m in messages)
+
+    # contract_review has no input cap, so past some document size Ollama
+    # middle-drops the prompt — which removes exactly the playbook/MSA and
+    # yields a confidently under-grounded review with no log line at all.
+    # DETECTION ONLY, on purpose: choosing what to sacrifice in a review is a
+    # real design question, and the chat path's answer (cut the document) is
+    # precisely the bug this change exists to fix. Report it and let the review
+    # proceed; a visible degraded answer beats a silent wrong one.
+    headroom_chars = int(
+        (settings.ollama_num_ctx - settings.ollama_num_predict_review)
+        * settings.est_chars_per_token
+    )
+    if chars > headroom_chars:
+        logger.error(
+            "[llm_caller] review input %d chars EXCEEDS headroom %d "
+            "(num_ctx=%d - num_predict_review=%d at %.2f chars/token) — "
+            "the model will silently drop part of this prompt",
+            chars, headroom_chars, settings.ollama_num_ctx,
+            settings.ollama_num_predict_review, settings.est_chars_per_token,
+        )
+        state["context_truncated"] = {
+            "doc_chars": chars,
+            "kept_chars": headroom_chars,
+            "kept_pct": headroom_chars * 100 // chars,
+        }
+
     logger.info(
         "[llm_caller] -> ollama model=%s task=%s messages=%d chars=%d url=%s",
         settings.llm_model, state.get("task_type", "?"), len(messages), chars,
@@ -116,6 +142,10 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         data = response.json()
         content = data["message"]["content"]
         state["llm_response"] = content
+
+        # Same value already handed to set_gen_attributes below; routed to state
+        # so the pane can show real token counts. Not a second extraction.
+        state["token_usage"] = ollama_usage(data)
 
         set_gen_attributes(
             input=messages,
