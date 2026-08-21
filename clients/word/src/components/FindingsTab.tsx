@@ -34,6 +34,18 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
   const [truncated, setTruncated] = useState<string | null>(null);
   const [turn, setTurn] = useState<TurnRef>(EMPTY_TURN);
 
+  // The three early returns inside onReview() below (short document / backend
+  // error / empty report text) deliberately do NOT clear `truncated`.
+  // setResult() only fires on the success path further down, so on every one
+  // of those early returns the PREVIOUS review (if any) is still what's on
+  // screen — and if that prior review was truncated, the notice describing it
+  // must stay too. Clearing it here would silently strip a "this review came
+  // from a partial contract" warning off a review the attorney can still see,
+  // which for a legal tool is the more dangerous direction than an
+  // outdated-looking notice. Contrast `persistError`, which IS cleared
+  // unconditionally on the very next line — that's a pre-existing, unrelated
+  // asymmetry in this same component (persistError has no prior-review-still-
+  // displayed rationale attached to it), not a precedent to follow here.
   const onReview = async () => {
     setPersistError(null);
     try {
