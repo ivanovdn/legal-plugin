@@ -502,7 +502,12 @@ def test_legal_research_resets_context_truncated_each_turn(monkeypatch):
     Same reasoning as the existing proposed_edits reset: the pane would show a
     stale 'I could only read 58%' notice on a turn where the whole document fit.
     """
-    from skills.legal_research import legal_research as lr
+    # MUST be importlib, NOT `from skills.legal_research import legal_research`.
+    # __init__.py re-exports the FUNCTION over the submodule, so that form binds
+    # a function object: monkeypatch.setattr would set attributes on the function
+    # (silently doing nothing) and lr.legal_research(state) would AttributeError.
+    # Verified: type=<class 'function'>, hasattr(lr,'legal_research')=False.
+    lr = importlib.import_module("skills.legal_research.legal_research")
 
     monkeypatch.setattr(lr, "_extract_uploaded_text", lambda state: "")
     monkeypatch.setattr(lr, "_run_kb_research", lambda state: ("answer", [], set()))
