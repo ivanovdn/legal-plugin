@@ -496,3 +496,111 @@ def test_query_returns_context_truncated_and_tokens_in_payload(monkeypatch):
     report = response.json()["data"]["report"]
     assert report["context_truncated"] == truncation
     assert report["tokens"] == usage
+
+
+def test_second_turn_early_return_does_not_report_prior_turn_truncation(monkeypatch):
+    """A stale context_truncated flag from a PRIOR turn must not leak into a
+    turn whose skill takes llm_caller's early-return path.
+
+    Turn 1 (compliance) is forced over the review headroom (tiny
+    OLLAMA_NUM_CTX/OLLAMA_NUM_PREDICT_REVIEW), so context_truncated lands in
+    the checkpoint. Turn 2 (contract_generation) runs its ReAct agent, which
+    sets llm_response directly and never sets `messages` — the exact shape
+    that makes llm_caller hit its early-return BEFORE its own reset runs
+    (see graph/nodes/llm_caller.py). contract_generation always routes to
+    human_review (route_risk), and legal_research/research resets these keys
+    itself (would mask the bug being tested), so turn 2 has to go through a
+    real submit -> interrupt -> resume cycle to reach output_formatter without
+    either of those confounds. The only thing standing between turn 1's flag
+    and turn 2's final report is api/routes/query.py's initial_state seeding
+    context_truncated/token_usage to None on every submit.
+
+    Uses a REAL graph + in-memory checkpointer (not a mocked graph.invoke),
+    so this actually exercises submit_query's initial_state dict rather than
+    a hand-built stand-in for it.
+    """
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "1000")
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT_REVIEW", "500")
+    get_settings.cache_clear()
+
+    from langgraph.checkpoint.memory import MemorySaver
+    import api.routes.query as query_mod
+    from graph.graph import build_graph
+
+    def _fake_llm_post(url, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = {
+            "message": {"content": "Based on Contract A (doc_id: d1), the answer is X."}
+        }
+        return resp
+
+    def _fake_agent():
+        agent = MagicMock()
+        fake_msg = MagicMock()
+        fake_msg.content = "Generated draft text."
+        agent.invoke.return_value = {"messages": [fake_msg]}
+        return agent
+
+    with patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_llm_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=[
+             {"chunk_id": "c1", "doc_id": "d1", "doc_title": "Contract A",
+              "text": "relevant legal text", "rrf_score": 0.8,
+              "doc_type": "contract", "client_id": "internal", "jurisdiction": "US"},
+         ]), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        real_graph = build_graph(checkpointer=MemorySaver())
+        monkeypatch.setattr(query_mod, "_graph", real_graph)
+
+        from api.main import app
+        client = TestClient(app)
+        session_id = "leak-test-session"
+
+        # Turn 1: compliance, forced over the (test-tiny) headroom.
+        resp1 = client.post(
+            "/api/query",
+            json={"request": "x" * 5000, "task_type": "compliance", "session_id": session_id},
+            headers={"X-User-ID": "attorney-1"},
+        )
+        assert resp1.status_code == 200
+        report1 = resp1.json()["data"]["report"]
+        assert report1["context_truncated"] is not None
+        assert report1["context_truncated"]["kept_pct"] < 100
+
+        # Turn 2a: contract_generation submit. Its ReAct-agent path sets
+        # llm_response directly and never sets messages (llm_caller
+        # early-returns, no reset), then risk_assessor/route_risk send it to
+        # human_review unconditionally, which pauses (interrupt_enabled
+        # defaults True) instead of reaching output_formatter yet.
+        resp2a = client.post(
+            "/api/query",
+            json={
+                "request": "Generate an NDA", "task_type": "contract_generation",
+                "session_id": session_id,
+            },
+            headers={"X-User-ID": "attorney-1"},
+        )
+        assert resp2a.status_code == 200
+        assert resp2a.json()["data"]["awaiting_review"] is True
+
+        # Turn 2b: resume/approve — completes the SAME turn's run to
+        # output_formatter. Nothing between the pause and here touches
+        # context_truncated, so this reports exactly what was sitting in the
+        # channel when turn 2 started.
+        resp2b = client.post(
+            f"/api/query/{session_id}/resume",
+            json={"approved": True, "notes": ""},
+        )
+
+    assert resp2b.status_code == 200
+    report2 = resp2b.json()["data"]["report"]
+    assert report2["context_truncated"] is None, (
+        "Turn 2 took llm_caller's early-return path, which never resets "
+        "context_truncated itself — api/routes/query.py's initial_state must "
+        "seed context_truncated=None on every submit so a stale flag from a "
+        "prior turn can't leak through."
+    )

@@ -186,6 +186,16 @@ def submit_query(
         "interactive_review": body.interactive_review,
         "document_id": body.document_uuid,
         "memory_degraded": False,
+        # Per-turn keys, seeded fresh every submit. Unlike memory_degraded
+        # (an OR-accumulator that must survive mid-turn), context_truncated/
+        # token_usage are only ever set by the node that produces them this
+        # turn; a skill that hits llm_caller's early-return path (already has
+        # llm_response, no messages — contract_generation's ReAct/revise
+        # paths, the base.py stub) never reaches its reset. Without a seed
+        # here, the Redis checkpointer carries a PRIOR turn's value forward
+        # and a later healthy turn reports a truncation that never happened.
+        "context_truncated": None,
+        "token_usage": None,
     }
 
     graph = _get_graph()
