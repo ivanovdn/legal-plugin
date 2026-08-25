@@ -609,3 +609,35 @@ def test_second_turn_early_return_does_not_report_prior_turn_truncation(monkeypa
         "seed context_truncated=None on every submit so a stale flag from a "
         "prior turn can't leak through."
     )
+
+
+def test_submit_seeds_context_breakdown_in_initial_state(monkeypatch):
+    """The seed is invisible in the report, so assert on what the route passes IN.
+
+    Without it, a context_breakdown checkpointed by a previous doc-chat turn survives
+    into a later turn whose skill early-returns, and the pane shows the earlier turn's
+    numbers as if they were this turn's. That leak cannot be seen downstream: an
+    absent key and a None value both read as None out of report.get(), which is why
+    this test reaches for the input rather than the output.
+    """
+    import api.routes.query as query_mod
+
+    captured = {}
+
+    class FakeGraph:
+        def invoke(self, state, config=None):
+            captured.update(state)
+            return {**state, "report": {"response": "ok"}, "llm_response": "ok"}
+
+    monkeypatch.setattr(query_mod, "_graph", FakeGraph())
+
+    from api.main import app
+    client = TestClient(app)
+    resp = client.post(
+        "/api/query",
+        json={"request": "hello", "task_type": "research", "session_id": "seed-test"},
+        headers={"X-User-ID": "attorney-1"},
+    )
+    assert resp.status_code == 200
+    assert "context_breakdown" in captured, "initial_state must SEED the key, not omit it"
+    assert captured["context_breakdown"] is None

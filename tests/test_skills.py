@@ -1458,6 +1458,54 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
     get_settings.cache_clear()
 
 
+def test_doc_chat_breakdown_reports_the_untruncated_document(monkeypatch):
+    """The counter's document line must carry the real size when nothing was cut.
+
+    Deliberately a SEPARATE fixture from the truncation test above: there the budget
+    is smaller than the grounding, so kept_chars is 0 and an assertion comparing the
+    two passes whether the wiring is right or wrong. Here the whole context fits
+    (~19,900 chars against a 40,000 budget), so the document part must equal the
+    document's real length — which a wiring bug passing 0, or passing the pre-cap
+    value when it should pass the post-cap one, cannot satisfy.
+    """
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
+    from config import get_settings
+    monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "40000")
+    monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
+    get_settings.cache_clear()
+
+    class FakeResp:
+        content = "answer"
+        usage_metadata = {"input_tokens": 500, "output_tokens": 20, "total_tokens": 520}
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "attach_parent_msa",
+                        lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
+
+    big_doc = "STATEMENT OF WORK\n\n" + ("clause text " * 1000)
+    state = _make_state(
+        request="summarize", task_type="research",
+        uploaded_docs=[{"text": big_doc}], filters={"client_id": "internal"},
+        document_id="doc-1",
+    )
+    lr.legal_research(state)
+    get_settings.cache_clear()
+
+    assert state["context_truncated"] is None, "fixture must NOT truncate, or the assertion below goes vacuous"
+    breakdown = state["context_breakdown"]
+    assert breakdown is not None
+    parts = {p["key"]: p for p in breakdown["parts"]}
+    assert parts["document"]["chars"] == len(big_doc)
+    assert parts["playbook"]["chars"] == len("PLAYBOOK")
+    assert breakdown["budget_chars"] == 40000
+    assert breakdown["total_chars"] == sum(p["chars"] for p in breakdown["parts"])
+
+
 # --- num_ctx wiring (context-window pin) ---
 
 
