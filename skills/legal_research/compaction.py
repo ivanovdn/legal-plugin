@@ -83,7 +83,12 @@ _NORMALISE = {
 # capital, or ending the message. Without that, the period in "12.5 months" or "Acme
 # Inc." serves as a false boundary and the same truncation walks straight through.
 _CLAUSE_END = ".!?"
-_EDGE_CHARS = "\"'"
+# Characters that can sit between a sentence terminator and the first real character of
+# the next sentence: quote marks, brackets, and markdown emphasis. Skipping them is what
+# lets "The cap is Green. (Section 12.5 is relevant.)" and "**Green** under the playbook"
+# be quoted at all. It does NOT weaken the boundary rule — the requirement that
+# whitespace follow the terminator is untouched, so "12.5" still cannot be split.
+_EDGE_CHARS = "\"'([*_#>-"
 
 # Abbreviations that are never the last word of a sentence — they exist to introduce a
 # name, so the capital that follows them is a person or a case, not a new statement.
@@ -124,11 +129,12 @@ def _norm_shape(text: str) -> str:
 
 
 def _token_before(row_text: str, i: int) -> str:
-    """The whitespace-delimited token ending just before index `i`."""
+    """The whitespace-delimited token ending just before index `i`, without leading
+    punctuation — "(Mr" must be recognised as "Mr", or a bracket defeats the guard."""
     j = i - 1
     while j >= 0 and not row_text[j].isspace():
         j -= 1
-    return row_text[j + 1:i]
+    return row_text[j + 1:i].lstrip('("\'-[')
 
 
 def _sentence_end_indices(row_text: str) -> set[int]:
@@ -159,10 +165,11 @@ def _sentence_end_indices(row_text: str) -> set[int]:
         j = i + 1
         while j < len(row_text) and (row_text[j].isspace() or row_text[j] in _EDGE_CHARS):
             j += 1
-        if j < len(row_text) and row_text[j].isupper():
-            if _token_before(row_text, i) in _NON_TERMINAL_ABBREVIATIONS:
-                continue
-            ends.add(i)
+        if j < len(row_text) and not (row_text[j].isupper() or row_text[j].isdigit()):
+            continue
+        if _token_before(row_text, i) in _NON_TERMINAL_ABBREVIATIONS:
+            continue
+        ends.add(i)
     return ends
 
 
@@ -187,15 +194,24 @@ def _quotes_a_whole_sentence(row_text: str, quote: str) -> bool:
             j += 1
         if j < len(row_text):
             starts.add(j)
-    folded_row, folded_quote = row_text.casefold(), quote.casefold()
-    pos = folded_row.find(folded_quote)
-    while pos != -1:
-        end = pos + len(folded_quote)
+    # re.finditer on the ORIGINAL string, not a casefolded copy: casefold is not
+    # length-preserving (ß->ss, the ﬁ/ﬂ ligatures a PDF paste carries, İ), so matching on
+    # a folded string while `starts`/`ends` index the unfolded one shifts every position
+    # after such a character. The failure is silent over-rejection that never recovers —
+    # both attempts fail, the range never advances, and compaction stays broken for that
+    # document.
+    for m in re.finditer(re.escape(quote), row_text, re.IGNORECASE):
+        pos, end = m.start(), m.end()
         if pos in starts and (
-            end == len(row_text) or end in ends or (end - 1) in ends
+            end == len(row_text)
+            # Only a FULL STOP may be dropped. Allowing any terminator here let a quote
+            # stop before a "?" and turn a question into a decision: "We will accept 12
+            # months?" quoted as "We will accept 12 months". A quote may still INCLUDE
+            # its "?" or "!" — that is the `end - 1` branch below.
+            or (end in ends and row_text[end] == ".")
+            or (end - 1) in ends
         ):
             return True
-        pos = folded_row.find(folded_quote, pos + 1)
     return False
 
 

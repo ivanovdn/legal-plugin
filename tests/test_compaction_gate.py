@@ -358,3 +358,75 @@ def test_sentence_final_company_suffixes_stay_quotable():
             f'[#{row_id} assistant, said earlier] "The cap is Green"',
             rows, row_id, row_id,
         ) == "", f"row {row_id} should stay quotable"
+
+
+def test_a_question_cannot_be_quoted_as_a_decision():
+    # The attorney ASKED whether to accept; dropping the "?" makes the summary say they
+    # DECIDED to. A modality flip inside one sentence, built from genuine characters —
+    # exactly what this gate exists to make unconstructible.
+    rows = [{"id": 30, "role": "user", "content": "We will accept 12 months?"}]
+    err = validate_segment('[#30 attorney] "We will accept 12 months"', rows, 30, 30)
+    assert "not a complete sentence" in err
+
+
+def test_a_question_quoted_with_its_mark_is_accepted():
+    # The other half: a question is quotable AS a question.
+    rows = [{
+        "id": 31, "role": "user",
+        "content": "Can we drop the exclusivity clause? The client is worried.",
+    }]
+    assert validate_segment(
+        '[#31 attorney] "Can we drop the exclusivity clause?"', rows, 31, 31
+    ) == ""
+
+
+def test_an_exclamation_cannot_be_dropped_either():
+    rows = [{"id": 32, "role": "user", "content": "Should we accept! We must decide."}]
+    err = validate_segment('[#32 attorney] "Should we accept"', rows, 32, 32)
+    assert "not a complete sentence" in err
+
+
+def test_a_casefold_expanding_character_does_not_desynchronise_indices():
+    # casefold() maps ß->ss and the ﬁ ligature->fi, so matching on a folded string while
+    # boundaries index the unfolded one shifts every later position. The symptom is a
+    # valid sentence being rejected forever, which wedges compaction for the document.
+    for row_id, content in (
+        (33, "Groß AG asked. We will not accept 12 months."),
+        (34, "Beneﬁt terms. We will not accept 12 months."),
+    ):
+        rows = [{"id": row_id, "role": "user", "content": content}]
+        assert validate_segment(
+            f'[#{row_id} attorney] "We will not accept 12 months."', rows, row_id, row_id,
+        ) == "", f"row {row_id} desynchronised"
+
+
+def test_a_digit_initial_sentence_is_a_real_boundary():
+    # Endemic in contract chat. Decimals stay excluded — "12.5" has no space after the dot.
+    rows = [{
+        "id": 35, "role": "user",
+        "content": "We should push back. 12 months is not acceptable.",
+    }]
+    assert validate_segment(
+        '[#35 attorney] "12 months is not acceptable."', rows, 35, 35
+    ) == ""
+
+
+def test_a_bracketed_sentence_start_is_a_real_boundary():
+    rows = [{
+        "id": 36, "role": "assistant",
+        "content": "The cap is Green. (Section 12.5 is relevant.) We proceed.",
+    }]
+    assert validate_segment(
+        '[#36 assistant, said earlier] "The cap is Green."', rows, 36, 36
+    ) == ""
+
+
+def test_a_bracket_does_not_defeat_the_abbreviation_guard():
+    rows = [{
+        "id": 37, "role": "user",
+        "content": "Escalate to the partner (Mr. Jones is out) but we will accept 12 months.",
+    }]
+    err = validate_segment(
+        '[#37 attorney] "Jones is out) but we will accept 12 months."', rows, 37, 37
+    )
+    assert "not a complete sentence" in err
