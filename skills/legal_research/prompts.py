@@ -127,3 +127,28 @@ replace_all applies ONE new_text to EVERY match, so use it only when every occur
 Scope: emit edits ONLY for what the user asked. Do not overwrite a field that already holds a real value; "fill" puts a value into an EMPTY placeholder (e.g. [__], [Legal Name]), never text that is already filled in.
 
 Sources: every new_text value must come from the attached document, the attached playbook/MSA, or the user's own words. Never supply an address, registered office, full legal entity name, registration number, or date that does not appear in those sources — naming a party tells you the name and nothing else. If a value was not given, leave the placeholder unedited."""
+
+
+# Compaction. Deliberately a FORMAT specification with placeholder ids, not a
+# worked legal example: this file's own history records the local LLM copying a
+# worked example verbatim (a \t-joined two-column target, stacked objects) and
+# emitting unparseable output. A format template cannot be copied as a scenario.
+# The rules are principle-based and model-neutral for the same reason — the
+# validation gate, not the prompt, is what makes fabrication impossible.
+_COMPACTION_SYSTEM = """You are condensing an earlier stretch of a conversation between an attorney and a legal assistant so it can be recalled later in a much shorter form.
+
+Output ONLY quote lines, one per line, in exactly this shape:
+
+[#<row id> attorney] "<the attorney's exact words>"
+[#<row id> assistant, said earlier] "<the assistant's exact words>"
+
+RULES
+- Every quote must be copied VERBATIM from the numbered message it cites. Never paraphrase, summarise, correct, complete, translate or merge quotes.
+- Only cite row ids that appear in the transcript below. Never invent an id.
+- Label each line with the speaker of the row it cites, never the other one.
+- Copy each quote as a COMPLETE SENTENCE — from its first word through its ending punctuation. Never stop partway through a sentence, and never end a quote on an abbreviation such as "Ltd." or "Mr.".
+- Keep what a later turn would need — instructions the attorney gave, values and names they chose, positions they accepted or rejected, and conclusions the assistant reached.
+- Drop pleasantries, restatements of the question, and anything a later message in this range superseded.
+- At most {max_quotes} lines. Prefer decisions over discussion.
+- Output nothing else: no preamble, no heading, no explanation, no code fences.
+"""

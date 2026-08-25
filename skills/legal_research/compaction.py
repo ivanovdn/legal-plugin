@@ -34,6 +34,14 @@ from __future__ import annotations
 import logging
 import re
 
+from config import get_settings
+from memory.conversation_store import load_rows_after
+from memory.conversation_summary import append_segment, latest_to_id
+from observability.tracing import traced_invoke
+from skills.legal_research.edit_parsing import _sanitize_history
+from skills.legal_research.legal_research import _build_llm
+from skills.legal_research.prompts import _COMPACTION_SYSTEM
+
 logger = logging.getLogger(__name__)
 
 # One compaction pass reads at most this many rows. Not a config knob: it is a
@@ -289,3 +297,117 @@ def render_segment(quotes: list[dict], message_count: int) -> str:
         *lines,
         _SEGMENT_FOOTER,
     ])
+
+
+def select_compactable_rows(document_id: str, attorney_id: str) -> tuple[int, int, list[dict]]:
+    """(from_id, to_id, sanitised rows) for the next segment, or (0, 0, []).
+
+    Starts after the highest already-condensed row, so a second compaction picks
+    up exactly where the first stopped: ranges never overlap and never gap.
+    Leaves the most recent compaction_keep_recent_messages messages verbatim —
+    recent nuance should be read, not quoted.
+
+    from_id/to_id come from the ORIGINAL selection, before sanitising. That is
+    deliberate: the range must cover every row it consumed, including rows
+    _sanitize_history dropped as pure machinery. A quote citing one of those
+    dropped rows then fails validation, which is the correct outcome — nothing
+    can vouch for it.
+    """
+    boundary = latest_to_id(document_id, attorney_id)
+    available = load_rows_after(
+        document_id, attorney_id, boundary, _MAX_ROWS_PER_COMPACTION
+    )
+    keep = get_settings().compaction_keep_recent_messages
+    if len(available) <= keep:
+        return 0, 0, []
+    selected = available[: len(available) - keep]
+    from_id, to_id = selected[0]["id"], selected[-1]["id"]
+    return from_id, to_id, _sanitize_history(selected)
+
+
+def _render_transcript(rows: list[dict]) -> str:
+    return "\n\n".join(
+        f"[#{r['id']} {'attorney' if r['role'] == 'user' else 'assistant'}]\n{r['content']}"
+        for r in rows
+    )
+
+
+def _generate_quote_lines(rows: list[dict], max_quotes: int) -> str:
+    """One LLM call: numbered transcript in, quote lines out.
+
+    Isolated behind this seam so the flow tests replace it without a live model.
+    Reuses the doc-chat LLM (temperature 0, num_predict 2048) — a capped segment
+    is roughly 500 tokens, comfortably inside that.
+    """
+    response = traced_invoke(
+        _build_llm(),
+        [
+            {"role": "system", "content": _COMPACTION_SYSTEM.format(max_quotes=max_quotes)},
+            {"role": "user", "content": _render_transcript(rows)},
+        ],
+        name="conversation_compaction",
+    )
+    return response.content if hasattr(response, "content") else str(response)
+
+
+def compact_conversation(document_id: str, attorney_id: str) -> dict:
+    """Condense the oldest un-condensed stretch of this conversation.
+
+    Returns a result dict; never raises for an ordinary failure. Distinguishes
+    two non-success cases on purpose:
+      - reason  — nothing to condense. Not a failure; the caller answers 200.
+      - error   — the gate rejected two attempts, or the write failed. LOUD:
+                  the attorney clicked and was told it happened, so a silent
+                  failure would be a lie (the same split as save_review vs
+                  append_turn).
+    A failure changes nothing: no segment row, no deleted turns.
+    """
+    empty = {
+        "compacted": False, "from_id": 0, "to_id": 0, "messages": 0,
+        "quotes": 0, "segment_id": 0, "reason": "", "error": "",
+    }
+    from_id, to_id, rows = select_compactable_rows(document_id, attorney_id)
+    if not rows:
+        return {**empty, "reason": "nothing earlier to condense yet"}
+
+    settings = get_settings()
+    max_quotes = settings.compaction_max_quotes
+    last_error = ""
+    for attempt in (1, 2):
+        try:
+            body = _generate_quote_lines(rows, max_quotes)
+        except Exception as e:
+            last_error = f"the model could not be reached ({e.__class__.__name__})"
+            logger.error("[compaction] generation failed on attempt %d: %s", attempt, e)
+            continue
+        last_error = validate_segment(body, rows, from_id, to_id)
+        if last_error:
+            logger.warning(
+                "[compaction] attempt %d rejected by the gate: %s", attempt, last_error
+            )
+            continue
+        quotes, _ = parse_quote_lines(body)
+        # Over-production is not fabrication: every line here already passed the
+        # gate, so trim to the cap rather than burn a retry on a valid segment.
+        if len(quotes) > max_quotes:
+            logger.info(
+                "[compaction] %d quotes returned, capping at %d", len(quotes), max_quotes
+            )
+            quotes = quotes[:max_quotes]
+        content = render_segment(quotes, message_count=len(rows))
+        try:
+            segment_id = append_segment(document_id, attorney_id, from_id, to_id, content)
+        except Exception as e:
+            logger.error("[compaction] segment write failed: %s", e)
+            return {**empty, "error": f"the condensed segment could not be saved ({e.__class__.__name__})"}
+        logger.info(
+            "[compaction] condensed rows %d-%d (%d messages) into %d quotes",
+            from_id, to_id, len(rows), len(quotes),
+        )
+        return {
+            "compacted": True, "from_id": from_id, "to_id": to_id,
+            "messages": len(rows), "quotes": len(quotes),
+            "segment_id": segment_id, "reason": "", "error": "",
+        }
+
+    return {**empty, "error": f"the condensed summary could not be verified: {last_error}"}
