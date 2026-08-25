@@ -43,18 +43,24 @@ _NORMALISE = {
     " ": " ", "–": "-", "—": "-",
 }
 
-# A quote must be a COMPLETE sentence or clause of the row it cites — not just a
-# substring of it. Containment alone is not enough, and the gap is not theoretical:
-# "accept 12 months" is a genuine contiguous substring of "We will not accept 12
-# months.", and "We will accept 12 months" is a genuine prefix of "We will accept 12
-# months only if the cap is raised." Both pass a pure substring check while asserting
-# the OPPOSITE of what the row says — a fabrication assembled entirely from real
-# characters, which is exactly what this gate exists to make impossible. Requiring
-# BOTH ends of the quote to land on clause boundaries makes that class
-# unconstructible: a negation or a condition either falls inside the quote or belongs
-# to a different clause.
-_CLAUSE_END = ".!?;:"
-_CLAUSE_START_RE = re.compile(r"(?:^|[.!?;:])[\s\"']*")
+# A quote must be a COMPLETE sentence of the row it cites — not just a substring of
+# it. Containment alone is not enough, and the gap is not theoretical: "accept 12
+# months" is a genuine contiguous substring of "We will not accept 12 months.", and
+# "We will accept 12 months" is a genuine prefix of "We will accept 12 months only if
+# the cap is raised." Both pass a pure substring check while asserting the OPPOSITE of
+# what the row says — a fabrication assembled entirely from real characters, which is
+# exactly what this gate exists to make impossible. Requiring BOTH ends of the quote
+# to land on sentence boundaries makes that class unconstructible: a negation or a
+# condition either falls inside the quote or belongs to a different sentence.
+#
+# Sentence terminators ONLY — deliberately not ';' or ':'. Those SUBORDINATE what sits
+# on the other side of them (a condition, a hedge, a qualification) where a full stop
+# SEPARATES two independent thoughts, so admitting them reopens the very hole this
+# check closes: "We will accept 12 months" is clause-aligned inside "We will accept 12
+# months: only if the cap is raised." The cost is that a semicolon-joined clause can no
+# longer be quoted on its own, which is the safe direction to err.
+_CLAUSE_END = ".!?"
+_CLAUSE_START_RE = re.compile(r"(?:^|[.!?])[\s\"']*")
 
 _SEGMENT_HEADER = (
     "--- EARLIER IN THIS CONVERSATION ({count} earlier messages, condensed) ---\n"
@@ -73,14 +79,17 @@ def _norm(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
-def _quotes_a_whole_clause(row_text: str, quote: str) -> bool:
-    """True when `quote` appears in `row_text` as a complete clause.
+def _quotes_a_whole_sentence(row_text: str, quote: str) -> bool:
+    """True when `quote` appears in `row_text` as a complete sentence.
 
-    Both arguments must already be normalised, so that offsets line up. A match
-    counts only when it begins at a clause start (the row's start, or just past a
-    clause terminator) and ends at a clause terminator or the row's end. Every
-    occurrence is tried, so a phrase appearing twice is accepted if either position
-    is clause-aligned.
+    Both arguments must already be normalised, so that offsets line up. A match counts
+    only when it begins at a sentence start (the row's start, or just past a sentence
+    terminator) and ends at a sentence terminator or the row's end. Every occurrence is
+    tried, so a phrase appearing twice is accepted if either position is aligned.
+
+    A message with no terminal punctuation at all is therefore quotable only in full.
+    That is restrictive and intended: with no sentence boundaries to trust, any trim
+    could be dropping a qualification.
     """
     starts = {m.end() for m in _CLAUSE_START_RE.finditer(row_text)}
     starts.add(0)
@@ -127,7 +136,7 @@ def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> s
       2. that row is present in the condensed transcript;
       3. the speaker label matches the row's role;
       4. the quoted text appears in that row after normalisation, AND does so as a
-         complete sentence or clause rather than a fragment chopped out of one.
+         complete sentence rather than a fragment chopped out of one.
 
     ANY failing quote invalidates the ENTIRE segment. A summary is legal recall;
     one invented line in it is worse than no summary at all, and there is no
@@ -155,10 +164,9 @@ def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> s
         nrow, nquote = _norm(row["content"]), _norm(q["text"])
         if nquote not in nrow:
             return f"quote for row #{rid} does not appear in that message"
-        if not _quotes_a_whole_clause(nrow, nquote):
+        if not _quotes_a_whole_sentence(nrow, nquote):
             return (
-                f"quote for row #{rid} is not a complete sentence or clause of "
-                f"that message"
+                f"quote for row #{rid} is not a complete sentence of that message"
             )
     return ""
 

@@ -132,7 +132,7 @@ def test_a_fragment_that_drops_a_leading_negation_is_rejected():
     # real characters is exactly what this gate must catch.
     rows = [{"id": 7, "role": "user", "content": "We will not accept 12 months."}]
     err = validate_segment('[#7 attorney] "accept 12 months"', rows, 7, 7)
-    assert "not a complete sentence or clause" in err
+    assert "not a complete sentence" in err
 
 
 def test_a_prefix_that_drops_a_trailing_condition_is_rejected():
@@ -143,17 +143,66 @@ def test_a_prefix_that_drops_a_trailing_condition_is_rejected():
         "content": "We will accept 12 months only if the cap is raised.",
     }]
     err = validate_segment('[#8 attorney] "We will accept 12 months"', rows, 8, 8)
-    assert "not a complete sentence or clause" in err
+    assert "not a complete sentence" in err
 
 
-def test_a_complete_clause_from_the_middle_of_a_message_is_accepted():
-    # Clause-aligned at both ends, so the trim cannot have inverted the meaning.
+def test_a_complete_sentence_from_the_middle_of_a_message_is_accepted():
+    # Sentence-aligned at both ends, so the trim cannot have inverted the meaning.
     # This is what the gate must keep ALLOWING — a rule that only rejects is a rule
     # that kills the feature.
     rows = [{
         "id": 9, "role": "assistant",
-        "content": "I checked the playbook. The cap is Green; escalation is not required.",
+        "content": (
+            "I checked the playbook. The cap is Green under our standard position. "
+            "Escalation is not required."
+        ),
     }]
     assert validate_segment(
-        '[#9 assistant, said earlier] "The cap is Green"', rows, 9, 9
+        '[#9 assistant, said earlier] "The cap is Green under our standard position"',
+        rows, 9, 9,
     ) == ""
+
+
+def test_a_colon_does_not_make_a_quotable_boundary():
+    # A colon SUBORDINATES the condition that follows it. Treating it as a sentence
+    # boundary would let the same meaning-inverting chop back in through different
+    # punctuation — which is exactly how the first fix for this failed.
+    rows = [{
+        "id": 10, "role": "user",
+        "content": "We will accept 12 months: only if the cap is raised.",
+    }]
+    err = validate_segment('[#10 attorney] "We will accept 12 months"', rows, 10, 10)
+    assert "not a complete sentence" in err
+
+
+def test_a_semicolon_does_not_make_a_quotable_boundary():
+    rows = [{
+        "id": 11, "role": "user",
+        "content": "We will accept 12 months; but only for the first year.",
+    }]
+    err = validate_segment('[#11 attorney] "We will accept 12 months"', rows, 11, 11)
+    assert "not a complete sentence" in err
+
+
+def test_a_hedge_before_a_colon_cannot_be_dropped():
+    # The mirror image: the hedge sits BEFORE the colon, so quoting what follows it
+    # strips the condition the statement depended on.
+    rows = [{
+        "id": 12, "role": "user",
+        "content": "Assume nothing is agreed: we will accept 12 months.",
+    }]
+    err = validate_segment('[#12 attorney] "we will accept 12 months"', rows, 12, 12)
+    assert "not a complete sentence" in err
+
+
+def test_an_unpunctuated_message_is_quotable_only_in_full():
+    # No terminal punctuation means no boundaries to trust, so only the whole message
+    # can be quoted. Restrictive on purpose — any trim could be dropping a
+    # qualification.
+    rows = [{"id": 13, "role": "user", "content": "use Suzy for all signature blocks"}]
+    assert validate_segment(
+        '[#13 attorney] "use Suzy for all signature blocks"', rows, 13, 13
+    ) == ""
+    assert "not a complete sentence" in validate_segment(
+        '[#13 attorney] "for all signature blocks"', rows, 13, 13
+    )
