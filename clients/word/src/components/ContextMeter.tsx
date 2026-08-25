@@ -11,8 +11,6 @@ import {
 
 interface Props {
   breakdown: ContextBreakdown | null;
-  /** Called after a successful compaction so the pane can note what changed. */
-  onCompacted?: (messages: number) => void;
 }
 
 /**
@@ -26,7 +24,7 @@ interface Props {
  *    there is compressible history. Offering it with nothing to condense would
  *    offer a no-op, and a control that cries wolf gets ignored.
  */
-export default function ContextMeter({ breakdown, onCompacted }: Props) {
+export default function ContextMeter({ breakdown }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -45,7 +43,6 @@ export default function ContextMeter({ breakdown, onCompacted }: Props) {
       if (res.data?.compacted) {
         const n = res.data.messages ?? 0;
         setNote(`${n} earlier messages condensed. The counter updates on your next message.`);
-        onCompacted?.(n);
       } else {
         setNote(res.data?.reason || "Nothing earlier to condense yet.");
       }

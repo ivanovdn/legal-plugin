@@ -81,7 +81,12 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
       }
       setResult(parsed);
       setTruncated(truncationNotice(res.data?.report?.context_truncated));
-      onBreakdown?.(res.data?.report?.context_breakdown ?? null);
+      // contract_review never assembles a chat context, so it has no breakdown to
+      // report. Pushing null here would blank the shared header counter after every
+      // review — a frozen real measurement beats a blank one, which is the same rule
+      // ChatTab's error path already follows.
+      const bd = res.data?.report?.context_breakdown;
+      if (bd) onBreakdown?.(bd);
       const reviewTurn: TurnRef = {
         turnId: res.data?.turn_id ?? "",
         traceId: res.data?.trace_id ?? "",

@@ -25,7 +25,7 @@ def test_compacts_for_the_header_identity_not_a_body_field(monkeypatch):
         append_turn("doc-x", "atty-x", f"q{i}", f"a{i}")
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: _quotes_for(r, [r[0]["id"]]),
+        lambda r, n, correction="": _quotes_for(r, [r[0]["id"]]),
     )
     res = client.post(
         "/api/compact",
@@ -44,7 +44,7 @@ def test_nothing_to_condense_is_a_quiet_200(monkeypatch):
     append_turn("doc-y", "atty-y", "q", "a")
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: pytest.fail("must not call the LLM with nothing to condense"),
+        lambda r, n, correction="": pytest.fail("must not call the LLM with nothing to condense"),
     )
     res = client.post(
         "/api/compact", json={"document_id": "doc-y"}, headers={"X-User-ID": "atty-y"},
@@ -59,7 +59,7 @@ def test_a_rejected_summary_is_a_500_and_writes_nothing(monkeypatch):
         append_turn("doc-z", "atty-z", f"q{i}", f"a{i}")
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: '[#999 attorney] "never said"',
+        lambda r, n, correction="": '[#999 attorney] "never said"',
     )
     res = client.post(
         "/api/compact", json={"document_id": "doc-z"}, headers={"X-User-ID": "atty-z"},
@@ -90,7 +90,7 @@ def test_a_storage_failure_is_also_a_500(monkeypatch):
 
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: _quotes_for(r, [r[0]["id"]]),
+        lambda r, n, correction="": _quotes_for(r, [r[0]["id"]]),
     )
     monkeypatch.setattr(compaction, "append_segment", boom)
 
@@ -139,7 +139,7 @@ def test_disabled_check_happens_before_any_compaction_work(monkeypatch):
     )
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: pytest.fail("disabled check must short-circuit before any compaction work"),
+        lambda r, n, correction="": pytest.fail("disabled check must short-circuit before any compaction work"),
     )
     res = client.post(
         "/api/compact", json={"document_id": "doc-order"}, headers={"X-User-ID": "atty-order"},

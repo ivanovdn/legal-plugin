@@ -48,7 +48,7 @@ def test_selection_starts_after_the_previous_segment(monkeypatch):
     rows = _seed(6)                      # 12 messages
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: _quotes_for(r, [r[0]["id"]]),
+        lambda r, n, correction="": _quotes_for(r, [r[0]["id"]]),
     )
     first = compaction.compact_conversation("doc-1", "atty-1")
     assert first["compacted"] is True
@@ -63,7 +63,7 @@ def test_happy_path_writes_one_validated_segment(monkeypatch):
     rows = _seed(5)
     calls = []
 
-    def fake(r, n):
+    def fake(r, n, correction=""):
         calls.append((len(r), n))
         return _quotes_for(r, [r[0]["id"], r[1]["id"]])
 
@@ -83,7 +83,7 @@ def test_a_fabricated_quote_is_retried_once_then_written(monkeypatch):
     rows = _seed(5)
     attempts = {"n": 0}
 
-    def flaky(r, n):
+    def flaky(r, n, correction=""):
         attempts["n"] += 1
         if attempts["n"] == 1:
             return '[#999 attorney] "something nobody said"'
@@ -96,11 +96,30 @@ def test_a_fabricated_quote_is_retried_once_then_written(monkeypatch):
     assert len(load_segments("doc-1", "atty-1", 5)) == 1
 
 
+def test_the_retry_tells_the_model_what_was_wrong(monkeypatch):
+    """A retry that repeats the request cannot help: the model runs at temperature 0, so
+    identical input yields the identical rejection. Only a corrective retry earns its
+    ~10-30s."""
+    rows = _seed(5)
+    seen = []
+
+    def flaky(r, n, correction=""):
+        seen.append(correction)
+        if len(seen) == 1:
+            return '[#999 attorney] "something nobody said"'
+        return _quotes_for(r, [r[0]["id"]])
+
+    monkeypatch.setattr(compaction, "_generate_quote_lines", flaky)
+    assert compaction.compact_conversation("doc-1", "atty-1")["compacted"] is True
+    assert seen[0] == ""
+    assert "rejected" in seen[1].lower() or "#999" in seen[1]
+
+
 def test_two_fabricated_attempts_write_nothing_and_report_loudly(monkeypatch):
     _seed(5)
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: '[#999 attorney] "something nobody said"',
+        lambda r, n, correction="": '[#999 attorney] "something nobody said"',
     )
     result = compaction.compact_conversation("doc-1", "atty-1")
     assert result["compacted"] is False
@@ -114,7 +133,7 @@ def test_nothing_to_condense_is_not_an_error(monkeypatch):
     _seed(2)
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: pytest.fail("must not call the LLM with nothing to condense"),
+        lambda r, n, correction="": pytest.fail("must not call the LLM with nothing to condense"),
     )
     result = compaction.compact_conversation("doc-1", "atty-1")
     assert result["compacted"] is False
@@ -127,7 +146,7 @@ def test_excess_quotes_are_capped_not_rejected(monkeypatch):
     _, _, selected = compaction.select_compactable_rows("doc-1", "atty-1")
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: _quotes_for(r, [row["id"] for row in r[:40]]),
+        lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r[:40]]),
     )
     result = compaction.compact_conversation("doc-1", "atty-1")
     cap = get_settings().compaction_max_quotes
@@ -166,7 +185,7 @@ def test_round_trip_shrinks_the_injected_history(monkeypatch):
 
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
-        lambda r, n: _quotes_for(r, [row["id"] for row in r[:3]]),
+        lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r[:3]]),
     )
     assert compaction.compact_conversation("doc-rt", "atty-rt")["compacted"] is True
 

@@ -196,7 +196,8 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         msa_chars=len(msa_block),
         review_chars=len(review_block),
         history_chars=sum(len(m["content"]) for m in chat_history),
-        system_chars=len(CHAT_SYSTEM_PROMPT) + len(prefs_block) + len(request),
+        system_chars=len(CHAT_SYSTEM_PROMPT) + len(prefs_block) + len(request)
+        + len((state.get("attorney_notes") or "").strip()),
         compressible_messages=compressible_message_count(state),
     )
 

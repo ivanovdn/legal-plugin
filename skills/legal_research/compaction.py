@@ -327,7 +327,10 @@ def select_compactable_rows(document_id: str, attorney_id: str) -> tuple[int, in
     deliberate: the range must cover every row it consumed, including rows
     _sanitize_history dropped as pure machinery. A quote citing one of those
     dropped rows then fails validation, which is the correct outcome — nothing
-    can vouch for it.
+    can vouch for it. _sanitize_history strips fenced blocks from ASSISTANT rows
+    only — user rows are byte-identical by design — so the guarantee that a
+    fence cannot be quoted rests additionally on quotes being single-line and
+    fence lines being skipped in parse_quote_lines, not on sanitisation alone.
     """
     boundary = latest_to_id(document_id, attorney_id)
     available = load_rows_after(
@@ -348,18 +351,28 @@ def _render_transcript(rows: list[dict]) -> str:
     )
 
 
-def _generate_quote_lines(rows: list[dict], max_quotes: int) -> str:
+def _generate_quote_lines(rows: list[dict], max_quotes: int, correction: str = "") -> str:
     """One LLM call: numbered transcript in, quote lines out.
 
     Isolated behind this seam so the flow tests replace it without a live model.
     Reuses the doc-chat LLM (temperature 0, num_predict 2048) — a capped segment
     is roughly 500 tokens, comfortably inside that.
     """
+    user_message = _render_transcript(rows)
+    if correction:
+        # The model is called at temperature 0, so a second identical request returns an
+        # identical rejection. Telling it what was wrong is the only thing that makes the
+        # retry mean anything. Format correction, not legal coaching.
+        user_message += (
+            f"\n\n--- YOUR PREVIOUS ATTEMPT WAS REJECTED ---\n{correction}\n"
+            "Copy each quote as a COMPLETE SENTENCE, from its first word through its "
+            "ending punctuation, exactly as it appears in the message it cites."
+        )
     response = traced_invoke(
         _build_llm(),
         [
             {"role": "system", "content": _COMPACTION_SYSTEM.format(max_quotes=max_quotes)},
-            {"role": "user", "content": _render_transcript(rows)},
+            {"role": "user", "content": user_message},
         ],
         name="conversation_compaction",
     )
@@ -389,13 +402,20 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
     settings = get_settings()
     max_quotes = settings.compaction_max_quotes
     last_error = ""
+    # Distinguishes a connectivity failure (the model was unreachable) from a
+    # verification failure (the model answered but the gate rejected it), so the
+    # two attempts raising doesn't get reported as a fabrication-sounding "could
+    # not be verified" when the real story is an Ollama outage.
+    last_was_transport_failure = False
     for attempt in (1, 2):
         try:
-            body = _generate_quote_lines(rows, max_quotes)
+            body = _generate_quote_lines(rows, max_quotes, last_error if attempt > 1 else "")
         except Exception as e:
             last_error = f"the model could not be reached ({e.__class__.__name__})"
+            last_was_transport_failure = True
             logger.error("[compaction] generation failed on attempt %d: %s", attempt, e)
             continue
+        last_was_transport_failure = False
         last_error = validate_segment(body, rows, from_id, to_id)
         if last_error:
             logger.warning(
@@ -410,6 +430,10 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
                 "[compaction] %d quotes returned, capping at %d", len(quotes), max_quotes
             )
             quotes = quotes[:max_quotes]
+        # Chronological, not the model's emission order: a summary that lists a
+        # superseded position after the one that replaced it misrepresents the
+        # sequence, and row ids make the correct order free.
+        quotes = sorted(quotes, key=lambda q: q["row_id"])
         content = render_segment(quotes, message_count=len(rows))
         try:
             segment_id = append_segment(document_id, attorney_id, from_id, to_id, content)
@@ -426,4 +450,6 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
             "segment_id": segment_id, "reason": "", "error": "",
         }
 
+    if last_was_transport_failure:
+        return {**empty, "error": last_error}
     return {**empty, "error": f"the condensed summary could not be verified: {last_error}"}
