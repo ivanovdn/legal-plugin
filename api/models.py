@@ -82,6 +82,16 @@ class CompactRequest(BaseModel):
     same rule as FeedbackSubmission.
     """
     document_id: str = Field(..., description="Stable document id whose conversation to condense")
+    reclaim_chars: int = Field(
+        0,
+        ge=0,
+        description=(
+            "How many characters the caller needs freed, from the breakdown it was "
+            "already shown (total minus budget). This endpoint has neither the document "
+            "nor the grounding, so it cannot compute it. 0 = condense as much as is "
+            "sensible. Only affects how tightly we summarise, never what passes the gate."
+        ),
+    )
 
 
 class ApiResponse(BaseModel):

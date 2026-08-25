@@ -123,7 +123,17 @@ class Settings(BaseSettings):
     # the contract is not. See
     # docs/superpowers/specs/2026-08-25-context-compaction-design.md.
     compaction_enabled: bool = True
-    compaction_keep_recent_messages: int = 6   # kept verbatim (three turns); a guess, tunable
+    # The FLOOR that is never condensed, not a window. It was 6 — a message COUNT
+    # guarding a size budget, which is the wrong unit: with exactly 6 messages stored
+    # nothing was condensable even while the document was being truncated. 2 keeps the
+    # last turn verbatim so a follow-up ("make that change", "use the name we agreed")
+    # still resolves, and everything older becomes available.
+    compaction_keep_recent_messages: int = 2
+    # Floor on a segment's size. When a segment is shrunk to free a target number of
+    # chars it can be trimmed a long way, but a two-line summary of twenty messages is
+    # not worth the latency — below this, accept that compaction cannot reach the target
+    # and say so instead of pretending.
+    compaction_min_quotes: int = 4
     compaction_warn_pct: int = 90              # budget share at which the Condense action appears
     # 24 quotes holds one segment to roughly 400-500 tokens, and 3 injected
     # segments to ~1,500 tokens ~= 7,300 chars. Both bounds are load-bearing:

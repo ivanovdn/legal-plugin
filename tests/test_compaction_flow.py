@@ -39,8 +39,8 @@ def test_selection_keeps_the_recent_window_verbatim():
     assert to_id == rows[len(rows) - keep - 1]["id"]
 
 
-def test_selection_returns_nothing_when_only_the_recent_window_exists():
-    _seed(3)                             # 6 messages == keep_recent
+def test_selection_returns_nothing_when_only_the_floor_exists():
+    _seed(1)                             # 2 messages == the floor, nothing older
     assert compaction.select_compactable_rows("doc-1", "atty-1") == (0, 0, [])
 
 
@@ -130,7 +130,7 @@ def test_two_fabricated_attempts_write_nothing_and_report_loudly(monkeypatch):
 
 
 def test_nothing_to_condense_is_not_an_error(monkeypatch):
-    _seed(2)
+    _seed(1)                             # only the floor exists
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
         lambda r, n, correction="": pytest.fail("must not call the LLM with nothing to condense"),
@@ -191,3 +191,123 @@ def test_round_trip_shrinks_the_injected_history(monkeypatch):
 
     after = sum(len(m["content"]) for m in ctx._load_prior_conversation(state))
     assert after < before
+
+
+def test_the_quote_cap_shrinks_to_free_the_chars_asked_for(monkeypatch):
+    """compaction_max_quotes is a CEILING, not a fixed size.
+
+    A thorough 20-quote summary of 8k chars frees almost nothing, which is how
+    compaction came to run and leave the document truncated anyway. When the caller
+    names a target, the cap is derived from it.
+    """
+    rows = _seed(20)                                   # 40 messages
+    monkeypatch.setattr(
+        compaction, "_generate_quote_lines",
+        lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r[:n]]),
+    )
+    loose = compaction.compact_conversation("doc-1", "atty-1")
+    assert loose["quotes"] == get_settings().compaction_max_quotes
+    assert loose["requested"] == 0
+
+
+def test_a_large_target_trims_the_segment_until_it_actually_fits(monkeypatch):
+    """The derived cap is an estimate; the trim loop is what makes it exact.
+
+    Seeds REALISTIC message sizes. The default fixture's 10-char messages are smaller
+    than the segment header (261 chars), so no target above about a third of the raw is
+    reachable there and the test would be asserting something arithmetically impossible
+    rather than anything about the trim loop.
+    """
+    for i in range(20):
+        append_turn("doc-1", "atty-1",
+                    f"Question {i} about the indemnity position in this agreement. " * 6,
+                    f"Answer {i} setting out the firm position on that clause. " * 6)
+    _from, _to, rows = compaction.select_compactable_rows("doc-1", "atty-1")
+    raw = sum(len(r["content"]) for r in rows)
+    monkeypatch.setattr(
+        compaction, "_generate_quote_lines",
+        lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r[:n]]),
+    )
+    # Ask for nearly all of it back: the segment must end up small enough to deliver.
+    want = int(raw * 0.7)
+    res = compaction.compact_conversation("doc-1", "atty-1", want)
+    assert res["compacted"] is True
+    assert res["requested"] == want
+    assert res["reclaimed"] >= want, "trim loop did not reach the target it could reach"
+    assert res["quotes"] < get_settings().compaction_max_quotes
+
+
+def test_an_unreachable_target_condenses_as_far_as_it_can_and_says_so(monkeypatch):
+    """Grounding, not history, is usually what blows the budget.
+
+    Asking for more than history even contains must not fail and must not silently
+    look like success: condense to the floor, report what was actually freed, and let
+    the pane tell the attorney the rest is document and playbook.
+    """
+    _seed(20)
+    _from, _to, rows = compaction.select_compactable_rows("doc-1", "atty-1")
+    raw = sum(len(r["content"]) for r in rows)
+    monkeypatch.setattr(
+        compaction, "_generate_quote_lines",
+        lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r[:n]]),
+    )
+    res = compaction.compact_conversation("doc-1", "atty-1", raw * 10)
+    assert res["compacted"] is True
+    assert res["quotes"] == get_settings().compaction_min_quotes
+    assert res["reclaimed"] < res["requested"]
+
+
+def test_a_three_turn_conversation_has_something_to_condense():
+    """The requirement the old floor failed, stated behaviourally.
+
+    With keep_recent=6 a six-message conversation had NOTHING condensable while the
+    document was already being truncated — a message COUNT guarding a size budget.
+    Asserting the config value would just restate the number; this asserts the property
+    the number has to deliver, and fails for any floor that swallows a short
+    conversation whole.
+    """
+    _seed(3)                                           # 6 messages
+    from_id, to_id, selected = compaction.select_compactable_rows("doc-1", "atty-1")
+    assert selected, "a 3-turn conversation must have condensable history"
+    assert from_id and to_id
+
+
+def test_a_target_makes_us_ask_the_model_for_fewer_quotes(monkeypatch):
+    """The cap derivation is an OPTIMISATION, not the mechanism.
+
+    The trim loop alone would reach the target, so this cannot be tested by its effect
+    on the segment — mutation-checked, and removing the derivation left every other test
+    green. What it actually buys is not generating quotes we are about to discard, so
+    what must be asserted is the number the model was ASKED for.
+    """
+    # Two documents, not two passes: the first compaction consumes the rows it
+    # condenses, so a second call on the same conversation has nothing left to size a
+    # cap against and would compare against an empty range.
+    for doc in ("doc-loose", "doc-tight"):
+        for i in range(20):
+            append_turn(doc, "atty-1",
+                        f"Question {i} about the indemnity position in this agreement. " * 6,
+                        f"Answer {i} setting out the firm position on that clause. " * 6)
+    _from, _to, rows = compaction.select_compactable_rows("doc-tight", "atty-1")
+    raw = sum(len(r["content"]) for r in rows)
+    asked = []
+
+    def fake(r, n, correction=""):
+        asked.append(n)
+        return _quotes_for(r, [row["id"] for row in r[:n]])
+
+    monkeypatch.setattr(compaction, "_generate_quote_lines", fake)
+    compaction.compact_conversation("doc-loose", "atty-1")                  # no target
+    compaction.compact_conversation("doc-tight", "atty-1", int(raw * 0.8))  # tight target
+    assert asked[0] == get_settings().compaction_max_quotes
+    assert asked[-1] < asked[0], "a tight target must lower what we ask the model for"
+    assert asked[-1] >= get_settings().compaction_min_quotes
+
+
+def test_the_floor_is_never_condensed(monkeypatch):
+    """The last turn stays verbatim so 'make that change' still resolves."""
+    rows = _seed(5)
+    keep = get_settings().compaction_keep_recent_messages
+    _from, to_id, selected = compaction.select_compactable_rows("doc-1", "atty-1")
+    assert len(selected) == len(rows) - keep
+    assert to_id == rows[len(rows) - keep - 1]["id"]

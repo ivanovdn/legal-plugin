@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 # starts after the first segment's to_id.
 _MAX_ROWS_PER_COMPACTION = 200
 
+# Measured on a real segment: 20 quotes rendered to 2,826 chars of lines. Used only to
+# ESTIMATE how many quotes fit a target size — the estimate gets close and the trim loop
+# in compact_conversation makes it exact, so being a little off costs nothing.
+_CHARS_PER_QUOTE_LINE = 141
+
 _FENCE_LINE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*$")
 _QUOTE_RE = re.compile(
     r'^\[#(\d+)\s+(attorney|assistant)(?:,\s*said\s+earlier)?\]\s*(.+)$'
@@ -489,8 +494,16 @@ def _generate_quote_lines(rows: list[dict], max_quotes: int, correction: str = "
     return response.content if hasattr(response, "content") else str(response)
 
 
-def compact_conversation(document_id: str, attorney_id: str) -> dict:
+def compact_conversation(
+    document_id: str, attorney_id: str, reclaim_chars: int = 0
+) -> dict:
     """Condense the oldest un-condensed stretch of this conversation.
+
+    reclaim_chars is how many characters the caller needs freed — the pane computes it
+    from the breakdown it was already shown (total minus budget), because this endpoint
+    has neither the document nor the grounding and cannot work it out itself. 0 means
+    "as much as is sensible", which is the behaviour when nothing is under pressure.
+    It only decides how TIGHTLY we summarise; it can never affect what passes the gate.
 
     Returns a result dict; never raises for an ordinary failure. Distinguishes
     two non-success cases on purpose:
@@ -503,14 +516,24 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
     """
     empty = {
         "compacted": False, "from_id": 0, "to_id": 0, "messages": 0,
-        "quotes": 0, "dropped": 0, "segment_id": 0, "reason": "", "error": "",
+        "quotes": 0, "dropped": 0, "reclaimed": 0, "requested": 0,
+        "segment_id": 0, "reason": "", "error": "",
     }
     from_id, to_id, rows = select_compactable_rows(document_id, attorney_id)
     if not rows:
         return {**empty, "reason": "nothing earlier to condense yet"}
 
     settings = get_settings()
+    raw_chars = sum(len(r["content"]) for r in rows)
+    # compaction_max_quotes is a CEILING, not a fixed size. When the caller needs a
+    # specific number of chars back, aim the segment at (raw - needed) and derive the
+    # cap from that: a thorough 20-quote summary of 8k chars frees almost nothing, which
+    # is how compaction came to run and leave the document truncated anyway.
     max_quotes = settings.compaction_max_quotes
+    if reclaim_chars > 0:
+        overhead = len(render_segment([], 0))
+        fits = (raw_chars - reclaim_chars - overhead) // _CHARS_PER_QUOTE_LINE
+        max_quotes = max(settings.compaction_min_quotes, min(max_quotes, fits))
     last_error = ""
     # Distinguishes a connectivity failure (the model was unreachable) from a
     # verification failure (the model answered but the gate rejected it), so the
@@ -552,18 +575,37 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
         # sequence, and row ids make the correct order free.
         quotes = sorted(quotes, key=lambda q: q["row_id"])
         content = render_segment(quotes, message_count=len(rows))
+        # The cap was an estimate; this makes it exact. Drop the OLDEST quote first —
+        # the same principle by which older SEGMENTS age out of the injection window,
+        # and the more recent a decision the more likely it still binds. Stops at
+        # compaction_min_quotes: past that the summary is not worth having, and the
+        # honest move is to report that the target was unreachable.
+        # `reclaim_chars > 0` is load-bearing, not defensive: with no target, the
+        # comparison reads "freed less than 0", which is TRUE whenever the segment is
+        # larger than the rows it replaces — easy on short messages — and the loop would
+        # then trim a segment nobody asked to shrink.
+        while (
+            reclaim_chars > 0
+            and len(quotes) > settings.compaction_min_quotes
+            and raw_chars - len(content) < reclaim_chars
+        ):
+            quotes = quotes[1:]
+            content = render_segment(quotes, message_count=len(rows))
         try:
             segment_id = append_segment(document_id, attorney_id, from_id, to_id, content)
         except Exception as e:
             logger.error("[compaction] segment write failed: %s", e)
             return {**empty, "error": f"the condensed segment could not be saved ({e.__class__.__name__})"}
         logger.info(
-            "[compaction] condensed rows %d-%d (%d messages) into %d quotes (%d dropped)",
+            "[compaction] condensed rows %d-%d (%d messages) into %d quotes "
+            "(%d dropped), freeing %d of %d chars requested",
             from_id, to_id, len(rows), len(quotes), len(dropped),
+            raw_chars - len(content), reclaim_chars,
         )
         return {
             "compacted": True, "from_id": from_id, "to_id": to_id,
             "messages": len(rows), "quotes": len(quotes), "dropped": len(dropped),
+            "reclaimed": raw_chars - len(content), "requested": reclaim_chars,
             "segment_id": segment_id, "reason": "", "error": "",
         }
 

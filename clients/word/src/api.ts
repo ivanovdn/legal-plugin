@@ -100,6 +100,10 @@ export interface CompactResponse {
     to_id?: number;
     messages?: number;
     quotes?: number;
+    /** Chars actually freed, and how many were asked for. When the first is smaller,
+     *  compaction could not reach the target and the pane says so. */
+    reclaimed?: number;
+    requested?: number;
     /** Quotes that could not be verified against the row they cited, and were left
      *  out. Surfaced to the attorney rather than swallowed: a rising count is the
      *  signal that the model has drifted. */
@@ -118,11 +122,14 @@ export interface CompactResponse {
  * carries its own latency. A failure comes back as a non-2xx and is thrown —
  * the attorney clicked, so a silent failure would be a lie.
  */
-export async function compactConversation(documentId: string): Promise<CompactResponse> {
+export async function compactConversation(
+  documentId: string,
+  reclaimChars = 0,
+): Promise<CompactResponse> {
   const res = await fetch("/api/compact", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...userHeaders() },
-    body: JSON.stringify({ document_id: documentId }),
+    body: JSON.stringify({ document_id: documentId, reclaim_chars: reclaimChars }),
   });
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;

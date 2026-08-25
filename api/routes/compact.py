@@ -34,7 +34,7 @@ def post_compact(
     document_id = body.document_id.strip()
     if not document_id:
         raise HTTPException(status_code=400, detail="document_id is required")
-    result = compact_conversation(document_id, user_id)
+    result = compact_conversation(document_id, user_id, body.reclaim_chars)
     if result["error"]:
         raise HTTPException(status_code=500, detail=result["error"])
     return ApiResponse(status="ok", data=result)

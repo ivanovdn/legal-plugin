@@ -39,7 +39,11 @@ export default function ContextMeter({ breakdown }: Props) {
     setNote(null);
     try {
       const documentId = await resolveDocumentId();
-      const res = await compactConversation(documentId);
+      // How much has to come back for the document to stop being cut. The backend
+      // cannot work this out — it has neither the document nor the grounding — but the
+      // counter above already measured it.
+      const over = Math.max(0, breakdown.total_chars - breakdown.budget_chars);
+      const res = await compactConversation(documentId, over);
       if (res.data?.compacted) {
         const n = res.data.messages ?? 0;
         const dropped = res.data.dropped ?? 0;
@@ -51,8 +55,19 @@ export default function ContextMeter({ breakdown }: Props) {
             ? ` ${dropped} quote${dropped === 1 ? "" : "s"} couldn't be checked against the message ` +
               `${dropped === 1 ? "it" : "they"} came from and ${dropped === 1 ? "was" : "were"} left out.`
             : "";
+        // When the target was missed, say so and name the reason: the attorney is
+        // about to see the document truncated again and should know compaction was
+        // not the thing that could have prevented it.
+        const reclaimed = res.data.reclaimed ?? 0;
+        const requested = res.data.requested ?? 0;
+        const short =
+          requested > 0 && reclaimed < requested
+            ? ` Freed ${reclaimed.toLocaleString("en-US")} of the ` +
+              `${requested.toLocaleString("en-US")} characters needed — the rest of the ` +
+              `context is document, playbook and MSA, which are never condensed.`
+            : "";
         setNote(
-          `${n} earlier messages condensed.${skipped} The counter updates on your next message.`,
+          `${n} earlier messages condensed.${skipped}${short} The counter updates on your next message.`,
         );
       } else {
         setNote(res.data?.reason || "Nothing earlier to condense yet.");
