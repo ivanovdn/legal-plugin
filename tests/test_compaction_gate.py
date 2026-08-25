@@ -284,28 +284,43 @@ def test_a_comma_qualifier_cannot_be_dropped():
 # nothing at all. See the module docstring in skills/legal_research/compaction.py.
 
 
-def test_residual_abbreviation_before_a_capitalised_name_is_not_caught():
-    # "v." reads as a full stop because "Jones" is capitalised, so the condition that
-    # follows can be truncated away. The model would have to emit a quote ending in
-    # "Smith v" for this to bite, which a cooperative model asked for a complete
-    # sentence does not do.
+def test_residual_company_suffix_before_a_capitalised_name_is_not_caught():
+    # Still open, deliberately. "Ltd." is not in _NON_TERMINAL_ABBREVIATIONS because
+    # company suffixes commonly END a sentence in this domain, and listing them cost
+    # three legitimate quotes (see the module docstring) to close this one shape. Pinned
+    # so it stays visible: if someone adds "Ltd" to the list, this test fails and forces
+    # them to weigh that trade consciously.
+    rows = [{
+        "id": 24, "role": "user",
+        "content": "We will accept payment from Acme Ltd. Partners only if wired by Monday.",
+    }]
+    assert validate_segment(
+        '[#24 attorney] "We will accept payment from Acme Ltd"', rows, 24, 24
+    ) == ""
+
+
+def test_a_citation_abbreviation_is_not_a_sentence_boundary():
+    # "v." introduces a case name, so the capital after it is not a new sentence. Before
+    # this was closed, a quote could stop at "Smith v" and drop the condition entirely.
     rows = [{
         "id": 20, "role": "user",
         "content": "We will accept the terms of Smith v. Jones only if the cap is raised.",
     }]
-    assert validate_segment(
+    err = validate_segment(
         '[#20 attorney] "We will accept the terms of Smith v"', rows, 20, 20
-    ) == ""
+    )
+    assert "not a complete sentence" in err
 
 
-def test_residual_title_abbreviation_is_not_caught():
+def test_a_title_abbreviation_is_not_a_sentence_boundary():
     rows = [{
         "id": 21, "role": "user",
         "content": "We will accept the offer from Mr. Smith only if signed by Friday.",
     }]
-    assert validate_segment(
+    err = validate_segment(
         '[#21 attorney] "We will accept the offer from Mr"', rows, 21, 21
-    ) == ""
+    )
+    assert "not a complete sentence" in err
 
 
 def test_the_domain_common_sentences_the_residual_protects_still_pass():
@@ -328,3 +343,18 @@ def test_the_domain_common_sentences_the_residual_protects_still_pass():
         '[#23 assistant, said earlier] "The cap is Green under our standard position"',
         rows, 23, 23,
     ) == ""
+
+
+def test_sentence_final_company_suffixes_stay_quotable():
+    # The cost the narrow list avoids. A full abbreviation list would break all three of
+    # these, which is why company suffixes are excluded from it.
+    for row_id, content in (
+        (25, "We are dealing with Acme Inc. The cap is Green."),
+        (26, "Payment goes to Acme Corp. The cap is Green."),
+        (27, "Deliver to the office on Main St. The cap is Green."),
+    ):
+        rows = [{"id": row_id, "role": "assistant", "content": content}]
+        assert validate_segment(
+            f'[#{row_id} assistant, said earlier] "The cap is Green"',
+            rows, row_id, row_id,
+        ) == "", f"row {row_id} should stay quotable"

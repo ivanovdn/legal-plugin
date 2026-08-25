@@ -18,17 +18,16 @@ construction.
 IMPORT DIRECTION IS ONE-WAY. This module may import from legal_research.py;
 context.py must never import this module, or the package cycles.
 
-WHAT THE GATE DOES NOT CATCH. Sentence segmentation of natural language is not
-decidable by a deterministic rule, so one truncation shape survives: a quote ending at
-an abbreviation's period where the next word is capitalised, as in "…the terms of Smith
-v." or "…from Acme Ltd." — the dot looks exactly like a full stop and the capital looks
-exactly like a new sentence. Tightening the rule to close it was measured and rejected:
-every candidate also rejected sentences ending "…the MSA." or "I checked it.", which are
-ordinary here, and an over-strict gate writes nothing at all rather than something
-wrong. The residual is bounded by three things outside this module: the prompt asks for
-a sentence from its first word through its ending punctuation, every quote is labelled
-"said earlier" and ranked below live grounding, and the raw rows are never deleted, so
-any segment can be audited against exactly the rows it cites.
+WHAT THE GATE DOES NOT CATCH. Sentence segmentation of natural language is not decidable
+by a deterministic rule, so one truncation shape survives: a quote ending at the period of
+an abbreviation that is NOT in _NON_TERMINAL_ABBREVIATIONS, where the next word is
+capitalised — "…from Acme Ltd." or "…, Esq." Titles and citation markers are listed and
+closed; company suffixes deliberately are not, because they commonly do end a sentence
+here and listing them cost three legitimate quotes to close one fabrication shape. The
+residual is bounded by three things outside this module: the prompt asks for a sentence
+from its first word through its ending punctuation, every quote is labelled "said earlier"
+and ranked below live grounding, and the raw rows are never deleted, so any segment can be
+audited against exactly the rows it cites.
 """
 from __future__ import annotations
 
@@ -78,6 +77,20 @@ _NORMALISE = {
 _CLAUSE_END = ".!?"
 _EDGE_CHARS = "\"'"
 
+# Abbreviations that are never the last word of a sentence — they exist to introduce a
+# name, so the capital that follows them is a person or a case, not a new statement.
+# Without this, "…of Smith v. Jones only if the cap is raised." lets a quote stop at
+# "Smith v" and drop the condition entirely.
+#
+# Deliberately EXCLUDES company suffixes (Inc, Ltd, Corp, Co, St) and etc/cf. Those were
+# measured and rejected: they commonly DO end a sentence in this domain ("We are dealing
+# with Acme Inc. The cap is Green."), and listing them cost three legitimate quotes to
+# close one extra fabrication shape. Matched case-sensitively, so the ordinary word "no"
+# is unaffected by the entry for "No".
+_NON_TERMINAL_ABBREVIATIONS = frozenset({
+    "Mr", "Mrs", "Ms", "Dr", "Prof", "Jr", "Sr", "No", "v", "vs", "al", "cf",
+})
+
 _SEGMENT_HEADER = (
     "--- EARLIER IN THIS CONVERSATION ({count} earlier messages, condensed) ---\n"
     "This is recalled discussion, not a current finding. The attached document,\n"
@@ -102,6 +115,14 @@ def _norm_shape(text: str) -> str:
     return " ".join(text.split())
 
 
+def _token_before(row_text: str, i: int) -> str:
+    """The whitespace-delimited token ending just before index `i`."""
+    j = i - 1
+    while j >= 0 and not row_text[j].isspace():
+        j -= 1
+    return row_text[j + 1:i]
+
+
 def _sentence_end_indices(row_text: str) -> set[int]:
     """Indices of terminators in `row_text` that genuinely end a sentence.
 
@@ -113,6 +134,10 @@ def _sentence_end_indices(row_text: str) -> set[int]:
 
     Erring toward NOT finding a boundary is the safe direction: it costs a legitimate
     quote, where the opposite costs a fabricated one.
+
+    A terminator also does not count when the word before it is an abbreviation that
+    never ends a sentence — "Mr.", "v.", "No." — because the capital that follows is a
+    name rather than a new statement.
     """
     ends: set[int] = set()
     for i, ch in enumerate(row_text):
@@ -127,6 +152,8 @@ def _sentence_end_indices(row_text: str) -> set[int]:
         while j < len(row_text) and (row_text[j].isspace() or row_text[j] in _EDGE_CHARS):
             j += 1
         if j < len(row_text) and row_text[j].isupper():
+            if _token_before(row_text, i) in _NON_TERMINAL_ABBREVIATIONS:
+                continue
             ends.add(i)
     return ends
 
