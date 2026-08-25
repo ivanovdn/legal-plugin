@@ -50,7 +50,7 @@ interface Props {
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   onPreferenceAdded?: () => void;
-  onBreakdown?: (b: ContextBreakdown | null) => void;
+  onBreakdown?: (b: ContextBreakdown | null, truncated: boolean) => void;
 }
 
 export default function ChatTab({ sessionId, messages, setMessages, onPreferenceAdded, onBreakdown }: Props) {
@@ -90,7 +90,10 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
       };
       setMemoryDegraded(Boolean(res.data?.memory_degraded));
       setTruncated(truncationNotice(res.data?.report?.context_truncated));
-      onBreakdown?.(res.data?.report?.context_breakdown ?? null);
+      onBreakdown?.(
+        res.data?.report?.context_breakdown ?? null,
+        Boolean(res.data?.report?.context_truncated),
+      );
       const rawAnswer =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "(no response)";
       // Strip fenced JSON blocks for display; prefer the backend's authoritative

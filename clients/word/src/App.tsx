@@ -34,6 +34,11 @@ export default function App() {
   const [unsaved, setUnsaved] = useState<boolean>(false);
   const [breakdown, setBreakdown] = useState<ContextBreakdown | null>(null);
   const [liveDocChars, setLiveDocChars] = useState<number | null>(null);
+  // Whether the LAST MEASURED turn had its document cut. When it did, the live
+  // readBody() size must not overwrite the document row: the row would then show
+  // the full document while the truncation notice directly below says only part of
+  // it was sent, and the counter would be quietly contradicting the warning.
+  const [docTruncated, setDocTruncated] = useState(false);
 
   // The document id lives in Office settings, which persist only WITH the file.
   // On an unsaved document that id dies when the document closes, orphaning this
@@ -157,7 +162,7 @@ export default function App() {
       )}
       <ContextMeter
         breakdown={
-          breakdown && liveDocChars !== null
+          breakdown && liveDocChars !== null && !docTruncated
             ? withLiveDocument(breakdown, liveDocChars)
             : breakdown
         }
@@ -169,7 +174,7 @@ export default function App() {
           sessionId={sessionId}
           result={findingsResult}
           setResult={setFindingsResult}
-          onBreakdown={setBreakdown}
+          onBreakdown={(b, truncated) => { setBreakdown(b); setDocTruncated(truncated); }}
         />
       </div>
       <div className={`tab-pane ${tab === "chat" ? "" : "hidden"}`}>
@@ -178,7 +183,7 @@ export default function App() {
           messages={chatMessages}
           setMessages={setChatMessages}
           onPreferenceAdded={() => setPrefLoaded(false)}
-          onBreakdown={setBreakdown}
+          onBreakdown={(b, truncated) => { setBreakdown(b); setDocTruncated(truncated); }}
         />
       </div>
       <div className={`tab-pane ${tab === "preferences" ? "" : "hidden"}`}>

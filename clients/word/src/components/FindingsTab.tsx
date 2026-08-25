@@ -26,7 +26,7 @@ interface Props {
   sessionId: string;
   result: ReviewSummary | null;
   setResult: React.Dispatch<React.SetStateAction<ReviewSummary | null>>;
-  onBreakdown?: (b: ContextBreakdown | null) => void;
+  onBreakdown?: (b: ContextBreakdown | null, truncated: boolean) => void;
 }
 
 export default function FindingsTab({ sessionId, result, setResult, onBreakdown }: Props) {
@@ -86,7 +86,7 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
       // review — a frozen real measurement beats a blank one, which is the same rule
       // ChatTab's error path already follows.
       const bd = res.data?.report?.context_breakdown;
-      if (bd) onBreakdown?.(bd);
+      if (bd) onBreakdown?.(bd, Boolean(res.data?.report?.context_truncated));
       const reviewTurn: TurnRef = {
         turnId: res.data?.turn_id ?? "",
         traceId: res.data?.trace_id ?? "",
