@@ -59,8 +59,12 @@ _NORMALISE = {
 # check closes: "We will accept 12 months" is clause-aligned inside "We will accept 12
 # months: only if the cap is raised." The cost is that a semicolon-joined clause can no
 # longer be quoted on its own, which is the safe direction to err.
+#
+# A terminator also has to LOOK like a sentence end: followed by whitespace and then a
+# capital, or ending the message. Without that, the period in "12.5 months" or "Acme
+# Inc." serves as a false boundary and the same truncation walks straight through.
 _CLAUSE_END = ".!?"
-_CLAUSE_START_RE = re.compile(r"(?:^|[.!?])[\s\"']*")
+_EDGE_CHARS = "\"'"
 
 _SEGMENT_HEADER = (
     "--- EARLIER IN THIS CONVERSATION ({count} earlier messages, condensed) ---\n"
@@ -70,35 +74,81 @@ _SEGMENT_HEADER = (
 _SEGMENT_FOOTER = "--- END EARLIER IN THIS CONVERSATION ---"
 
 
-def _norm(text: str) -> str:
-    """Fold the differences that are not differences: curly quotes, nbsp, en/em
-    dashes, runs of whitespace, case. Applied to BOTH sides of the containment
-    check, so a quote and its source row are compared on equal terms."""
+def _norm_shape(text: str) -> str:
+    """Fold the differences that are not differences: curly quotes, nbsp, en/em dashes,
+    runs of whitespace. Applied to BOTH sides of every comparison, so a quote and its
+    source row are measured on equal terms.
+
+    Case is deliberately PRESERVED here and folded only at the point of comparison.
+    A capital letter after a full stop is the strongest available signal that a period
+    genuinely ends a sentence rather than sitting inside "12.5" or "Acme Inc." —
+    casefolding before that check is what let a decimal point serve as a false sentence
+    boundary.
+    """
     for src, dst in _NORMALISE.items():
         text = text.replace(src, dst)
-    return " ".join(text.split()).casefold()
+    return " ".join(text.split())
+
+
+def _sentence_end_indices(row_text: str) -> set[int]:
+    """Indices of terminators in `row_text` that genuinely end a sentence.
+
+    A terminator qualifies when it ends the string, or when whitespace follows it and
+    the next visible character is a capital. Everything else is a period doing another
+    job — the decimal point in "12.5 months", the abbreviation dot in "Acme Inc." —
+    and treating those as sentence ends is what let a quote be truncated mid-statement
+    while still appearing to end on a boundary.
+
+    Erring toward NOT finding a boundary is the safe direction: it costs a legitimate
+    quote, where the opposite costs a fabricated one.
+    """
+    ends: set[int] = set()
+    for i, ch in enumerate(row_text):
+        if ch not in _CLAUSE_END:
+            continue
+        if i + 1 == len(row_text):
+            ends.add(i)
+            continue
+        if not row_text[i + 1].isspace():
+            continue
+        j = i + 1
+        while j < len(row_text) and (row_text[j].isspace() or row_text[j] in _EDGE_CHARS):
+            j += 1
+        if j < len(row_text) and row_text[j].isupper():
+            ends.add(i)
+    return ends
 
 
 def _quotes_a_whole_sentence(row_text: str, quote: str) -> bool:
     """True when `quote` appears in `row_text` as a complete sentence.
 
-    Both arguments must already be normalised, so that offsets line up. A match counts
-    only when it begins at a sentence start (the row's start, or just past a sentence
-    terminator) and ends at a sentence terminator or the row's end. Every occurrence is
-    tried, so a phrase appearing twice is accepted if either position is aligned.
+    Both arguments must be shape-normalised with case intact. The match must begin at a
+    sentence start (the row's start, or the first visible character after a genuine
+    sentence end) and finish at the row's end or on a genuine sentence terminator —
+    whether or not the quote includes that terminator. Every occurrence is tried, so a
+    phrase appearing twice is accepted if either position aligns.
 
-    A message with no terminal punctuation at all is therefore quotable only in full.
-    That is restrictive and intended: with no sentence boundaries to trust, any trim
-    could be dropping a qualification.
+    A message with no terminal punctuation is therefore quotable only in full. That is
+    restrictive and intended: with no boundaries to trust, any trim could be dropping a
+    qualification.
     """
-    starts = {m.end() for m in _CLAUSE_START_RE.finditer(row_text)}
-    starts.add(0)
-    pos = row_text.find(quote)
+    ends = _sentence_end_indices(row_text)
+    starts = {0}
+    for i in sorted(ends):
+        j = i + 1
+        while j < len(row_text) and (row_text[j].isspace() or row_text[j] in _EDGE_CHARS):
+            j += 1
+        if j < len(row_text):
+            starts.add(j)
+    folded_row, folded_quote = row_text.casefold(), quote.casefold()
+    pos = folded_row.find(folded_quote)
     while pos != -1:
-        end = pos + len(quote)
-        if pos in starts and (end == len(row_text) or row_text[end] in _CLAUSE_END):
+        end = pos + len(folded_quote)
+        if pos in starts and (
+            end == len(row_text) or end in ends or (end - 1) in ends
+        ):
             return True
-        pos = row_text.find(quote, pos + 1)
+        pos = folded_row.find(folded_quote, pos + 1)
     return False
 
 
@@ -161,8 +211,8 @@ def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> s
             )
         if not q["text"]:
             return f"quote for row #{rid} is empty"
-        nrow, nquote = _norm(row["content"]), _norm(q["text"])
-        if nquote not in nrow:
+        nrow, nquote = _norm_shape(row["content"]), _norm_shape(q["text"])
+        if nquote.casefold() not in nrow.casefold():
             return f"quote for row #{rid} does not appear in that message"
         if not _quotes_a_whole_sentence(nrow, nquote):
             return (

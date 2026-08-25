@@ -206,3 +206,69 @@ def test_an_unpunctuated_message_is_quotable_only_in_full():
     assert "not a complete sentence" in validate_segment(
         '[#13 attorney] "for all signature blocks"', rows, 13, 13
     )
+
+
+def test_a_decimal_point_is_not_a_sentence_boundary():
+    # "12.5" is one number, not the end of a statement. Reading its period as a full
+    # stop lets a quote stop mid-sentence and drop the condition that followed.
+    rows = [{
+        "id": 14, "role": "user",
+        "content": "We will accept 12.5 months only if the cap is raised.",
+    }]
+    err = validate_segment('[#14 attorney] "We will accept 12"', rows, 14, 14)
+    assert "not a complete sentence" in err
+
+
+def test_an_abbreviation_period_is_not_a_sentence_boundary():
+    # Legal text is dense with these — Inc., Ltd., No., e.g. — so this is the ordinary
+    # case rather than an exotic one.
+    rows = [{
+        "id": 15, "role": "user",
+        "content": "We will accept the terms from Acme Inc. only if the cap is raised.",
+    }]
+    err = validate_segment(
+        '[#15 attorney] "We will accept the terms from Acme Inc"', rows, 15, 15
+    )
+    assert "not a complete sentence" in err
+
+
+def test_a_whole_sentence_containing_a_decimal_is_accepted():
+    # The flip side: a decimal inside a quote must not block a legitimate whole
+    # sentence, or the rule would reject most numeric commercial terms.
+    rows = [{
+        "id": 16, "role": "user",
+        "content": "We will accept 12.5 months only if the cap is raised.",
+    }]
+    assert validate_segment(
+        '[#16 attorney] "We will accept 12.5 months only if the cap is raised"',
+        rows, 16, 16,
+    ) == ""
+
+
+def test_a_sentence_following_an_abbreviation_is_accepted():
+    rows = [{
+        "id": 17, "role": "assistant",
+        "content": "Acme Inc. is the counterparty. The cap is Green.",
+    }]
+    assert validate_segment(
+        '[#17 assistant, said earlier] "The cap is Green"', rows, 17, 17
+    ) == ""
+
+
+def test_matching_stays_case_insensitive():
+    # Case is preserved for BOUNDARY detection only. A quote must still match its row
+    # when the model reflows capitalisation, which it routinely does.
+    rows = [{"id": 18, "role": "user", "content": "We will accept 12 months."}]
+    assert validate_segment(
+        '[#18 attorney] "we WILL accept 12 MONTHS"', rows, 18, 18
+    ) == ""
+
+
+def test_a_comma_qualifier_cannot_be_dropped():
+    # A comma subordinates just as a colon does; only a full stop separates.
+    rows = [{
+        "id": 19, "role": "user",
+        "content": "We will accept 12 months, subject to the cap being raised.",
+    }]
+    err = validate_segment('[#19 attorney] "We will accept 12 months"', rows, 19, 19)
+    assert "not a complete sentence" in err
