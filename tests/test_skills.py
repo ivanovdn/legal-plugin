@@ -1506,6 +1506,48 @@ def test_doc_chat_breakdown_reports_the_untruncated_document(monkeypatch):
     assert breakdown["total_chars"] == sum(p["chars"] for p in breakdown["parts"])
 
 
+def test_doc_chat_breakdown_reports_real_compressible_history(monkeypatch):
+    """The Condense control's whole existence depends on this number reaching the report.
+
+    can_compact requires compressible_messages > 0, so a wiring bug that always passes
+    0 makes the control never appear — the feature's entry point silently dead, with a
+    green suite. Mutation-proved: replacing the call with a literal 0 left all 583
+    tests passing before this test existed. The count must therefore be asserted as a
+    real, non-zero value, not merely present.
+    """
+    from memory.conversation_store import append_turn
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx_mod = importlib.import_module("skills.legal_research.context")
+    from config import get_settings
+    monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "40000")
+    monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
+    get_settings.cache_clear()
+
+    for i in range(10):
+        append_turn("doc-comp", "attorney-1", f"q{i}", f"a{i}")   # 20 messages
+
+    class FakeResp:
+        content = "answer"
+        usage_metadata = {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
+    monkeypatch.setattr(ctx_mod, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx_mod, "detect_contract_type", lambda text: ("nda", False))
+    monkeypatch.setattr(ctx_mod, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+
+    state = _make_state(
+        request="summarize", task_type="research",
+        uploaded_docs=[{"text": "SHORT NDA BODY"}],
+        document_id="doc-comp",
+    )
+    lr.legal_research(state)
+    keep = get_settings().compaction_keep_recent_messages
+    get_settings.cache_clear()
+
+    assert state["context_breakdown"]["compressible_messages"] == 20 - keep
+
+
 # --- num_ctx wiring (context-window pin) ---
 
 
