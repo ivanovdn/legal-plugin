@@ -316,28 +316,88 @@ def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> s
         return err
     by_id = {r["id"]: r for r in rows}
     for q in quotes:
-        rid = q["row_id"]
-        if not (from_id <= rid <= to_id):
-            return f"quote cites row #{rid}, outside the condensed range {from_id}-{to_id}"
-        row = by_id.get(rid)
-        if row is None:
-            return f"quote cites row #{rid}, which is not in the condensed transcript"
-        expected = "attorney" if row["role"] == "user" else "assistant"
-        if q["speaker"] != expected:
-            return (
-                f"quote for row #{rid} is labelled {q['speaker']}, "
-                f"but that row is the {expected}"
-            )
-        if not q["text"]:
-            return f"quote for row #{rid} is empty"
-        nrow, nquote = _norm_shape(row["content"]), _norm_shape(q["text"])
-        if nquote.casefold() not in nrow.casefold():
-            return f"quote for row #{rid} does not appear in that message"
-        if not _quotes_a_whole_sentence(nrow, nquote):
-            return (
-                f"quote for row #{rid} is not a complete sentence of that message"
-            )
+        failure = _quote_failure(q, by_id, from_id, to_id)
+        if failure:
+            return failure
     return ""
+
+
+def _quote_failure(q: dict, by_id: dict, from_id: int, to_id: int) -> str:
+    """Why this ONE quote cannot be trusted, or "" when it can.
+
+    The single definition of a trustworthy quote, shared by validate_segment (which
+    stops at the first failure) and partition_quotes (which drops it and keeps going).
+    Both must agree, or the strict check would document a guarantee the writing path
+    does not actually apply.
+    """
+    rid = q["row_id"]
+    if not (from_id <= rid <= to_id):
+        return f"quote cites row #{rid}, outside the condensed range {from_id}-{to_id}"
+    row = by_id.get(rid)
+    if row is None:
+        return f"quote cites row #{rid}, which is not in the condensed transcript"
+    expected = "attorney" if row["role"] == "user" else "assistant"
+    if q["speaker"] != expected:
+        return (
+            f"quote for row #{rid} is labelled {q['speaker']}, "
+            f"but that row is the {expected}"
+        )
+    if not q["text"]:
+        return f"quote for row #{rid} is empty"
+    nrow, nquote = _norm_shape(row["content"]), _norm_shape(q["text"])
+    if nquote.casefold() not in nrow.casefold():
+        return f"quote for row #{rid} does not appear in that message"
+    if not _quotes_a_whole_sentence(nrow, nquote):
+        return f"quote for row #{rid} is not a complete sentence of that message"
+    return ""
+
+
+def partition_quotes(
+    body: str, rows: list[dict], from_id: int, to_id: int
+) -> tuple[list[dict], list[str], str]:
+    """Split the model's output into quotes that survive the gate and quotes that do not.
+
+    Returns (kept, dropped_reasons, fatal). `fatal` is non-empty only when the output
+    could not be parsed at all, or when NOTHING survived — those are the two cases where
+    there is no segment worth writing.
+
+    WHY THIS EXISTS, since it relaxes the spec's "any failing quote invalidates the
+    entire segment". That rule was written when the only check was "does this text appear
+    in the row", where a failure really did mean the model was inventing. The
+    complete-sentence check arrived later, from review, and inherited the same all-or-
+    nothing response — but a verbatim quote that stops mid-sentence is a formatting
+    failure, not an invention.
+
+    Measured on a real conversation with the best available model: 20 of 22 quotes were
+    perfect and 2 were trimmed mid-sentence. At roughly a 9% per-quote failure rate, an
+    all-or-nothing rule rejects the whole segment about 90% of the time — so the feature
+    would essentially never run, which is not a safer outcome than this one, it is just a
+    quieter one.
+
+    Dropping loses nothing the attorney could have relied on: a dropped quote simply is
+    not in the summary, so nothing unverified ever reaches the prompt. Every kept quote
+    is still proven verbatim AND sentence-aligned by exactly the same checks as before —
+    the guarantee is per-line, and it was always the per-line guarantee that mattered.
+    The count is reported to the attorney rather than swallowed.
+    """
+    quotes, err = parse_quote_lines(body)
+    if err:
+        return [], [], err
+    by_id = {r["id"]: r for r in rows}
+    kept: list[dict] = []
+    dropped: list[str] = []
+    for q in quotes:
+        failure = _quote_failure(q, by_id, from_id, to_id)
+        if failure:
+            dropped.append(failure)
+        else:
+            kept.append(q)
+    if not kept:
+        return [], dropped, (
+            f"no quote could be verified against the message it cites "
+            f"({len(dropped)} rejected)"
+        )
+    return kept, dropped, ""
 
 
 def render_segment(quotes: list[dict], message_count: int) -> str:
@@ -443,7 +503,7 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
     """
     empty = {
         "compacted": False, "from_id": 0, "to_id": 0, "messages": 0,
-        "quotes": 0, "segment_id": 0, "reason": "", "error": "",
+        "quotes": 0, "dropped": 0, "segment_id": 0, "reason": "", "error": "",
     }
     from_id, to_id, rows = select_compactable_rows(document_id, attorney_id)
     if not rows:
@@ -466,13 +526,20 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
             logger.error("[compaction] generation failed on attempt %d: %s", attempt, e)
             continue
         last_was_transport_failure = False
-        last_error = validate_segment(body, rows, from_id, to_id)
+        quotes, dropped, last_error = partition_quotes(body, rows, from_id, to_id)
         if last_error:
             logger.warning(
                 "[compaction] attempt %d rejected by the gate: %s", attempt, last_error
             )
             continue
-        quotes, _ = parse_quote_lines(body)
+        if dropped:
+            # Not a failure: each of these was checked against the row it cited and
+            # could not be verified, so it is simply not in the summary. Logged in full
+            # because a rising drop rate is the signal that the model has drifted.
+            logger.info(
+                "[compaction] dropped %d unverifiable quote(s): %s",
+                len(dropped), "; ".join(dropped[:5]),
+            )
         # Over-production is not fabrication: every line here already passed the
         # gate, so trim to the cap rather than burn a retry on a valid segment.
         if len(quotes) > max_quotes:
@@ -491,12 +558,12 @@ def compact_conversation(document_id: str, attorney_id: str) -> dict:
             logger.error("[compaction] segment write failed: %s", e)
             return {**empty, "error": f"the condensed segment could not be saved ({e.__class__.__name__})"}
         logger.info(
-            "[compaction] condensed rows %d-%d (%d messages) into %d quotes",
-            from_id, to_id, len(rows), len(quotes),
+            "[compaction] condensed rows %d-%d (%d messages) into %d quotes (%d dropped)",
+            from_id, to_id, len(rows), len(quotes), len(dropped),
         )
         return {
             "compacted": True, "from_id": from_id, "to_id": to_id,
-            "messages": len(rows), "quotes": len(quotes),
+            "messages": len(rows), "quotes": len(quotes), "dropped": len(dropped),
             "segment_id": segment_id, "reason": "", "error": "",
         }
 

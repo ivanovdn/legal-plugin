@@ -42,7 +42,18 @@ export default function ContextMeter({ breakdown }: Props) {
       const res = await compactConversation(documentId);
       if (res.data?.compacted) {
         const n = res.data.messages ?? 0;
-        setNote(`${n} earlier messages condensed. The counter updates on your next message.`);
+        const dropped = res.data.dropped ?? 0;
+        // The drop count is stated, never swallowed. Each dropped line failed to
+        // match the message it cited, so leaving it out is the safe outcome — but
+        // the attorney should know the summary is thinner than the model intended.
+        const skipped =
+          dropped > 0
+            ? ` ${dropped} quote${dropped === 1 ? "" : "s"} couldn't be checked against the message ` +
+              `${dropped === 1 ? "it" : "they"} came from and ${dropped === 1 ? "was" : "were"} left out.`
+            : "";
+        setNote(
+          `${n} earlier messages condensed.${skipped} The counter updates on your next message.`,
+        );
       } else {
         setNote(res.data?.reason || "Nothing earlier to condense yet.");
       }

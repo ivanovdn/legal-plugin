@@ -100,6 +100,10 @@ export interface CompactResponse {
     to_id?: number;
     messages?: number;
     quotes?: number;
+    /** Quotes that could not be verified against the row they cited, and were left
+     *  out. Surfaced to the attorney rather than swallowed: a rising count is the
+     *  signal that the model has drifted. */
+    dropped?: number;
     segment_id?: number;
     reason?: string;
     error?: string;

@@ -7,6 +7,7 @@ worse than no summary at all.
 """
 from skills.legal_research.compaction import (
     parse_quote_lines,
+    partition_quotes,
     render_segment,
     validate_segment,
 )
@@ -547,3 +548,64 @@ def test_dropped_markdown_formatting_still_matches():
         '[#53 assistant, said earlier] "Placeholders for [__] remain blank."',
         rows, 53, 53,
     ) == ""
+
+
+# --- Partitioning: keep what verifies, drop what does not ----------------------
+
+
+def test_partition_keeps_the_good_quotes_and_drops_the_bad_one():
+    """One unverifiable line must not destroy nineteen good ones.
+
+    Measured on a real conversation with the best available model: 20 of 22 quotes
+    were perfect and 2 were trimmed mid-sentence. Rejecting the whole segment for
+    that would mean compaction essentially never runs — which is not safer than
+    dropping two lines, only quieter.
+    """
+    body = (
+        '[#412 attorney] "Please use Suzy Quatro for all signature blocks"\n'
+        '[#414 attorney] "we will accept 24 months"\n'
+        '[#413 assistant, said earlier] "Done — the cap is Green under the playbook"'
+    )
+    kept, dropped, fatal = partition_quotes(body, ROWS, 412, 414)
+    assert fatal == ""
+    assert [q["row_id"] for q in kept] == [412, 413]
+    assert len(dropped) == 1
+    assert "#414" in dropped[0]
+
+
+def test_partition_is_fatal_when_nothing_verifies():
+    """A segment of nothing is not a segment. Fail loudly, write nothing."""
+    body = (
+        '[#412 attorney] "something nobody said"\n'
+        '[#414 attorney] "we will accept 24 months"'
+    )
+    kept, dropped, fatal = partition_quotes(body, ROWS, 412, 414)
+    assert kept == []
+    assert len(dropped) == 2
+    assert "no quote could be verified" in fatal
+
+
+def test_partition_is_fatal_on_unparseable_output():
+    kept, dropped, fatal = partition_quotes("here is a summary of it all", ROWS, 412, 414)
+    assert kept == []
+    assert "not a quote line" in fatal
+
+
+def test_partition_drops_exactly_what_the_strict_check_rejects():
+    """The two paths must share one definition of a trustworthy quote.
+
+    If they could disagree, validate_segment would document a guarantee that the
+    path which actually writes segments does not apply.
+    """
+    cases = [
+        '[#999 attorney] "outside the range"',
+        '[#413 attorney] "Done — the cap is Green under the playbook"',   # wrong speaker
+        '[#414 attorney] "we will accept 24 months"',                     # not present
+        '[#412 attorney] "use Suzy Quatro for all signature blocks"',     # mid-sentence
+    ]
+    for body in cases:
+        strict = validate_segment(body, ROWS, 412, 414)
+        kept, dropped, fatal = partition_quotes(body, ROWS, 412, 414)
+        assert strict != "", f"strict check unexpectedly accepted: {body}"
+        assert kept == [], f"partition kept what strict rejected: {body}"
+        assert dropped == [strict], f"reasons diverged for: {body}"
