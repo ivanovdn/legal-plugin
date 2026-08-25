@@ -30,6 +30,7 @@ def output_formatter(state: LegalAgentState) -> LegalAgentState:
         "memory_degraded": state.get("memory_degraded", False),
         "context_truncated": state.get("context_truncated"),
         "tokens": state.get("token_usage"),
+        "context_breakdown": state.get("context_breakdown"),
     }
     logger.info("[output_formatter] report built, task_type=%s", state["task_type"])
     return state

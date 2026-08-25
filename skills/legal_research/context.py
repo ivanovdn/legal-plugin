@@ -29,7 +29,7 @@ import re
 
 from config import get_settings
 from graph.state import LegalAgentState
-from memory.conversation_store import load_recent
+from memory.conversation_store import count_after, load_recent
 from memory.conversation_summary import latest_to_id, load_segments
 from memory.review_store import load_latest_review
 from skills.grounding import (
@@ -231,4 +231,96 @@ def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) ->
         "doc_chars": doc_chars,
         "kept_chars": keep,
         "kept_pct": (keep * 100 // doc_chars) if doc_chars else 0,
+    }
+
+
+def compressible_message_count(state: LegalAgentState) -> int:
+    """How many stored messages sit past the compaction floor AND outside the
+    verbatim window — i.e. what a Condense action would actually condense.
+
+    Best-effort: 0 on any failure, and 0 when compaction is off. This feeds a
+    UI affordance, so a store hiccup must cost the attorney a button, never a
+    turn. It does NOT flag memory_degraded — that is reserved for reads the
+    answer depends on.
+    """
+    settings = get_settings()
+    if not settings.compaction_enabled:
+        return 0
+    document_id = state.get("document_id", "")
+    attorney_id = state.get("user_id", "")
+    if not document_id or not attorney_id:
+        return 0
+    try:
+        boundary = latest_to_id(document_id, attorney_id)
+        total = count_after(document_id, attorney_id, boundary)
+    except Exception as e:
+        logger.warning("[legal_research] compressible-count failed: %s", e)
+        return 0
+    return max(0, total - settings.compaction_keep_recent_messages)
+
+
+# Display order. Only `history` is compactable: the document is the source of
+# truth, the playbook is the ceiling, and neither is ever summarised.
+_BREAKDOWN_PARTS = ("document", "playbook", "msa", "review", "history", "system")
+
+
+def build_context_breakdown(
+    *,
+    doc_chars: int,
+    playbook_chars: int,
+    msa_chars: int,
+    review_chars: int,
+    history_chars: int,
+    system_chars: int,
+    compressible_messages: int,
+) -> dict:
+    """What this turn actually spent, as the pane's counter renders it.
+
+    Measured, never predicted: the caller passes the POST-truncation document
+    size, so the counter reports what was sent rather than what was asked for.
+    A forecast is impossible anyway — _needs_grounding keys off the question's
+    wording, so the same contract costs 49k or 131k depending on what is asked.
+
+    history_chars covers everything in the history slot, injected summary
+    segments included. That is deliberate: summaries are a real prompt cost, and
+    watching the history line drop after a compaction is the attorney's proof
+    the feature did something.
+    """
+    settings = get_settings()
+    budget = settings.chat_context_max_chars
+    cpt = settings.est_chars_per_token
+    sizes = {
+        "document": doc_chars, "playbook": playbook_chars, "msa": msa_chars,
+        "review": review_chars, "history": history_chars, "system": system_chars,
+    }
+    total = sum(sizes.values())
+    parts = [
+        {
+            "key": key,
+            "chars": sizes[key],
+            "tokens": int(sizes[key] / cpt),
+            "pct": (sizes[key] * 100 // budget) if budget else 0,
+            "compactable": key == "history",
+        }
+        for key in _BREAKDOWN_PARTS
+    ]
+    pct = (total * 100 // budget) if budget else 0
+    return {
+        "budget_chars": budget,
+        "budget_tokens": int(budget / cpt),
+        "chars_per_token": cpt,
+        "total_chars": total,
+        "total_tokens": int(total / cpt),
+        "pct": pct,
+        "warn_pct": settings.compaction_warn_pct,
+        # Both conditions, always. The threshold alone would offer a no-op on a
+        # short conversation with a huge document; compressible history alone
+        # would nag on every routine chat.
+        "can_compact": bool(
+            settings.compaction_enabled
+            and compressible_messages > 0
+            and pct >= settings.compaction_warn_pct
+        ),
+        "compressible_messages": compressible_messages,
+        "parts": parts,
     }

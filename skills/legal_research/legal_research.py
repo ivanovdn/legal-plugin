@@ -22,6 +22,8 @@ from skills.legal_research.context import (
     _load_prior_conversation,
     _load_prior_review_block,
     _needs_grounding,
+    build_context_breakdown,
+    compressible_message_count,
 )
 from skills.legal_research.edit_parsing import (
     _extract_proposed_edits,
@@ -183,7 +185,20 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # way. Set here, INSIDE the skill, it runs before output_formatter and so
     # reaches the report; a flag set in memory_writer would not (it runs after)
     # — the hazard recorded in CLAUDE.md.
-    state["context_truncated"] = _cap_chat_context(messages, uploaded_text, request)
+    truncation = _cap_chat_context(messages, uploaded_text, request)
+    state["context_truncated"] = truncation
+    # Report what was SENT, not what was asked for: when the document was cut,
+    # the counter's document line must show the kept size or it contradicts the
+    # truncation notice sitting right beside it.
+    state["context_breakdown"] = build_context_breakdown(
+        doc_chars=truncation["kept_chars"] if truncation else len(uploaded_text),
+        playbook_chars=len(playbook),
+        msa_chars=len(msa_block),
+        review_chars=len(review_block),
+        history_chars=sum(len(m["content"]) for m in chat_history),
+        system_chars=len(CHAT_SYSTEM_PROMPT) + len(prefs_block) + len(request),
+        compressible_messages=compressible_message_count(state),
+    )
 
     # Same reason as llm_caller: without a pre-call line an in-flight doc-chat
     # turn leaves no trace anywhere until it finishes, so a slow shared Ollama
@@ -356,6 +371,7 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
     state["proposed_preferences"] = []
     state["context_truncated"] = None
     state["token_usage"] = None
+    state["context_breakdown"] = None
 
     try:
         if uploaded_text:

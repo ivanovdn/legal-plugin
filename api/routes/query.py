@@ -196,6 +196,7 @@ def submit_query(
         # and a later healthy turn reports a truncation that never happened.
         "context_truncated": None,
         "token_usage": None,
+        "context_breakdown": None,
     }
 
     graph = _get_graph()
