@@ -475,3 +475,75 @@ def test_markdown_emphasis_does_not_defeat_the_abbreviation_guard():
         '[#45 attorney] "Jones is out** but we will accept 12 months."', rows, 45, 45
     )
     assert "not a complete sentence" in err
+
+
+# --- Gaps found in a Word sideload, on a real conversation ----------------------
+# Compaction failed on its first real attempt, and none of these was model
+# misbehaviour: the model quoted faithfully and our normalisation was too narrow.
+
+
+def test_a_bullet_after_a_heading_is_quotable():
+    """Markdown lists are how the assistant actually answers.
+
+    Collapsing newlines into spaces welded a whole reply into one enormous
+    "sentence", so the first bullet under any "**Heading:**" had no boundary in
+    front of it and was unquotable. Measured on a real conversation, that single
+    shape rejected the segment and compaction never once succeeded.
+    """
+    rows = [{
+        "id": 50, "role": "assistant",
+        "content": (
+            "I reviewed the SOW.\n\n**Required Actions:**\n"
+            "- Fill all placeholders before signature.\n"
+            "- Resolve the delay conflict between the MSA and SOW.\n"
+        ),
+    }]
+    assert validate_segment(
+        '[#50 assistant, said earlier] "Fill all placeholders before signature."',
+        rows, 50, 50,
+    ) == ""
+
+
+def test_a_line_break_cannot_end_a_quote():
+    """The other half of the same rule, and why it is asymmetric.
+
+    A line break may BEGIN a sentence — a list item is a genuine start. It may
+    never END one, or a hard-wrapped line would let the condition be dropped,
+    which is the exact truncation this gate exists to prevent.
+    """
+    rows = [{
+        "id": 51, "role": "user",
+        "content": "We will accept 12 months\nonly if the cap is raised.",
+    }]
+    err = validate_segment('[#51 attorney] "We will accept 12 months"', rows, 51, 51)
+    assert "not a complete sentence" in err
+
+
+def test_a_quote_character_substitution_still_matches():
+    """The model MUST substitute here, and it is right to.
+
+    The quote line is itself delimited by double quotes, so text containing one
+    cannot be reproduced literally. It wrote 'Consultants' where the row had
+    "Consultants" — faithful quoting that our normalisation rejected as absent
+    from its own row.
+    """
+    rows = [{
+        "id": 52, "role": "assistant",
+        "content": 'The SOW\'s "Consultants" section aligns with the MSA.',
+    }]
+    assert validate_segment(
+        '[#52 assistant, said earlier] "The SOW\'s \'Consultants\' section aligns with the MSA."',
+        rows, 52, 52,
+    ) == ""
+
+
+def test_dropped_markdown_formatting_still_matches():
+    """The model copies the words, not the code fence around them."""
+    rows = [{
+        "id": 53, "role": "assistant",
+        "content": "Placeholders for `[__]` remain blank.",
+    }]
+    assert validate_segment(
+        '[#53 assistant, said earlier] "Placeholders for [__] remain blank."',
+        rows, 53, 53,
+    ) == ""

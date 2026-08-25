@@ -57,8 +57,17 @@ _QUOTE_RE = re.compile(
 # Straight and curly, plus the guillemets some models reach for.
 _QUOTE_CHARS = "\"'“”‘’«»"
 
+# Markdown the model drops when it quotes: it copies the words, not the emphasis or the
+# code fence around them. Removed from BOTH sides, so `[__]` matches `` `[__]` ``.
+_DROPPED_FORMATTING = "`*"
+
 _NORMALISE = {
-    "“": '"', "”": '"', "‘": "'", "’": "'",
+    # EVERY quote form folds to one character. The model has no choice but to substitute
+    # when the text it is quoting contains a double quote, because the quote line is
+    # itself delimited by double quotes — it wrote 'Consultants' where the row had
+    # "Consultants". That is correct behaviour on its part and was a matching failure on
+    # ours, which rejected a faithful quote as absent from its own row.
+    '"': "'", "“": "'", "”": "'", "‘": "'", "’": "'",
     " ": " ", "–": "-", "—": "-",
 }
 
@@ -134,10 +143,18 @@ def _norm_shape(text: str) -> str:
     genuinely ends a sentence rather than sitting inside "12.5" or "Acme Inc." —
     casefolding before that check is what let a decimal point serve as a false sentence
     boundary.
+
+    Line breaks are PRESERVED, not collapsed into spaces. A markdown reply is mostly
+    list items, and collapsing the newlines welded them into one enormous "sentence" in
+    which every bullet after a "**Heading:**" was unquotable — measured on a real
+    conversation, that alone rejected the segment and compaction never succeeded once.
     """
     for src, dst in _NORMALISE.items():
         text = text.replace(src, dst)
-    return " ".join(text.split())
+    for ch in _DROPPED_FORMATTING:
+        text = text.replace(ch, "")
+    lines = (" ".join(line.split()) for line in text.split("\n"))
+    return "\n".join(line for line in lines if line)
 
 
 def _token_before(row_text: str, i: int) -> str:
@@ -213,6 +230,17 @@ def _quotes_a_whole_sentence(row_text: str, quote: str) -> bool:
     for i in sorted(ends):
         j = i + 1
         while j < len(row_text) and (row_text[j].isspace() or row_text[j] in _EDGE_CHARS):
+            j += 1
+        if j < len(row_text):
+            starts.add(j)
+    # A line break may BEGIN a sentence but may NEVER end one. Beginning: a list item or
+    # a new paragraph is a genuine start, and without this the first bullet under any
+    # heading is unquotable. Never ending: a hard-wrapped line would otherwise let
+    # "We will accept 12 months\nonly if the cap is raised." be quoted as an
+    # unconditional acceptance — the exact truncation this gate exists to prevent.
+    for m in re.finditer(r"\n", row_text):
+        j = m.end()
+        while j < len(row_text) and (row_text[j] in " \t" or row_text[j] in _EDGE_CHARS):
             j += 1
         if j < len(row_text):
             starts.add(j)
