@@ -272,3 +272,59 @@ def test_a_comma_qualifier_cannot_be_dropped():
     }]
     err = validate_segment('[#19 attorney] "We will accept 12 months"', rows, 19, 19)
     assert "not a complete sentence" in err
+
+
+# --- Known residual -------------------------------------------------------------
+# These pin the ONE truncation shape the gate does not catch, so it stays visible and
+# cannot quietly widen. They assert today's behaviour on purpose: if someone tightens
+# the rule later, these fail and force a conscious decision plus a docs update.
+#
+# Closing it was measured and rejected — every candidate rule also rejected sentences
+# ending "…the MSA." or "I checked it.", and a gate that rejects ordinary text writes
+# nothing at all. See the module docstring in skills/legal_research/compaction.py.
+
+
+def test_residual_abbreviation_before_a_capitalised_name_is_not_caught():
+    # "v." reads as a full stop because "Jones" is capitalised, so the condition that
+    # follows can be truncated away. The model would have to emit a quote ending in
+    # "Smith v" for this to bite, which a cooperative model asked for a complete
+    # sentence does not do.
+    rows = [{
+        "id": 20, "role": "user",
+        "content": "We will accept the terms of Smith v. Jones only if the cap is raised.",
+    }]
+    assert validate_segment(
+        '[#20 attorney] "We will accept the terms of Smith v"', rows, 20, 20
+    ) == ""
+
+
+def test_residual_title_abbreviation_is_not_caught():
+    rows = [{
+        "id": 21, "role": "user",
+        "content": "We will accept the offer from Mr. Smith only if signed by Friday.",
+    }]
+    assert validate_segment(
+        '[#21 attorney] "We will accept the offer from Mr"', rows, 21, 21
+    ) == ""
+
+
+def test_the_domain_common_sentences_the_residual_protects_still_pass():
+    # The other half of the trade, pinned so it cannot be lost silently. A rule closing
+    # the two tests above would reject BOTH of these, and these are ordinary here —
+    # MSA/NDA/SOW are the contract types this product is built around.
+    rows = [{
+        "id": 22, "role": "assistant",
+        "content": "The governing document is the MSA. The cap is Green.",
+    }]
+    assert validate_segment(
+        '[#22 assistant, said earlier] "The cap is Green"', rows, 22, 22
+    ) == ""
+
+    rows = [{
+        "id": 23, "role": "assistant",
+        "content": "I checked it. The cap is Green under our standard position.",
+    }]
+    assert validate_segment(
+        '[#23 assistant, said earlier] "The cap is Green under our standard position"',
+        rows, 23, 23,
+    ) == ""

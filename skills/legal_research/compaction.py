@@ -17,6 +17,18 @@ construction.
 
 IMPORT DIRECTION IS ONE-WAY. This module may import from legal_research.py;
 context.py must never import this module, or the package cycles.
+
+WHAT THE GATE DOES NOT CATCH. Sentence segmentation of natural language is not
+decidable by a deterministic rule, so one truncation shape survives: a quote ending at
+an abbreviation's period where the next word is capitalised, as in "…the terms of Smith
+v." or "…from Acme Ltd." — the dot looks exactly like a full stop and the capital looks
+exactly like a new sentence. Tightening the rule to close it was measured and rejected:
+every candidate also rejected sentences ending "…the MSA." or "I checked it.", which are
+ordinary here, and an over-strict gate writes nothing at all rather than something
+wrong. The residual is bounded by three things outside this module: the prompt asks for
+a sentence from its first word through its ending punctuation, every quote is labelled
+"said earlier" and ranked below live grounding, and the raw rows are never deleted, so
+any segment can be audited against exactly the rows it cites.
 """
 from __future__ import annotations
 
@@ -191,6 +203,12 @@ def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> s
     ANY failing quote invalidates the ENTIRE segment. A summary is legal recall;
     one invented line in it is worse than no summary at all, and there is no
     principled way to keep the rest of a block that demonstrably fabricated.
+
+    What check 4 guarantees is that a quote is a complete sentence by every signal
+    available without semantics: it starts where a sentence starts, ends where one ends,
+    and no mid-token period counts as either. What it cannot guarantee is that an
+    abbreviation followed by a capitalised name is not a sentence break — see the module
+    docstring.
     """
     quotes, err = parse_quote_lines(body)
     if err:
