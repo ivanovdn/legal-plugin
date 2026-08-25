@@ -149,3 +149,26 @@ def test_machinery_only_assistant_rows_are_never_quotable(monkeypatch):
     # few-shot example (the 2ae99ecc failure).
     assert all("```" not in r["content"] for r in selected)
     assert all('"action"' not in r["content"] for r in selected)
+
+
+def test_round_trip_shrinks_the_injected_history(monkeypatch):
+    """Compaction's whole purpose: the next turn's assembled history is smaller.
+
+    This is the test that pins WHY the feature exists. Everything else checks
+    that compaction is safe; this checks that it works.
+    """
+    import skills.legal_research.context as ctx
+
+    for i in range(12):
+        append_turn("doc-rt", "atty-rt", f"question number {i} " * 20, f"answer number {i} " * 20)
+    state = {"document_id": "doc-rt", "user_id": "atty-rt"}
+    before = sum(len(m["content"]) for m in ctx._load_prior_conversation(state))
+
+    monkeypatch.setattr(
+        compaction, "_generate_quote_lines",
+        lambda r, n: _quotes_for(r, [row["id"] for row in r[:3]]),
+    )
+    assert compaction.compact_conversation("doc-rt", "atty-rt")["compacted"] is True
+
+    after = sum(len(m["content"]) for m in ctx._load_prior_conversation(state))
+    assert after < before

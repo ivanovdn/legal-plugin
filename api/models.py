@@ -75,6 +75,15 @@ class InteractionEventBatch(BaseModel):
     events: list[InteractionEvent] = Field(default_factory=list)
 
 
+class CompactRequest(BaseModel):
+    """Condense the earlier part of one document's conversation.
+
+    attorney_id is deliberately absent — identity comes from the auth seam, the
+    same rule as FeedbackSubmission.
+    """
+    document_id: str = Field(..., description="Stable document id whose conversation to condense")
+
+
 class ApiResponse(BaseModel):
     """Standard response envelope."""
     status: str = "ok"
