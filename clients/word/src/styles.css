@@ -955,6 +955,11 @@ button.secondary:disabled {
 .context-meter-table td { padding: 1px 0; }
 .context-meter-table td.num { text-align: right; padding-left: 8px; font-variant-numeric: tabular-nums; }
 .context-meter-note { opacity: 0.85; margin: 4px 0 0; }
+/* The note shares its class with the <p> variants outside the table, where that
+   margin applies. Margins are ignored on a table cell, so inside the table it
+   needs real padding or it collides with the right-aligned percentage and reads
+   as "24%never condensed". Found in a Word sideload — no assertion catches it. */
+.context-meter-table td.context-meter-note { padding-left: 10px; }
 .context-meter-actions {
   display: flex;
   flex-direction: column;
