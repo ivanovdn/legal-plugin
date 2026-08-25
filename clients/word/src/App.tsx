@@ -9,6 +9,12 @@ import { buildSnapshot, onFlagRequested, requestFlag, EMPTY_TURN, type FlagTarge
 import { readBody } from "./word";
 import { isDocumentUnsaved, resolveDocumentId } from "./docIdentity";
 import type { ReviewSummary } from "./parser";
+import ContextMeter from "./components/ContextMeter";
+import { withLiveDocument, type ContextBreakdown } from "./contextGauge";
+
+// Debounce for the live document measurement. onParagraphChanged fires per
+// keystroke; readBody() on a real contract is a full getReviewedText round trip.
+const LIVE_DOC_DEBOUNCE_MS = 2000;
 
 export default function App() {
   // session_id is generated once per pane lifetime so the contract_review
@@ -26,6 +32,8 @@ export default function App() {
   const [prefLoaded, setPrefLoaded] = useState<boolean>(false);
   const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
   const [unsaved, setUnsaved] = useState<boolean>(false);
+  const [breakdown, setBreakdown] = useState<ContextBreakdown | null>(null);
+  const [liveDocChars, setLiveDocChars] = useState<number | null>(null);
 
   // The document id lives in Office settings, which persist only WITH the file.
   // On an unsaved document that id dies when the document closes, orphaning this
@@ -45,6 +53,41 @@ export default function App() {
     return () => {
       alive = false;
       window.removeEventListener("focus", check);
+    };
+  }, []);
+
+  // ~2 s debounce: onParagraphChanged fires per keystroke, and readBody() on an
+  // 85,000-char contract is not free.
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const measure = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        readBody()
+          .then((t) => { if (alive) setLiveDocChars(t.length); })
+          .catch(() => { /* never let a probe break the pane */ });
+      }, LIVE_DOC_DEBOUNCE_MS);
+    };
+    measure();   // seed the line before the first edit
+    // onParagraphChanged needs WordApi 1.5 and is absent from some office-js
+    // typing releases, hence the narrow cast rather than a direct call. On a
+    // host without the event, registration rejects and we fall back to
+    // re-reading on focus — the same signal the unsaved check already uses.
+    const useFocus = () => window.addEventListener("focus", measure);
+    Word.run(async (context) => {
+      const doc = context.document as unknown as {
+        onParagraphChanged: { add: (h: () => Promise<void>) => void };
+      };
+      doc.onParagraphChanged.add(async () => { measure(); });
+      await context.sync();
+    }).catch(useFocus);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      // Harmless when it was never added, and the alternative is tracking a
+      // flag that the async .catch() above may set after cleanup has run.
+      window.removeEventListener("focus", measure);
     };
   }, []);
 
@@ -112,6 +155,13 @@ export default function App() {
           close it. Save the file first.
         </p>
       )}
+      <ContextMeter
+        breakdown={
+          breakdown && liveDocChars !== null
+            ? withLiveDocument(breakdown, liveDocChars)
+            : breakdown
+        }
+      />
       <Tabs active={tab} onChange={setTab} />
       {/* Both tabs always mounted; visibility toggled via CSS so state persists. */}
       <div className={`tab-pane ${tab === "findings" ? "" : "hidden"}`}>
@@ -119,6 +169,7 @@ export default function App() {
           sessionId={sessionId}
           result={findingsResult}
           setResult={setFindingsResult}
+          onBreakdown={setBreakdown}
         />
       </div>
       <div className={`tab-pane ${tab === "chat" ? "" : "hidden"}`}>
@@ -127,6 +178,7 @@ export default function App() {
           messages={chatMessages}
           setMessages={setChatMessages}
           onPreferenceAdded={() => setPrefLoaded(false)}
+          onBreakdown={setBreakdown}
         />
       </div>
       <div className={`tab-pane ${tab === "preferences" ? "" : "hidden"}`}>

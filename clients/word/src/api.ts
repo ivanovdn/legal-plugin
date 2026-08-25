@@ -5,6 +5,7 @@ import type { EditProposal } from "./parseEditBlocks";
 import { resolveDocumentId } from "./docIdentity";
 import { userHeaders } from "./attorneyIdentity";
 import type { ContextTruncated, TokenUsage } from "./contextNotice";
+import type { ContextBreakdown } from "./contextGauge";
 
 export interface QueryResponse {
   status: "ok" | "error";
@@ -26,6 +27,7 @@ export interface QueryResponse {
       review_persist_error?: string;
       context_truncated?: ContextTruncated | null;
       tokens?: TokenUsage | null;
+      context_breakdown?: ContextBreakdown | null;
     };
     interrupt_payload?: {
       task_type?: string;
@@ -88,4 +90,45 @@ export async function chatQuery(
     uploaded_text: docText,
     document_uuid,
   });
+}
+
+export interface CompactResponse {
+  status: "ok" | "error";
+  data?: {
+    compacted?: boolean;
+    from_id?: number;
+    to_id?: number;
+    messages?: number;
+    quotes?: number;
+    segment_id?: number;
+    reason?: string;
+    error?: string;
+  };
+  errors?: string[];
+}
+
+/**
+ * Condense the earlier part of this document's conversation.
+ *
+ * Its own endpoint, not a flag on /api/query: compaction produces no answer and
+ * carries its own latency. A failure comes back as a non-2xx and is thrown —
+ * the attorney clicked, so a silent failure would be a lie.
+ */
+export async function compactConversation(documentId: string): Promise<CompactResponse> {
+  const res = await fetch("/api/compact", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...userHeaders() },
+    body: JSON.stringify({ document_id: documentId }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* a non-JSON error body is still an error — keep the status line */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
 }

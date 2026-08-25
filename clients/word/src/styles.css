@@ -918,3 +918,47 @@ button.secondary:disabled {
   margin: 6px 0;
   font-size: 12px;
 }
+
+/* Context counter. Neutral by default and amber only past warn_pct — this line
+   is present on every turn, so a permanently coloured box would be wallpaper
+   within a day. Deliberately NOT the red .context-truncated treatment: that one
+   means "this answer may be legally unsound", this one means "you are heading
+   toward that". */
+.context-meter {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #605e5c;
+}
+.context-meter.warn {
+  border-color: #a97400;
+  background: #fff8e6;
+  color: #6b4a00;
+}
+.context-meter-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.context-meter-caret { opacity: 0.7; }
+.context-meter-caption { margin: 6px 0 2px; font-style: italic; opacity: 0.85; }
+.context-meter-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.context-meter-table td { padding: 1px 0; }
+.context-meter-table td.num { text-align: right; padding-left: 8px; font-variant-numeric: tabular-nums; }
+.context-meter-note { opacity: 0.85; margin: 4px 0 0; }
+.context-meter-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  margin-top: 6px;
+}

@@ -13,6 +13,7 @@ import { readBody } from "../word";
 import { recordEvent, type TurnRef, EMPTY_TURN } from "../feedback";
 import { resolveDocumentId } from "../docIdentity";
 import { truncationNotice } from "../contextNotice";
+import type { ContextBreakdown } from "../contextGauge";
 import FindingCard from "./FindingCard";
 
 type Status =
@@ -25,9 +26,10 @@ interface Props {
   sessionId: string;
   result: ReviewSummary | null;
   setResult: React.Dispatch<React.SetStateAction<ReviewSummary | null>>;
+  onBreakdown?: (b: ContextBreakdown | null) => void;
 }
 
-export default function FindingsTab({ sessionId, result, setResult }: Props) {
+export default function FindingsTab({ sessionId, result, setResult, onBreakdown }: Props) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [rawResponse, setRawResponse] = useState<string>("");
   const [persistError, setPersistError] = useState<string | null>(null);
@@ -79,6 +81,7 @@ export default function FindingsTab({ sessionId, result, setResult }: Props) {
       }
       setResult(parsed);
       setTruncated(truncationNotice(res.data?.report?.context_truncated));
+      onBreakdown?.(res.data?.report?.context_breakdown ?? null);
       const reviewTurn: TurnRef = {
         turnId: res.data?.turn_id ?? "",
         traceId: res.data?.trace_id ?? "",

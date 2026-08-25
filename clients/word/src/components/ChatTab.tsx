@@ -11,6 +11,7 @@ import { readBody } from "../word";
 import { buildSnapshot, recordEvent, requestFlag, type TurnRef, EMPTY_TURN } from "../feedback";
 import { resolveDocumentId } from "../docIdentity";
 import { truncationNotice } from "../contextNotice";
+import type { ContextBreakdown } from "../contextGauge";
 import EditProposalCard from "./EditProposalCard";
 import PreferenceSuggestionCard from "./PreferenceSuggestionCard";
 
@@ -49,9 +50,10 @@ interface Props {
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   onPreferenceAdded?: () => void;
+  onBreakdown?: (b: ContextBreakdown | null) => void;
 }
 
-export default function ChatTab({ sessionId, messages, setMessages, onPreferenceAdded }: Props) {
+export default function ChatTab({ sessionId, messages, setMessages, onPreferenceAdded, onBreakdown }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +90,7 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
       };
       setMemoryDegraded(Boolean(res.data?.memory_degraded));
       setTruncated(truncationNotice(res.data?.report?.context_truncated));
+      onBreakdown?.(res.data?.report?.context_breakdown ?? null);
       const rawAnswer =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "(no response)";
       // Strip fenced JSON blocks for display; prefer the backend's authoritative
