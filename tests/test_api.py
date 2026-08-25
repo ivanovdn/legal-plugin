@@ -598,6 +598,11 @@ def test_second_turn_early_return_does_not_report_prior_turn_truncation(monkeypa
 
     assert resp2b.status_code == 200
     report2 = resp2b.json()["data"]["report"]
+    # Same seam, same seeding: context_breakdown must be present in the payload and
+    # None on a turn that assembled no chat context. A KeyError here means
+    # output_formatter never emitted it; a non-None value means initial_state failed
+    # to seed it and a prior turn's numbers leaked through.
+    assert report2["context_breakdown"] is None
     assert report2["context_truncated"] is None, (
         "Turn 2 took llm_caller's early-return path, which never resets "
         "context_truncated itself — api/routes/query.py's initial_state must "

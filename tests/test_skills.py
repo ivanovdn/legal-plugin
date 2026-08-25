@@ -1428,6 +1428,21 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
         "input": 500, "output": 20, "total": 520, "unit": "TOKENS",
     }
 
+    # The breakdown must report what was SENT, not what was asked for. Its document
+    # line has to match the POST-truncation size, or the counter in the pane
+    # contradicts the truncation notice sitting directly beside it. Asserting the
+    # VALUE (not mere presence) is what catches a wiring change that passes the wrong
+    # number through — mutation-proved: forcing doc_chars=0 in _run_doc_chat left the
+    # entire suite green before this assertion existed.
+    breakdown = state["context_breakdown"]
+    assert breakdown is not None
+    parts = {p["key"]: p for p in breakdown["parts"]}
+    assert parts["document"]["chars"] == truncation["kept_chars"]
+    assert parts["document"]["chars"] < len(big_doc)
+    assert parts["playbook"]["chars"] == len("PLAYBOOK")
+    assert breakdown["total_chars"] == sum(p["chars"] for p in breakdown["parts"])
+    assert breakdown["budget_chars"] == 2000        # the CHAT_CONTEXT_MAX_CHARS set above
+
     total = sum(len(m["content"]) for m in captured["messages"])
     # Fixed grounding (system prompt + playbook + MSA note) is never cut — the
     # budget only controls how much DOCUMENT survives. Measure the grounding

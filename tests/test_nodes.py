@@ -1001,3 +1001,30 @@ def test_output_formatter_defaults_new_fields_to_none():
     result = output_formatter({"task_type": "research", "llm_response": "answer"})
     assert result["report"]["context_truncated"] is None
     assert result["report"]["tokens"] is None
+
+
+def test_output_formatter_carries_context_breakdown():
+    """The breakdown reaches the pane ONLY through the report.
+
+    Every other assertion about it reads state, so an output_formatter that forgets
+    to copy it would be invisible: the value would be correct everywhere a test looks
+    and absent everywhere the attorney looks. Mutation-proved — deleting that one line
+    from output_formatter.py left all 579 tests passing before this test existed.
+    """
+    breakdown = {
+        "budget_chars": 150000, "total_chars": 1000, "pct": 0,
+        "can_compact": False, "parts": [],
+    }
+    state = _make_state(
+        task_type="research", llm_response="answer", context_breakdown=breakdown,
+    )
+    out = output_formatter(state)
+    assert out["report"]["context_breakdown"] == breakdown
+
+
+def test_output_formatter_reports_no_breakdown_when_the_turn_had_none():
+    """A turn that never assembled a chat context must report None, not omit the key —
+    the pane distinguishes 'no measurement yet' from 'measured as empty'."""
+    state = _make_state(task_type="compliance", llm_response="answer")
+    out = output_formatter(state)
+    assert out["report"]["context_breakdown"] is None
