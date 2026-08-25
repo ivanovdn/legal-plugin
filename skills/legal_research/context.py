@@ -30,6 +30,7 @@ import re
 from config import get_settings
 from graph.state import LegalAgentState
 from memory.conversation_store import load_recent
+from memory.conversation_summary import latest_to_id, load_segments
 from memory.review_store import load_latest_review
 from skills.grounding import (
     attach_parent_msa,
@@ -84,8 +85,20 @@ def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
 
 def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
     """Durable per-(document, attorney) chat history for the doc-chat prompt.
+
+    Condensed segments first (oldest-first, as system messages), then the
+    verbatim rows after the highest condensed id. Splicing them into the history
+    slot puts the summaries BELOW every grounding system message and above the
+    user's question, so recalled discussion never outranks the live document,
+    playbook, MSA or prior review — which is what the block's own header claims.
+
+    The verbatim floor is latest_to_id (ALL segments), not the injected window:
+    a segment that has aged out of the prompt still condensed its rows, and
+    replaying them verbatim would undo that.
+
     Empty when disabled, keys missing, or on a store-read failure (which flags
-    memory_degraded) — memory must never break the chat turn."""
+    memory_degraded) — memory must never break the chat turn.
+    """
     settings = get_settings()
     if not settings.conversation_store_enabled:
         return []
@@ -93,14 +106,36 @@ def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
     attorney_id = state.get("user_id", "")
     if not document_id or not attorney_id:
         return []
+    boundary = 0
+    summaries: list[dict] = []
+    if settings.compaction_enabled:
+        try:
+            boundary = latest_to_id(document_id, attorney_id)
+            summaries = [
+                {"role": "system", "content": s["content"]}
+                for s in load_segments(
+                    document_id, attorney_id, settings.compaction_max_injected_segments
+                )
+            ]
+        except Exception as e:
+            # A summary-read failure must not cost the attorney their raw
+            # conversation: conversation_store is a different table and is very
+            # likely fine. Fall back to no floor and no summaries — which
+            # replays the rows verbatim, so nothing is lost and nothing is
+            # duplicated (the summaries that would have covered them did not
+            # load either).
+            logger.error("[legal_research] summary load failed: %s", e)
+            state["memory_degraded"] = True
+            boundary, summaries = 0, []
     try:
-        return load_recent(
-            document_id, attorney_id, settings.conversation_max_messages,
+        verbatim = load_recent(
+            document_id, attorney_id, settings.conversation_max_messages, boundary,
         )
     except Exception as e:
         logger.error("[legal_research] prior-conversation load failed: %s", e)
         state["memory_degraded"] = True
         return []
+    return [*summaries, *verbatim]
 
 
 _GROUNDING_TRIGGER_RE = re.compile(
