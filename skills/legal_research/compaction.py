@@ -104,6 +104,18 @@ _NON_TERMINAL_ABBREVIATIONS = frozenset({
     "Mr", "Mrs", "Ms", "Dr", "Prof", "Jr", "Sr", "No", "v", "vs", "al", "cf",
 })
 
+# Abbreviations that are never sentence-final WHEN A NUMBER FOLLOWS — cross-references and
+# dates. Kept separate from _NON_TERMINAL_ABBREVIATIONS, and applied only when the next
+# visible character is a digit, because most of these DO legitimately end a sentence in
+# front of a capital ("…in the relevant Sec. The cap is Green."). Without this, allowing a
+# digit to open a sentence turns every "cl. 4.2" and "1 Jan. 2026" into a false boundary,
+# which is how a quote comes to stop just before the condition it should have carried.
+_NON_TERMINAL_BEFORE_NUMBER = frozenset({
+    "Sec", "Art", "cl", "Cl", "para", "Para", "p", "pp", "s", "Ex", "Fig", "ch", "vol",
+    "no", "e.g", "i.e", "approx",
+    "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Sept", "Oct", "Nov", "Dec",
+})
+
 _SEGMENT_HEADER = (
     "--- EARLIER IN THIS CONVERSATION ({count} earlier messages, condensed) ---\n"
     "This is recalled discussion, not a current finding. The attached document,\n"
@@ -130,11 +142,18 @@ def _norm_shape(text: str) -> str:
 
 def _token_before(row_text: str, i: int) -> str:
     """The whitespace-delimited token ending just before index `i`, without leading
-    punctuation — "(Mr" must be recognised as "Mr", or a bracket defeats the guard."""
+    punctuation — "(Mr" must be recognised as "Mr", or a bracket defeats the guard.
+
+    Strips exactly _EDGE_CHARS (plus guillemets, which normalisation does not fold) —
+    the same set allowed to sit between sentences — so the two cannot drift apart:
+    a character that can sit BETWEEN sentences is a character that can sit IN FRONT
+    OF an abbreviation, and "**Mr. Jones**" must strip to "Mr" the same way "(Mr."
+    does.
+    """
     j = i - 1
     while j >= 0 and not row_text[j].isspace():
         j -= 1
-    return row_text[j + 1:i].lstrip('("\'-[')
+    return row_text[j + 1:i].lstrip(_EDGE_CHARS + "«»")
 
 
 def _sentence_end_indices(row_text: str) -> set[int]:
@@ -167,7 +186,10 @@ def _sentence_end_indices(row_text: str) -> set[int]:
             j += 1
         if j < len(row_text) and not (row_text[j].isupper() or row_text[j].isdigit()):
             continue
-        if _token_before(row_text, i) in _NON_TERMINAL_ABBREVIATIONS:
+        token = _token_before(row_text, i)
+        if token in _NON_TERMINAL_ABBREVIATIONS:
+            continue
+        if j < len(row_text) and row_text[j].isdigit() and token in _NON_TERMINAL_BEFORE_NUMBER:
             continue
         ends.add(i)
     return ends

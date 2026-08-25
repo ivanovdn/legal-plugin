@@ -430,3 +430,48 @@ def test_a_bracket_does_not_defeat_the_abbreviation_guard():
         '[#37 attorney] "Jones is out) but we will accept 12 months."', rows, 37, 37
     )
     assert "not a complete sentence" in err
+
+
+def test_a_cross_reference_abbreviation_before_a_number_is_not_a_boundary():
+    # Allowing a digit to open a sentence made every "cl. 4.2" and "Sec. 9" a false full
+    # stop, so a quote could stop just before the condition it should have carried. These
+    # are ordinary in contract chat — more common than the documented Ltd. residual.
+    for row_id, content, quote in (
+        (40, "We will accept 12 months from 1 Jan. 2026 only if the cap is raised.",
+             "We will accept 12 months from 1 Jan."),
+        (41, "We will accept the terms in cl. 4.2 only if the cap is raised.",
+             "We will accept the terms in cl."),
+        (42, "We will accept the wording in Sec. 9 only if signed by Friday.",
+             "We will accept the wording in Sec."),
+        (43, "We will accept the cap in Ex. 3 only if countersigned.",
+             "We will accept the cap in Ex."),
+    ):
+        rows = [{"id": row_id, "role": "user", "content": content}]
+        err = validate_segment(f'[#{row_id} attorney] "{quote}"', rows, row_id, row_id)
+        assert "not a complete sentence" in err, f"row {row_id} leaked"
+
+
+def test_a_digit_initial_sentence_after_an_ordinary_word_still_works():
+    # The other half of the trade: the whole point of allowing a digit to open a sentence
+    # is that "12 months is not acceptable." is ordinary. "back" is not a cross-reference
+    # abbreviation, so it stays a real boundary.
+    rows = [{
+        "id": 44, "role": "user",
+        "content": "We should push back. 12 months is not acceptable.",
+    }]
+    assert validate_segment(
+        '[#44 attorney] "12 months is not acceptable."', rows, 44, 44
+    ) == ""
+
+
+def test_markdown_emphasis_does_not_defeat_the_abbreviation_guard():
+    # _token_before's strip set must match _EDGE_CHARS: a character that can sit between
+    # two sentences can sit in front of an abbreviation too.
+    rows = [{
+        "id": 45, "role": "user",
+        "content": "Escalate to the partner **Mr. Jones is out** but we will accept 12 months.",
+    }]
+    err = validate_segment(
+        '[#45 attorney] "Jones is out** but we will accept 12 months."', rows, 45, 45
+    )
+    assert "not a complete sentence" in err
