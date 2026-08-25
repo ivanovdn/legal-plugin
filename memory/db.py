@@ -1,6 +1,6 @@
 # memory/db.py
 """Postgres connection pool for the relational stores (audit, review,
-conversation, feedback, interaction_event).
+conversation, conversation_summary, feedback, interaction_event).
 
 One app-wide psycopg pool built from config.database_url. Connections are
 autocommit — the stores issue single-statement writes/reads, so no explicit
@@ -60,6 +60,18 @@ _STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_conv ON conversation_store (document_id, attorney_id, id)",
+    """
+    CREATE TABLE IF NOT EXISTS conversation_summary (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        attorney_id TEXT NOT NULL,
+        from_id BIGINT NOT NULL,
+        to_id BIGINT NOT NULL,
+        content TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_conv_summary ON conversation_summary (document_id, attorney_id, id)",
     """
     CREATE TABLE IF NOT EXISTS feedback (
         id BIGSERIAL PRIMARY KEY,
@@ -137,8 +149,9 @@ def get_pool() -> ConnectionPool:
 
 
 def init_db() -> None:
-    """Create all five store tables + indexes if absent (audit_log, review_store,
-    conversation_store, feedback, interaction_event). Idempotent."""
+    """Create all six store tables + indexes if absent (audit_log, review_store,
+    conversation_store, conversation_summary, feedback, interaction_event).
+    Idempotent."""
     with get_pool().connection() as conn:
         for stmt in _STATEMENTS:
             conn.execute(stmt)

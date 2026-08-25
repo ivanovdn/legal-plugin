@@ -118,6 +118,24 @@ class Settings(BaseSettings):
     conversation_store_enabled: bool = True   # durable per-(document,attorney) chat store; False = Redis-only history
     conversation_max_messages: int = 20       # messages injected from the durable store (~10 turns); store retains all
 
+    # History compaction — condense earlier conversation into validated verbatim
+    # quotes so the DOCUMENT stops being what gets cut. History is compressible;
+    # the contract is not. See
+    # docs/superpowers/specs/2026-08-25-context-compaction-design.md.
+    compaction_enabled: bool = True
+    compaction_keep_recent_messages: int = 6   # kept verbatim (three turns); a guess, tunable
+    compaction_warn_pct: int = 90              # budget share at which the Condense action appears
+    # 24 quotes holds one segment to roughly 400-500 tokens, and 3 injected
+    # segments to ~1,500 tokens ~= 7,300 chars. Both bounds are load-bearing:
+    # on the grounded-MSA case history's ENTIRE allowance is 18,554 chars =
+    # 3,794 tokens, so unbounded segments would grow past the space history had
+    # in the first place and start pushing the document toward truncation —
+    # exactly the outcome compaction exists to prevent. Older segments stay in
+    # the store, auditable, simply outside the injection window (the same
+    # pattern conversation_max_messages already uses).
+    compaction_max_quotes: int = 24
+    compaction_max_injected_segments: int = 3
+
     # Attorney preference memory (USER.md) — stage 1 of the self-improving harness
     preferences_enabled: bool = True          # per-attorney USER.md; False = no store/injection
     preferences_dir: str = "data/attorneys"   # USER.md at <preferences_dir>/<attorney_id>/USER.md
