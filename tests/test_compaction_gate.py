@@ -52,9 +52,9 @@ def test_empty_body_is_rejected():
 
 def test_valid_segment_passes():
     body = (
-        '[#412 attorney] "use Suzy Quatro for all signature blocks"\n'
-        '[#413 assistant, said earlier] "the cap is Green under the playbook"\n'
-        '[#414 attorney] "accept 12 months"'
+        '[#412 attorney] "Please use Suzy Quatro for all signature blocks"\n'
+        '[#413 assistant, said earlier] "Done — the cap is Green under the playbook"\n'
+        '[#414 attorney] "We\'ll accept 12 months"'
     )
     assert validate_segment(body, ROWS, 412, 414) == ""
 
@@ -82,7 +82,7 @@ def test_misquoted_text_is_rejected():
 
 def test_one_bad_quote_invalidates_the_whole_segment():
     body = (
-        '[#412 attorney] "use Suzy Quatro for all signature blocks"\n'
+        '[#412 attorney] "Please use Suzy Quatro for all signature blocks"\n'
         '[#414 attorney] "we will accept 24 months"'
     )
     assert validate_segment(body, ROWS, 412, 414) != ""
@@ -91,7 +91,7 @@ def test_one_bad_quote_invalidates_the_whole_segment():
 def test_wrong_speaker_label_is_rejected():
     # Row 413 is the assistant. Attributing its words to the attorney is exactly
     # the "asserts something the attorney never said" risk, and free to catch.
-    body = '[#413 attorney] "the cap is Green"'
+    body = '[#413 attorney] "Done — the cap is Green under the playbook"'
     err = validate_segment(body, ROWS, 412, 414)
     assert "labelled attorney" in err
 
@@ -124,3 +124,36 @@ def test_render_segment_marks_assistant_lines_as_said_earlier():
     # A position the document has since outgrown must read as history, not as a
     # live legal judgment.
     assert '[#413 assistant, said earlier] "the cap is Green"' in render_segment(quotes, 2)
+
+
+def test_a_fragment_that_drops_a_leading_negation_is_rejected():
+    # "accept 12 months" is a genuine contiguous substring of the row, yet it asserts
+    # the OPPOSITE of what the attorney said. A fabrication assembled entirely from
+    # real characters is exactly what this gate must catch.
+    rows = [{"id": 7, "role": "user", "content": "We will not accept 12 months."}]
+    err = validate_segment('[#7 attorney] "accept 12 months"', rows, 7, 7)
+    assert "not a complete sentence or clause" in err
+
+
+def test_a_prefix_that_drops_a_trailing_condition_is_rejected():
+    # The mirror image: a genuine prefix that silently drops the condition the
+    # acceptance depended on.
+    rows = [{
+        "id": 8, "role": "user",
+        "content": "We will accept 12 months only if the cap is raised.",
+    }]
+    err = validate_segment('[#8 attorney] "We will accept 12 months"', rows, 8, 8)
+    assert "not a complete sentence or clause" in err
+
+
+def test_a_complete_clause_from_the_middle_of_a_message_is_accepted():
+    # Clause-aligned at both ends, so the trim cannot have inverted the meaning.
+    # This is what the gate must keep ALLOWING — a rule that only rejects is a rule
+    # that kills the feature.
+    rows = [{
+        "id": 9, "role": "assistant",
+        "content": "I checked the playbook. The cap is Green; escalation is not required.",
+    }]
+    assert validate_segment(
+        '[#9 assistant, said earlier] "The cap is Green"', rows, 9, 9
+    ) == ""

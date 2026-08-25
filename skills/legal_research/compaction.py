@@ -43,6 +43,19 @@ _NORMALISE = {
     " ": " ", "–": "-", "—": "-",
 }
 
+# A quote must be a COMPLETE sentence or clause of the row it cites — not just a
+# substring of it. Containment alone is not enough, and the gap is not theoretical:
+# "accept 12 months" is a genuine contiguous substring of "We will not accept 12
+# months.", and "We will accept 12 months" is a genuine prefix of "We will accept 12
+# months only if the cap is raised." Both pass a pure substring check while asserting
+# the OPPOSITE of what the row says — a fabrication assembled entirely from real
+# characters, which is exactly what this gate exists to make impossible. Requiring
+# BOTH ends of the quote to land on clause boundaries makes that class
+# unconstructible: a negation or a condition either falls inside the quote or belongs
+# to a different clause.
+_CLAUSE_END = ".!?;:"
+_CLAUSE_START_RE = re.compile(r"(?:^|[.!?;:])[\s\"']*")
+
 _SEGMENT_HEADER = (
     "--- EARLIER IN THIS CONVERSATION ({count} earlier messages, condensed) ---\n"
     "This is recalled discussion, not a current finding. The attached document,\n"
@@ -58,6 +71,26 @@ def _norm(text: str) -> str:
     for src, dst in _NORMALISE.items():
         text = text.replace(src, dst)
     return " ".join(text.split()).casefold()
+
+
+def _quotes_a_whole_clause(row_text: str, quote: str) -> bool:
+    """True when `quote` appears in `row_text` as a complete clause.
+
+    Both arguments must already be normalised, so that offsets line up. A match
+    counts only when it begins at a clause start (the row's start, or just past a
+    clause terminator) and ends at a clause terminator or the row's end. Every
+    occurrence is tried, so a phrase appearing twice is accepted if either position
+    is clause-aligned.
+    """
+    starts = {m.end() for m in _CLAUSE_START_RE.finditer(row_text)}
+    starts.add(0)
+    pos = row_text.find(quote)
+    while pos != -1:
+        end = pos + len(quote)
+        if pos in starts and (end == len(row_text) or row_text[end] in _CLAUSE_END):
+            return True
+        pos = row_text.find(quote, pos + 1)
+    return False
 
 
 def parse_quote_lines(body: str) -> tuple[list[dict], str]:
@@ -89,11 +122,12 @@ def parse_quote_lines(body: str) -> tuple[list[dict], str]:
 def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> str:
     """Check every quote against the row it cites. Returns "" when valid.
 
-    Three checks per quote, all deterministic and zero-LLM:
+    Four checks per quote, all deterministic and zero-LLM:
       1. the cited id falls inside the segment's range;
       2. that row is present in the condensed transcript;
-      3. the speaker label matches the row's role, and the quoted text actually
-         appears in that row after normalisation.
+      3. the speaker label matches the row's role;
+      4. the quoted text appears in that row after normalisation, AND does so as a
+         complete sentence or clause rather than a fragment chopped out of one.
 
     ANY failing quote invalidates the ENTIRE segment. A summary is legal recall;
     one invented line in it is worse than no summary at all, and there is no
@@ -118,8 +152,14 @@ def validate_segment(body: str, rows: list[dict], from_id: int, to_id: int) -> s
             )
         if not q["text"]:
             return f"quote for row #{rid} is empty"
-        if _norm(q["text"]) not in _norm(row["content"]):
+        nrow, nquote = _norm(row["content"]), _norm(q["text"])
+        if nquote not in nrow:
             return f"quote for row #{rid} does not appear in that message"
+        if not _quotes_a_whole_clause(nrow, nquote):
+            return (
+                f"quote for row #{rid} is not a complete sentence or clause of "
+                f"that message"
+            )
     return ""
 
 
