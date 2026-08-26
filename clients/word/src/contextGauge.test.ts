@@ -34,6 +34,7 @@ const MSA: ContextBreakdown = {
   pct: 100,
   warn_pct: 90,
   can_compact: true,
+  auto_compact: true,
   compressible_messages: 14,
   parts: [
     { key: "document", chars: 84859, tokens: 17353, pct: 56, compactable: false },
@@ -81,6 +82,25 @@ assert(
 assert(
   withLiveDocument({ ...MSA, compressible_messages: 0 }, 200000).can_compact === false,
   "no compressible history -> no action even when far over budget",
+);
+
+// auto_compact is NARROWED by a live document edit and never widened. A shrunk
+// document genuinely relieves the pressure, so auto should stop firing.
+assert(
+  withLiveDocument(MSA, 42000).auto_compact === false,
+  "a shrunk document relieves the pressure -> auto stops firing",
+);
+// The other direction is the one that matters. The backend folded compaction_auto
+// and the message floor into this field; the client can see neither, so a live
+// document edit must never turn auto ON. Showing a button on the client's own
+// estimate is one thing; firing an unrequested LLM call on it is another.
+assert(
+  withLiveDocument({ ...MSA, auto_compact: false }, 200000).auto_compact === false,
+  "a grown document never turns auto on — the client cannot see the flag or the floor",
+);
+assert(
+  withLiveDocument(MSA, 84859).auto_compact === true,
+  "an unchanged document leaves auto armed",
 );
 
 // The Condense control appears at warn_pct, so the target must be positive across the

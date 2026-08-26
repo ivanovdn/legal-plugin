@@ -26,6 +26,7 @@ export interface ContextBreakdown {
   pct: number;
   warn_pct: number;
   can_compact: boolean;
+  auto_compact: boolean;
   compressible_messages: number;
   parts: ContextPart[];
 }
@@ -80,6 +81,9 @@ export function isWarning(b: ContextBreakdown | null | undefined): boolean {
  * `compressible_messages` as backend truth, since the client cannot know what
  * is in the store. The backend reports 0 when compaction is disabled, so the
  * master switch survives this path.
+ *
+ * `auto_compact` is narrowed rather than recomputed: it can go false here but
+ * never true. See the comment on it below.
  */
 export function withLiveDocument(b: ContextBreakdown, docChars: number): ContextBreakdown {
   const parts = b.parts.map((p) =>
@@ -101,5 +105,14 @@ export function withLiveDocument(b: ContextBreakdown, docChars: number): Context
     total_tokens: Math.trunc(total / b.chars_per_token),
     pct,
     can_compact: b.compressible_messages > 0 && pct >= b.warn_pct,
+    // Narrowed here, NEVER widened — note this reads b.auto_compact rather than
+    // recomputing from scratch the way can_compact does. The backend already folded
+    // compaction_auto and compaction_auto_min_messages into that field and the
+    // client knows neither, so a live document edit may switch auto OFF (the
+    // pressure is genuinely relieved) but must never switch it ON. The asymmetry
+    // with can_compact is deliberate: making a button appear on the client's own
+    // estimate of a document the backend has not seen is cheap, and firing an
+    // unrequested LLM call on the same estimate is not.
+    auto_compact: b.auto_compact && pct >= b.warn_pct,
   };
 }
