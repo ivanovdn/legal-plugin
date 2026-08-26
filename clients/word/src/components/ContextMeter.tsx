@@ -19,9 +19,22 @@ interface Props {
 }
 
 interface Outcome {
-  /** The RAW breakdown this describes — identity comparison, not a copy. */
+  /** The breakdown the run was MEASURED against. Scopes the reclaim adjustment
+   *  and the button's suppression: a newer breakdown is fresh backend truth and
+   *  neither should still apply to it. */
   forBreakdown: ContextBreakdown | null;
-  text: string;
+  /** The breakdown that was current when the run FINISHED. Scopes DISPLAY, and
+   *  is deliberately a different thing. Keying display off forBreakdown hides a
+   *  run that completed after a newer breakdown had already landed — the attorney
+   *  never sees work they did not ask for. Not scoping it at all leaves the notice
+   *  on screen for the rest of the session, which is what shipped and was wrong.
+   *  Tagging the turn the result actually ARRIVED on gives it exactly one turn. */
+  shownFor: ContextBreakdown | null;
+  /** One line. Always shown while visible. */
+  headline: string;
+  /** Quality detail — lives in the expanded view, not the collapsed header.
+   *  Empty when there is nothing to report. */
+  caveat: string;
   /** Characters taken out of history. 0 for a refusal. */
   reclaimed: number;
 }
@@ -69,11 +82,16 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   const [disarmed, setDisarmed] = useState(false);
   // The raw per-turn breakdown this component has already auto-fired for.
   const firedFor = useRef<ContextBreakdown | null>(null);
+  // Mirrors the current breakdown so a run finishing LATER can tag its result
+  // with the turn it actually arrived on rather than the one it started against.
+  const latestBreakdown = useRef<ContextBreakdown | null>(breakdown);
 
   // Scoped to THIS turn: a new breakdown means the backend has re-measured, so
   // our own adjustment and the button's suppression both stop applying. The note
   // itself is deliberately not scoped — see the Outcome comment above.
   const outcomeIsForThisTurn = outcome !== null && outcome.forBreakdown === breakdown;
+  // Display scope — see the Outcome type. One turn, then gone.
+  const outcomeVisible = outcome !== null && outcome.shownFor === breakdown;
 
   let shown =
     breakdown && liveDocChars !== null && !docTruncated
@@ -100,33 +118,50 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         // The drop count is stated, never swallowed. Each dropped line failed to
         // match the message it cited, so leaving it out is the safe outcome — but
         // the attorney should know the summary is thinner than the model intended.
+        // Detail, not headline: a drop count is a quality signal about the summary,
+        // not something an attorney must act on. It reads as alarming inline and it
+        // is routine — a dense markdown table offers almost no quotable sentence
+        // boundaries, so a table-heavy answer drops most of what the model tried.
         const skipped =
           dropped > 0
-            ? ` ${dropped} quote${dropped === 1 ? "" : "s"} couldn't be checked against the message ` +
-              `${dropped === 1 ? "it" : "they"} came from and ${dropped === 1 ? "was" : "were"} left out.`
+            ? `${dropped} quote${dropped === 1 ? "" : "s"} couldn't be matched to the message ` +
+              `${dropped === 1 ? "it" : "they"} came from and ${dropped === 1 ? "was" : "were"} ` +
+              `left out. Nothing was deleted — the original messages are still stored.`
             : "";
         // When the target was missed, say so and name the reason: the attorney is
         // about to see the document truncated again and should know compaction was
         // not the thing that could have prevented it.
         const reclaimed = res.data.reclaimed ?? 0;
         const requested = res.data.requested ?? 0;
-        const short =
-          requested > 0 && reclaimed < requested
-            ? ` That is short of the ${requested.toLocaleString("en-US")} needed to clear ` +
-              `the warning — the rest of the context is document, playbook and MSA, ` +
-              `which are never condensed.`
-            : "";
-        const freed = `freeing ${reclaimed.toLocaleString("en-US")} characters of history`;
+        // This one DOES belong in the headline: it only appears when the document is
+        // about to be truncated anyway, and the attorney should know compaction was
+        // not the thing that could have prevented it.
+        const missedTarget = requested > 0 && reclaimed < requested;
+        const short = missedTarget
+          ? ` Short of the ${requested.toLocaleString("en-US")} needed to clear the warning.`
+          : "";
+        const why = missedTarget
+          ? " The rest of the context is document, playbook and MSA, which are never condensed."
+          : "";
+        const freed = reclaimed.toLocaleString("en-US");
         const lead = automatic
-          ? `Condensed automatically — ${n} earlier messages, ${freed}.`
-          : `${n} earlier messages condensed, ${freed}.`;
+          ? `Condensed automatically — ${n} messages, ${freed} characters freed.`
+          : `Condensed ${n} messages, ${freed} characters freed.`;
         // No "the counter updates on your next message" any more: it updates now,
         // from the reclaimed figure carried on the outcome.
-        setOutcome({ forBreakdown: breakdown, text: `${lead}${skipped}${short}`, reclaimed });
+        setOutcome({
+          forBreakdown: breakdown,
+          shownFor: latestBreakdown.current,
+          headline: `${lead}${short}`,
+          caveat: `${skipped}${why}`.trim(),
+          reclaimed,
+        });
       } else {
         setOutcome({
           forBreakdown: breakdown,
-          text: res.data?.reason || "Nothing earlier to condense yet.",
+          shownFor: latestBreakdown.current,
+          headline: res.data?.reason || "Nothing earlier to condense yet.",
+          caveat: "",
           reclaimed: 0,
         });
         // A refusal is not a failure — it renders its `reason` here, the same
@@ -167,6 +202,13 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
       setBusy(false);
     }
   };
+
+  // Kept in step with the prop so a run that finishes on a LATER turn tags its
+  // result with the turn it arrived on. Written in an effect rather than during
+  // render: a ref mutated mid-render is not a value React can reason about.
+  useEffect(() => {
+    latestBreakdown.current = breakdown;
+  }, [breakdown]);
 
   // Fires at most once per turn: keyed on the RAW breakdown, which App.tsx replaces
   // exactly once per turn, and additionally guarded by a ref so a re-render caused
@@ -225,6 +267,9 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
                 ))}
             </tbody>
           </table>
+          {outcome !== null && outcome.caveat !== "" && (
+            <p className="context-meter-note">Last condense: {outcome.caveat}</p>
+          )}
         </>
       )}
       {busy && busyAuto && (
@@ -243,9 +288,9 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
           </span>
         </div>
       )}
-      {outcome && (
+      {outcomeVisible && outcome && (
         <p className="context-meter-outcome" role="status">
-          {outcome.text}
+          {outcome.headline}
         </p>
       )}
       {/* busyAuto is not reset when a run ends, so it still names which kind of
