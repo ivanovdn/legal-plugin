@@ -61,12 +61,15 @@ sibling field computed the same way:
 
 The client reads the field and obeys it. It holds no policy of its own.
 
-Two reasons this is not merely tidier. First, the Word add-in is sideloaded by
-hand, so a client-side flag would mean rebuilding and re-sideloading on every
-machine to change the behaviour; a backend field means the VM test is a
-`start.sh` restart. Second, `compressible_messages` is backend truth the client
-cannot derive — it is a store query — so the threshold has to be evaluated
-where that number is known.
+Two reasons this is not merely tidier. First, the pane is served centrally out
+of the caddy image (`docker-compose.remote.yml`), so a client-side flag would
+mean an image rebuild and redeploy to change the behaviour, where a backend
+field makes it a `start.sh` restart. (An earlier draft of this section said a
+client flag would cost a rebuild *per machine* — that was wrong, and predates
+the pane moving into the image; testers hand-sideload the manifest, but it
+points at one central bundle.) Second, `compressible_messages` is backend truth
+the client cannot derive — it is a store query — so the threshold has to be
+evaluated where that number is known.
 
 ## Config
 
@@ -116,8 +119,15 @@ what we do *without being asked*.
 compute `reclaimTarget` from the breakdown it was shown, call
 `compactConversation`, render the outcome. Automatic firing reuses it exactly:
 
-1. `condense()` becomes `runCompaction(auto: boolean)`; the body is unchanged
-   apart from how the outcome is worded.
+1. `condense()` becomes `runCompaction(auto: boolean)`. The body is otherwise
+   unchanged apart from how the outcome is worded, with one exception found in
+   review: it no longer clears `note` at its head. Doing so destroyed a
+   completed run's notice within one frame whenever a newer breakdown was
+   already pending — the `busy → false` commit that carries the finished note
+   also re-runs the effect, and the next run's `setNote(null)` fired
+   synchronously. A note is now replaced only when a new one arrives, and
+   cleared on the error path so a stale success notice cannot sit above a
+   fresh failure.
 2. An effect fires `runCompaction(true)` when the displayed breakdown's
    `auto_compact` is true, no run is in flight, and auto has not been disarmed.
 3. The manual button remains, unchanged, gated on `can_compact` as today.

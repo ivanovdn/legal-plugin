@@ -110,10 +110,18 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         // compressible, so "nothing earlier to condense yet" can't be the
         // reason here — the only refusal automatic firing can reach already IS
         // the net-benefit one. The attorney keeps the manual button either way.
+        // This holds only because the effect below now records `firedFor`
+        // BEFORE its `busy` check — a breakdown superseded by an in-flight run
+        // is skipped, not deferred into a late fire against an already-advanced
+        // boundary that would otherwise reach this branch for real.
         if (automatic) setDisarmed(true);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // Cleared here, not at the function's head (that would wipe a
+      // just-finished run's success note within one frame) — a fresh failure
+      // must not render beneath a stale "Condensed…" note either.
+      setNote(null);
       // This try also wraps resolveDocumentId(), not just compactConversation —
       // an Office.js settings failure lands here too, and correctly disarms
       // auto: it is as much a dead end for an automatic run as a failed
@@ -138,9 +146,14 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   // what keeps re-entrancy safe.
   useEffect(() => {
     if (!breakdown || !shown?.auto_compact) return;
-    if (busy || disarmed) return;
     if (firedFor.current === breakdown) return;
+    // Recorded BEFORE the busy/disarmed check below: a breakdown that arrives
+    // while a run is already in flight must be marked seen now, so once `busy`
+    // clears the next render treats it as superseded and SKIPS it — instead of
+    // finding an unrecorded ref and firing it late against a boundary that has
+    // already moved (see the refusal-branch comment in runCompaction above).
     firedFor.current = breakdown;
+    if (busy || disarmed) return;
     void runCompaction(true);
   }, [breakdown, shown?.auto_compact, busy, disarmed]);
 
