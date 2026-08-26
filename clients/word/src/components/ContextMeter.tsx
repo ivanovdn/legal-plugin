@@ -63,7 +63,6 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
     setBusy(true);
     setBusyAuto(automatic);
     setError(null);
-    setNote(null);
     try {
       const documentId = await resolveDocumentId();
       // How much has to come back for the counter to fall below the warn line. The
@@ -98,12 +97,31 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         setNote(`${lead}${skipped}${short} The counter updates on your next message.`);
       } else {
         setNote(res.data?.reason || "Nothing earlier to condense yet.");
+        // A refusal is not a failure — it renders its `reason` here, the same
+        // quiet note the manual path shows. But an AUTOMATIC refusal disarms:
+        // compact_conversation generates the segment before it checks net
+        // benefit (compaction.py:545 vs :600), so every refusal already cost a
+        // full 10-30s call. Nothing on the backend remembers a turn was
+        // refused, and auto_compact is recomputed from pressure and message
+        // count alone, so a stable refusal would otherwise fire again, unasked,
+        // on every subsequent turn for zero benefit. Disarm on this FIRST
+        // refusal, not a second one: while auto_compact is true,
+        // compaction_auto_min_messages guarantees there's always something
+        // compressible, so "nothing earlier to condense yet" can't be the
+        // reason here — the only refusal automatic firing can reach already IS
+        // the net-benefit one. The attorney keeps the manual button either way.
+        if (automatic) setDisarmed(true);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      // compactConversation throws on any non-2xx, and api/routes/compact.py raises
-      // 500 for every `error` result — so catching here covers the whole failure
-      // surface. A `reason` result is NOT a failure and never reaches this branch.
+      // This try also wraps resolveDocumentId(), not just compactConversation —
+      // an Office.js settings failure lands here too, and correctly disarms
+      // auto: it is as much a dead end for an automatic run as a failed
+      // compaction call. compactConversation itself throws on any non-2xx, and
+      // api/routes/compact.py raises 500 for every `error` result, so together
+      // this covers the whole failure surface. A `reason` result is NOT a
+      // failure and never reaches this branch — see the disarm call in the
+      // else branch above for that case.
       if (automatic) setDisarmed(true);
     } finally {
       setBusy(false);
@@ -113,7 +131,11 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   // Fires at most once per turn: keyed on the RAW breakdown, which App.tsx replaces
   // exactly once per turn, and additionally guarded by a ref so a re-render caused
   // by our own setState cannot re-enter. Must sit above the early return below —
-  // hooks cannot run conditionally.
+  // hooks cannot run conditionally. runCompaction is deliberately absent from the
+  // dependency list below: it is redefined every render, so satisfying
+  // exhaustive-deps by adding it would make this effect body run on every render
+  // instead of once per turn — the ref guard above, not the dependency list, is
+  // what keeps re-entrancy safe.
   useEffect(() => {
     if (!breakdown || !shown?.auto_compact) return;
     if (busy || disarmed) return;
@@ -177,7 +199,15 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         </div>
       )}
       {note && <p className="context-meter-note" role="status">{note}</p>}
-      {error && <p className="status error">Couldn't condense: {error}</p>}
+      {/* busyAuto is not reset when a run ends, so it still names which kind of
+          run produced this error — an automatic failure owes the same "you
+          didn't ask for this" disclosure a successful automatic run gets. */}
+      {error && (
+        <p className="status error">
+          {busyAuto ? "Couldn't condense automatically: " : "Couldn't condense: "}
+          {error}
+        </p>
+      )}
     </div>
   );
 }
