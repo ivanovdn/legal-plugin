@@ -960,6 +960,19 @@ button.secondary:disabled {
    needs real padding or it collides with the right-aligned percentage and reads
    as "24%never condensed". Found in a Word sideload — no assertion catches it. */
 .context-meter-table td.context-meter-note { padding-left: 10px; }
+/* The result of a run the attorney may not have asked for.
+   Deliberately NOT .context-meter-note: that class dresses the passive blurb
+   sitting beside the Condense button, and rendering "this already happened" in
+   the same muted grey put the RESULT underneath a CALL TO ACTION for the very
+   same thing — you were invited to condense, told what condensing does, and
+   only then told it had already run by itself. Found in a Word sideload; no
+   assertion in this repo can see visual hierarchy. */
+.context-meter-outcome {
+  margin: 6px 0 0;
+  padding: 3px 0 3px 8px;
+  border-left: 2px solid currentColor;
+}
+
 .context-meter-actions {
   display: flex;
   flex-direction: column;

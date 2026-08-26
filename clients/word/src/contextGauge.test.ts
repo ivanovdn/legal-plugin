@@ -13,6 +13,7 @@ import {
   gaugeLine,
   isWarning,
   withLiveDocument,
+  withReclaimedHistory,
   type ContextBreakdown,
 } from "./contextGauge";
 
@@ -101,6 +102,45 @@ assert(
 assert(
   withLiveDocument(MSA, 84859).auto_compact === true,
   "an unchanged document leaves auto armed",
+);
+
+// withReclaimedHistory — the counter's answer to "I just watched that happen and the
+// number did not move". Every figure below is a MEASUREMENT the backend already
+// returned, not a forecast: only the compactable line moves, and it moves by exactly
+// the chars compaction reported freeing.
+const reclaimed = withReclaimedHistory(MSA, 5000);
+assert(
+  reclaimed.parts.find((p) => p.compactable)?.chars === 18554 - 5000,
+  "the history line drops by exactly what was reclaimed",
+);
+assert(
+  reclaimed.total_chars === 145000 && reclaimed.pct === 96,
+  "the total and the percentage follow the history line down",
+);
+assert(
+  reclaimed.parts.filter((p) => !p.compactable).every((p) => {
+    const before = MSA.parts.find((q) => q.key === p.key);
+    return before !== undefined && before.chars === p.chars;
+  }),
+  "document, playbook, MSA and review are untouched — compaction cannot reach them",
+);
+// The pool is empty by construction: compaction takes every row past the boundary
+// except the keep-recent floor. Both flags follow, and both erring OFF is the safe
+// direction — it can only withhold an offer, never fire something unasked.
+assert(
+  reclaimed.compressible_messages === 0 &&
+    reclaimed.can_compact === false &&
+    reclaimed.auto_compact === false,
+  "condensed rows stop being compressible, so neither control stays armed",
+);
+assert(
+  withReclaimedHistory(MSA, 0) === MSA,
+  "a refusal reclaims nothing and returns the breakdown untouched",
+);
+assert(
+  withReclaimedHistory(MSA, 999_999).parts.find((p) => p.compactable)?.chars === 0 &&
+    withReclaimedHistory(MSA, 999_999).total_chars === 150000 - 18554,
+  "over-reclaiming floors history at zero rather than going negative",
 );
 
 // The Condense control appears at warn_pct, so the target must be positive across the

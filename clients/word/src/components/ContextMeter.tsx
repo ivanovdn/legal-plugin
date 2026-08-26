@@ -8,6 +8,7 @@ import {
   isWarning,
   reclaimTarget,
   withLiveDocument,
+  withReclaimedHistory,
   type ContextBreakdown,
 } from "../contextGauge";
 
@@ -15,6 +16,14 @@ interface Props {
   breakdown: ContextBreakdown | null;
   liveDocChars: number | null;
   docTruncated: boolean;
+}
+
+interface Outcome {
+  /** The RAW breakdown this describes — identity comparison, not a copy. */
+  forBreakdown: ContextBreakdown | null;
+  text: string;
+  /** Characters taken out of history. 0 for a refusal. */
+  reclaimed: number;
 }
 
 /**
@@ -40,7 +49,15 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyAuto, setBusyAuto] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  // The result of the last run, tagged with the breakdown it describes.
+  //
+  // A bare string could not do this job. Three things have to expire, and they
+  // expire at DIFFERENT moments: the text must outlive its own turn (a run
+  // finishing while a newer breakdown is already pending must still be readable —
+  // the attorney may not have asked for it), while the reclaim adjustment and the
+  // button's suppression must NOT, because a newer breakdown is the backend's own
+  // fresh measurement and we do not second-guess it.
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Set when an AUTOMATIC run fails, stopping auto for the life of the pane.
   // The manual path can afford to surface an error on every attempt because a
@@ -53,10 +70,18 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   // The raw per-turn breakdown this component has already auto-fired for.
   const firedFor = useRef<ContextBreakdown | null>(null);
 
-  const shown =
+  // Scoped to THIS turn: a new breakdown means the backend has re-measured, so
+  // our own adjustment and the button's suppression both stop applying. The note
+  // itself is deliberately not scoped — see the Outcome comment above.
+  const outcomeIsForThisTurn = outcome !== null && outcome.forBreakdown === breakdown;
+
+  let shown =
     breakdown && liveDocChars !== null && !docTruncated
       ? withLiveDocument(breakdown, liveDocChars)
       : breakdown;
+  if (shown && outcomeIsForThisTurn && outcome.reclaimed > 0) {
+    shown = withReclaimedHistory(shown, outcome.reclaimed);
+  }
 
   const runCompaction = async (automatic: boolean) => {
     if (!shown) return;
@@ -87,16 +112,23 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         const requested = res.data.requested ?? 0;
         const short =
           requested > 0 && reclaimed < requested
-            ? ` Freed ${reclaimed.toLocaleString("en-US")} of the ` +
-              `${requested.toLocaleString("en-US")} characters needed — the rest of the ` +
-              `context is document, playbook and MSA, which are never condensed.`
+            ? ` That is short of the ${requested.toLocaleString("en-US")} needed to clear ` +
+              `the warning — the rest of the context is document, playbook and MSA, ` +
+              `which are never condensed.`
             : "";
+        const freed = `freeing ${reclaimed.toLocaleString("en-US")} characters of history`;
         const lead = automatic
-          ? `Condensed automatically — ${n} earlier messages.`
-          : `${n} earlier messages condensed.`;
-        setNote(`${lead}${skipped}${short} The counter updates on your next message.`);
+          ? `Condensed automatically — ${n} earlier messages, ${freed}.`
+          : `${n} earlier messages condensed, ${freed}.`;
+        // No "the counter updates on your next message" any more: it updates now,
+        // from the reclaimed figure carried on the outcome.
+        setOutcome({ forBreakdown: breakdown, text: `${lead}${skipped}${short}`, reclaimed });
       } else {
-        setNote(res.data?.reason || "Nothing earlier to condense yet.");
+        setOutcome({
+          forBreakdown: breakdown,
+          text: res.data?.reason || "Nothing earlier to condense yet.",
+          reclaimed: 0,
+        });
         // A refusal is not a failure — it renders its `reason` here, the same
         // quiet note the manual path shows. But an AUTOMATIC refusal disarms:
         // compact_conversation generates the segment before it checks net
@@ -121,7 +153,7 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
       // Cleared here, not at the function's head (that would wipe a
       // just-finished run's success note within one frame) — a fresh failure
       // must not render beneath a stale "Condensed…" note either.
-      setNote(null);
+      setOutcome(null);
       // This try also wraps resolveDocumentId(), not just compactConversation —
       // an Office.js settings failure lands here too, and correctly disarms
       // auto: it is as much a dead end for an automatic run as a failed
@@ -200,7 +232,7 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
           Condensing earlier turns automatically… (10–30 s)
         </p>
       )}
-      {shown.can_compact && !(busy && busyAuto) && (
+      {shown.can_compact && !(busy && busyAuto) && !outcomeIsForThisTurn && (
         <div className="context-meter-actions">
           <button className="secondary" onClick={() => runCompaction(false)} disabled={busy}>
             {busy ? "Condensing… (10–30 s)" : "Condense earlier turns"}
@@ -211,7 +243,11 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
           </span>
         </div>
       )}
-      {note && <p className="context-meter-note" role="status">{note}</p>}
+      {outcome && (
+        <p className="context-meter-outcome" role="status">
+          {outcome.text}
+        </p>
+      )}
       {/* busyAuto is not reset when a run ends, so it still names which kind of
           run produced this error — an automatic failure owes the same "you
           didn't ask for this" disclosure a successful automatic run gets. */}

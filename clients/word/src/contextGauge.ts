@@ -69,6 +69,60 @@ export function reclaimTarget(b: ContextBreakdown): number {
   return Math.max(0, b.total_chars - warnLine);
 }
 
+/**
+ * Recompute the counter for a compaction that just ran against THIS breakdown.
+ *
+ * The gauge's honesty rule is "measured last turn, never predicted" — the pane
+ * cannot know what the NEXT turn's grounding will cost, so it never forecasts.
+ * Compaction is not an exception to that rule so much as a case where the
+ * measurement already exists: the backend returns exactly how many characters
+ * came out of history, history is the only part compaction can touch, and the
+ * compressible pool is empty afterwards by construction (compact_conversation
+ * condenses every row past the boundary except the keep-recent floor). Three
+ * measurements, no forecast.
+ *
+ * Without it the pane told the attorney "the counter updates on your next
+ * message" — true, and useless. They had just watched something happen on their
+ * behalf and the number did not move, which reads as nothing having happened.
+ *
+ * Same shape as withLiveDocument: recompute only the one line that genuinely
+ * changed, leave every other part exactly as the backend measured it.
+ */
+export function withReclaimedHistory(
+  b: ContextBreakdown,
+  reclaimedChars: number,
+): ContextBreakdown {
+  // A refusal reclaims nothing, and the identity return keeps the caller from
+  // having to special-case it.
+  if (reclaimedChars <= 0) return b;
+  const parts = b.parts.map((p) => {
+    if (!p.compactable) return p;
+    const chars = Math.max(0, p.chars - reclaimedChars);
+    return {
+      ...p,
+      chars,
+      tokens: Math.trunc(chars / b.chars_per_token),
+      pct: b.budget_chars ? Math.trunc((chars * 100) / b.budget_chars) : 0,
+    };
+  });
+  const total = parts.reduce((sum, p) => sum + p.chars, 0);
+  return {
+    ...b,
+    parts,
+    total_chars: total,
+    total_tokens: Math.trunc(total / b.chars_per_token),
+    pct: b.budget_chars ? Math.trunc((total * 100) / b.budget_chars) : 0,
+    // Condensed rows stop being compressible: compaction takes every row past
+    // the boundary except the keep-recent floor, so the pool is empty until the
+    // next turns refill it. can_compact and auto_compact both follow from that,
+    // and both erring OFF is the safe direction — it can only withhold an offer,
+    // never fire something nobody asked for.
+    compressible_messages: 0,
+    can_compact: false,
+    auto_compact: false,
+  };
+}
+
 export function isWarning(b: ContextBreakdown | null | undefined): boolean {
   return Boolean(b && b.pct >= b.warn_pct);
 }
