@@ -124,6 +124,16 @@ New config, all `@lru_cache`'d in `get_settings` (⇒ a `start.sh` restart):
 | `compaction_max_quotes` | `24` | cap per segment (~400–500 tokens) |
 | `compaction_max_injected_segments` | `3` | segments injected; the store retains all |
 
+> **Amended during implementation (2026-08-25).** Two of these defaults did not survive
+> contact with real data, and the reasons are worth keeping. `compaction_keep_recent_messages`
+> was not merely mistuned at `6` — it was the wrong *unit*: a message COUNT guarding a
+> character budget, so a conversation holding exactly six messages had nothing condensable
+> while the document was being truncated. It is now a **floor of `2`**, with everything older
+> eligible. `compaction_max_quotes` became a **ceiling** rather than a size: the real cap is
+> derived from the characters the caller needs freed, then trimmed oldest-quote-first to that
+> target, with a new `compaction_min_quotes = 4` as the point below which a summary is not worth
+> having. A third rule was superseded outright — see "The validation gate" below.
+
 ### Bounding accumulation
 
 Segments must not be allowed to grow without bound, and the arithmetic is
@@ -196,6 +206,21 @@ A deterministic, zero-LLM guard on an LLM's output. It is only possible because
 the format is extractive — and it is the reason the extractive choice is not
 merely a preference. Narrative summaries would leave fabrication undetectable
 by construction.
+
+> **Amended during implementation (2026-08-25).** Two rules in the quoted block above
+> were superseded. **"Any failing quote invalidates the entire segment"** was written
+> against *invention* and predates the complete-sentence check that landed later; a
+> verbatim quote trimmed mid-sentence is a formatting failure, not a fabrication.
+> Measured against the production model on real rows, per-quote failure runs ~9%, at
+> which all-or-nothing rejects roughly 90% of segments — compaction would effectively
+> never run. A failing quote is now **dropped** and the count reported, with rejection
+> reserved for a segment in which *nothing* verifies. The per-line guarantee is
+> untouched: `_quote_failure` is shared by the strict validator and the partitioner so
+> the two cannot diverge, and nothing unverified reaches the prompt. Separately,
+> **"whitespace collapse"** turned out to be actively wrong: collapsing newlines welds a
+> markdown reply into one enormous "sentence" in which every bullet is unquotable, which
+> alone rejected every segment generated from a real conversation. Line breaks are
+> preserved; a break may begin a sentence but never end one.
 
 ## Storage
 
