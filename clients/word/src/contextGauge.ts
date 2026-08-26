@@ -54,6 +54,20 @@ export function gaugeLine(b: ContextBreakdown | null | undefined): string | null
   return `context  ${formatTokens(b.total_tokens)} / ${formatTokens(b.budget_tokens)} tokens${share}`;
 }
 
+/**
+ * How many characters must come back for the counter to fall below the WARN line.
+ *
+ * Deliberately measured against the warn line, not the budget. The Condense control
+ * appears at warn_pct, but a target of (total - budget) is zero anywhere below 100% —
+ * so through the whole amber band compaction ran with no target at all, skipped its cap
+ * derivation, and produced a segment LARGER than the history it replaced. Observed
+ * live: 1,293 chars became 1,825.
+ */
+export function reclaimTarget(b: ContextBreakdown): number {
+  const warnLine = Math.floor((b.budget_chars * b.warn_pct) / 100);
+  return Math.max(0, b.total_chars - warnLine);
+}
+
 export function isWarning(b: ContextBreakdown | null | undefined): boolean {
   return Boolean(b && b.pct >= b.warn_pct);
 }

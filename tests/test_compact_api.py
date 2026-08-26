@@ -10,19 +10,33 @@ from memory.conversation_summary import load_segments
 client = TestClient(app)
 
 
+def _seed_turns(document_id, attorney_id, turns):
+    """Messages of a realistic size. Tiny ones make compaction correctly DECLINE — a
+    segment's header and per-quote labels cost more than a "q0"/"a0" exchange does —
+    so any test that needs compaction to proceed has to seed something real."""
+    for i in range(turns):
+        append_turn(
+            document_id, attorney_id,
+            f"Question {i} about how the indemnity clause compares with the governing "
+            f"MSA. Please check the liability cap as well.",
+            f"Answer {i} is that the SOW caps liability where the MSA does not. The "
+            f"playbook treats that deviation as Amber and worth raising before signature.",
+        )
+
+
 def _quotes_for(rows, ids):
     by_id = {r["id"]: r for r in rows}
     out = []
     for rid in ids:
         row = by_id[rid]
         speaker = "attorney" if row["role"] == "user" else "assistant, said earlier"
-        out.append(f'[#{rid} {speaker}] "{row["content"]}"')
+        head, sep, _rest = row["content"].partition(". ")
+        out.append(f'[#{rid} {speaker}] "{head + "." if sep else row["content"]}"')
     return "\n".join(out)
 
 
 def test_compacts_for_the_header_identity_not_a_body_field(monkeypatch):
-    for i in range(5):
-        append_turn("doc-x", "atty-x", f"q{i}", f"a{i}")
+    _seed_turns("doc-x", "atty-x", 5)
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
         lambda r, n, correction="": _quotes_for(r, [r[0]["id"]]),
@@ -55,8 +69,7 @@ def test_nothing_to_condense_is_a_quiet_200(monkeypatch):
 
 
 def test_a_rejected_summary_is_a_500_and_writes_nothing(monkeypatch):
-    for i in range(5):
-        append_turn("doc-z", "atty-z", f"q{i}", f"a{i}")
+    _seed_turns("doc-z", "atty-z", 5)
     monkeypatch.setattr(
         compaction, "_generate_quote_lines",
         lambda r, n, correction="": '[#999 attorney] "never said"',
@@ -81,8 +94,7 @@ def test_a_storage_failure_is_also_a_500(monkeypatch):
     aimed at the source module would silently no-op — the failure mode this package has
     shipped before.
     """
-    for i in range(5):
-        append_turn("doc-w", "atty-w", f"q{i}", f"a{i}")
+    _seed_turns("doc-w", "atty-w", 5)
     rows = load_rows_after("doc-w", "atty-w", 0, 100)
 
     def boom(*_a, **_k):
@@ -131,8 +143,7 @@ def test_disabled_check_happens_before_any_compaction_work(monkeypatch):
     """
     import api.routes.compact as route
 
-    for i in range(10):
-        append_turn("doc-order", "atty-order", f"q{i}", f"a{i}")
+    _seed_turns("doc-order", "atty-order", 10)
     monkeypatch.setattr(
         route, "get_settings",
         lambda: type("S", (), {"compaction_enabled": False})(),

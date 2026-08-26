@@ -591,6 +591,21 @@ def compact_conversation(
         ):
             quotes = quotes[1:]
             content = render_segment(quotes, message_count=len(rows))
+        # A segment is not free: a 261-char header plus ~20 chars of "[#id speaker]"
+        # per line means that for a SHORT history the summary is structurally larger
+        # than the messages it replaces. Observed live — 1,293 chars of history
+        # condensed into an 1,825-char segment, making the very thing compaction exists
+        # to shrink 532 chars bigger. Declining is not a failure; there is simply
+        # nothing here worth doing, and saying so beats quietly making it worse.
+        if len(content) >= raw_chars:
+            logger.info(
+                "[compaction] segment (%d chars) is no smaller than the %d it would "
+                "replace — declining", len(content), raw_chars,
+            )
+            return {**empty, "reason": (
+                "condensing these messages would not save space — the summary's own "
+                "header and per-quote labels cost more than the messages do"
+            )}
         try:
             segment_id = append_segment(document_id, attorney_id, from_id, to_id, content)
         except Exception as e:

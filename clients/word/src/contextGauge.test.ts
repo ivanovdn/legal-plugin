@@ -8,6 +8,7 @@ declare const process: { exit(code?: number): never };
 
 import {
   PART_LABELS,
+  reclaimTarget,
   formatTokens,
   gaugeLine,
   isWarning,
@@ -80,6 +81,19 @@ assert(
 assert(
   withLiveDocument({ ...MSA, compressible_messages: 0 }, 200000).can_compact === false,
   "no compressible history -> no action even when far over budget",
+);
+
+// The Condense control appears at warn_pct, so the target must be positive across the
+// whole amber band. Measured against the BUDGET it is zero below 100%, which is how
+// compaction came to run with no target and write a segment larger than its source.
+assert(reclaimTarget(MSA) === 150000 - 135000, "target is measured to the warn line");
+assert(
+  reclaimTarget({ ...MSA, total_chars: 140000, pct: 93 }) === 5000,
+  "inside the amber band the target is positive, not zero",
+);
+assert(
+  reclaimTarget({ ...MSA, total_chars: 100000, pct: 66 }) === 0,
+  "comfortably under the warn line -> nothing to reclaim",
 );
 
 console.log("contextGauge: all assertions passed");

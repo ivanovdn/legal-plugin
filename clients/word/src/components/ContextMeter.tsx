@@ -6,6 +6,7 @@ import {
   PART_LABELS,
   gaugeLine,
   isWarning,
+  reclaimTarget,
   type ContextBreakdown,
 } from "../contextGauge";
 
@@ -39,11 +40,10 @@ export default function ContextMeter({ breakdown }: Props) {
     setNote(null);
     try {
       const documentId = await resolveDocumentId();
-      // How much has to come back for the document to stop being cut. The backend
-      // cannot work this out — it has neither the document nor the grounding — but the
-      // counter above already measured it.
-      const over = Math.max(0, breakdown.total_chars - breakdown.budget_chars);
-      const res = await compactConversation(documentId, over);
+      // How much has to come back for the counter to fall below the warn line. The
+      // backend cannot work this out — it has neither the document nor the grounding —
+      // but the counter above already measured it.
+      const res = await compactConversation(documentId, reclaimTarget(breakdown));
       if (res.data?.compacted) {
         const n = res.data.messages ?? 0;
         const dropped = res.data.dropped ?? 0;
@@ -120,8 +120,8 @@ export default function ContextMeter({ breakdown }: Props) {
             {busy ? "Condensing… (10–30 s)" : "Condense earlier turns"}
           </button>
           <span className="context-meter-note">
-            Condenses {breakdown.compressible_messages} earlier messages into verbatim
-            quotes. Your most recent messages stay word-for-word, and nothing is deleted.
+            Condenses your earlier messages into verbatim quotes. Your most recent
+            messages stay word-for-word, and nothing is deleted.
           </span>
         </div>
       )}

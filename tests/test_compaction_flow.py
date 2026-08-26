@@ -15,18 +15,42 @@ from memory.conversation_summary import latest_to_id, load_segments
 
 
 def _seed(turns: int, document_id: str = "doc-1", attorney_id: str = "atty-1") -> list[dict]:
+    """Seed messages of a REALISTIC size, in two sentences each.
+
+    The earlier fixture used 10-character messages, which is why the suite never
+    noticed that a segment can be larger than the history it replaces: at that size a
+    summary is bigger than its source no matter what, so the arithmetic that matters in
+    production was never exercised. Two sentences also give _quotes_for something to
+    select FROM, the way real compaction quotes a sentence rather than a whole message.
+    """
     for i in range(turns):
-        append_turn(document_id, attorney_id, f"question {i}", f"answer {i}")
+        append_turn(
+            document_id, attorney_id,
+            f"Question {i} about how the indemnity clause compares with the governing "
+            f"MSA. Please check the cap as well before you answer.",
+            f"Answer {i} is that the SOW caps liability where the MSA does not. That is "
+            f"a deviation the playbook treats as Amber and worth raising before signature.",
+        )
     return load_rows_after(document_id, attorney_id, 0, 500)
 
 
-def _quotes_for(rows, ids):
+def _quotes_for(rows, ids, whole: bool = False):
+    """Quote the FIRST SENTENCE of each cited row, as real compaction does.
+
+    Quoting whole messages (whole=True) is what a badly-behaved model does and is the
+    only way to produce a segment larger than its source — which one test needs on
+    purpose, and which the guard in compact_conversation exists to refuse.
+    """
     by_id = {r["id"]: r for r in rows}
     out = []
     for rid in ids:
         row = by_id[rid]
         speaker = "attorney" if row["role"] == "user" else "assistant, said earlier"
-        out.append(f'[#{rid} {speaker}] "{row["content"]}"')
+        text = row["content"]
+        if not whole:
+            head, sep, _rest = text.partition(". ")
+            text = head + "." if sep else text
+        out.append(f'[#{rid} {speaker}] "{text}"')
     return "\n".join(out)
 
 
@@ -228,8 +252,10 @@ def test_a_large_target_trims_the_segment_until_it_actually_fits(monkeypatch):
         compaction, "_generate_quote_lines",
         lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r[:n]]),
     )
-    # Ask for nearly all of it back: the segment must end up small enough to deliver.
-    want = int(raw * 0.7)
+    # Ask for nearly all of it back. 0.9 rather than 0.7 on purpose: at 0.7 the full
+    # 24 quotes already fit, so the cap never has to move and the test would pass
+    # without exercising the trim at all.
+    want = int(raw * 0.9)
     res = compaction.compact_conversation("doc-1", "atty-1", want)
     assert res["compacted"] is True
     assert res["requested"] == want
@@ -311,3 +337,25 @@ def test_the_floor_is_never_condensed(monkeypatch):
     _from, to_id, selected = compaction.select_compactable_rows("doc-1", "atty-1")
     assert len(selected) == len(rows) - keep
     assert to_id == rows[len(rows) - keep - 1]["id"]
+
+
+def test_a_segment_that_would_not_save_space_is_declined(monkeypatch):
+    """Compaction must never make history bigger.
+
+    A segment carries a 261-char header plus ~20 chars of "[#id speaker]" per line, so
+    on a SHORT history the summary is structurally larger than what it replaces. This
+    was observed live: 1,293 chars of history became an 1,825-char segment, growing the
+    very thing compaction exists to shrink. Declining is not a failure — there is
+    nothing here worth doing.
+    """
+    for i in range(4):                          # 8 deliberately tiny messages
+        append_turn("doc-1", "atty-1", f"q{i}", f"a{i}")
+    monkeypatch.setattr(
+        compaction, "_generate_quote_lines",
+        lambda r, n, correction="": _quotes_for(r, [row["id"] for row in r], whole=True),
+    )
+    result = compaction.compact_conversation("doc-1", "atty-1")
+    assert result["compacted"] is False
+    assert result["error"] == "", "declining is not a failure"
+    assert "would not save space" in result["reason"]
+    assert load_segments("doc-1", "atty-1", 5) == [], "nothing may be written"
