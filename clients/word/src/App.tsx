@@ -10,7 +10,7 @@ import { readBody } from "./word";
 import { isDocumentUnsaved, resolveDocumentId } from "./docIdentity";
 import type { ReviewSummary } from "./parser";
 import ContextMeter from "./components/ContextMeter";
-import { withLiveDocument, type ContextBreakdown } from "./contextGauge";
+import { type ContextBreakdown } from "./contextGauge";
 
 // Debounce for the live document measurement. onParagraphChanged fires per
 // keystroke; readBody() on a real contract is a full getReviewedText round trip.
@@ -160,12 +160,13 @@ export default function App() {
           close it. Save the file first.
         </p>
       )}
+      {/* The live-document adjustment moved INTO ContextMeter: withLiveDocument
+          allocates a new object per call, and the auto-fire effect has to key on
+          the raw per-turn breakdown or it fires on every render. */}
       <ContextMeter
-        breakdown={
-          breakdown && liveDocChars !== null && !docTruncated
-            ? withLiveDocument(breakdown, liveDocChars)
-            : breakdown
-        }
+        breakdown={breakdown}
+        liveDocChars={liveDocChars}
+        docTruncated={docTruncated}
       />
       <Tabs active={tab} onChange={setTab} />
       {/* Both tabs always mounted; visibility toggled via CSS so state persists. */}
