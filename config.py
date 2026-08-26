@@ -145,6 +145,16 @@ class Settings(BaseSettings):
     # pattern conversation_max_messages already uses).
     compaction_max_quotes: int = 24
     compaction_max_injected_segments: int = 3
+    # Fire compaction without a click. Default ON deliberately: the flag exists so a
+    # pilot can switch the behaviour off after seeing it, not so someone has to
+    # switch it on to see it at all.
+    compaction_auto: bool = True
+    # How much un-condensed history must pile up before firing UNASKED. This is an
+    # anti-churn floor, not a tuning knob. After a compaction, compressible history
+    # drops to ~0 and grows two rows per turn, so sharing the button's
+    # "> 0" threshold would fire an LLM call every turn against a segment
+    # the net-benefit guard then declines. The manual button keeps its threshold."
+    compaction_auto_min_messages: int = 6
 
     # Attorney preference memory (USER.md) — stage 1 of the self-improving harness
     preferences_enabled: bool = True          # per-attorney USER.md; False = no store/injection

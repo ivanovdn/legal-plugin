@@ -4,6 +4,7 @@ The figures are the LAST TURN'S REAL MEASURED VALUES, never a forecast: groundin
 is question-dependent (_needs_grounding keys off wording), so the same contract
 costs 49k or 131k depending on what is asked.
 """
+import pytest
 import skills.legal_research.context as ctx
 from config import get_settings
 from memory.conversation_store import append_turn
@@ -82,8 +83,9 @@ def test_an_empty_turn_does_not_divide_by_zero():
 
 
 def test_compressible_count_excludes_the_verbatim_window():
-    # 5 turns = 10 messages; the most recent compaction_keep_recent_messages (6)
-    # stay verbatim, so only 4 are condensable.
+    # 5 turns = 10 messages; the most recent compaction_keep_recent_messages (2)
+    # stay verbatim, so 8 are condensable. The assertion reads the setting rather
+    # than the number, because that floor has already moved once.
     for i in range(5):
         append_turn("doc-cc", "atty-cc", f"q{i}", f"a{i}")
     state = {"document_id": "doc-cc", "user_id": "atty-cc"}
@@ -144,3 +146,93 @@ def test_compressible_count_survives_a_store_failure_without_flagging_degraded(m
     state = {"document_id": "doc-cc", "user_id": "atty-cc"}
     assert compressible_message_count(state) == 0
     assert "memory_degraded" not in state
+
+
+@pytest.fixture
+def settings_env(monkeypatch):
+    """Set config via env for ONE test, then restore the cached Settings.
+
+    get_settings is @lru_cache'd. Clearing only on the way in would leave this
+    test's Settings object cached for every test that follows and does not clear
+    it itself — the clear on the way OUT is what keeps the pollution local.
+    """
+    def _set(**env):
+        for key, value in env.items():
+            monkeypatch.setenv(key, str(value))
+        get_settings.cache_clear()
+
+    yield _set
+    get_settings.cache_clear()
+
+
+def test_auto_compact_needs_more_history_than_the_button_does():
+    """The anti-churn floor, and the most important assertion in this slice.
+
+    After a compaction, compressible history drops to ~0 and grows by exactly two
+    rows per turn. If automatic firing shared the button's "> 0" threshold it would
+    fire on the very next turn against two short messages — and a segment carries a
+    261-char header plus ~20 chars per quote line, so the net-benefit guard would
+    decline it. That is a 10-30s LLM call, on a shared Ollama, guaranteed to write
+    nothing. So there must be a band where the button is offered and auto stays quiet.
+    """
+    settings = get_settings()
+    b = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=settings.compaction_auto_min_messages - 1,
+    )
+    assert b["can_compact"] is True
+    assert b["auto_compact"] is False
+
+
+def test_auto_compact_fires_once_the_floor_is_reached():
+    settings = get_settings()
+    b = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=settings.compaction_auto_min_messages,
+    )
+    assert b["auto_compact"] is True
+
+
+def test_auto_compact_is_a_narrowing_of_the_button_never_a_widening():
+    """Below the warn line there is no pressure to relieve, however much history
+    has piled up. auto_compact true with can_compact false is a defect anywhere."""
+    b = _bd(doc_chars=1000, compressible_messages=500)
+    assert b["can_compact"] is False
+    assert b["auto_compact"] is False
+
+
+def test_auto_is_armed_by_default():
+    """compaction_auto ships ON: the flag exists so a pilot can switch the
+    behaviour off after seeing it, not so someone has to switch it on to see it."""
+    settings = get_settings()
+    assert settings.compaction_auto is True
+    b = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=settings.compaction_auto_min_messages + 10,
+    )
+    assert b["auto_compact"] is True
+
+
+def test_the_master_switch_stops_auto_without_taking_away_the_button(settings_env):
+    """Turning compaction_auto off must leave the manual control exactly as it was —
+    the switch governs unrequested firing, not the attorney's own button."""
+    settings_env(COMPACTION_AUTO="false")
+    settings = get_settings()
+    assert settings.compaction_auto is False
+    b = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=settings.compaction_auto_min_messages + 10,
+    )
+    assert b["can_compact"] is True
+    assert b["auto_compact"] is False
+
+
+def test_disabling_compaction_entirely_stops_both(settings_env):
+    settings_env(COMPACTION_ENABLED="false")
+    settings = get_settings()
+    b = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=settings.compaction_auto_min_messages + 10,
+    )
+    assert b["can_compact"] is False
+    assert b["auto_compact"] is False

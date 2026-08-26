@@ -307,6 +307,14 @@ def build_context_breakdown(
         for key in _BREAKDOWN_PARTS
     ]
     pct = (total * 100 // budget) if budget else 0
+    # Both conditions, always. The threshold alone would offer a no-op on a
+    # short conversation with a huge document; compressible history alone
+    # would nag on every routine chat.
+    can_compact = bool(
+        settings.compaction_enabled
+        and compressible_messages > 0
+        and pct >= settings.compaction_warn_pct
+    )
     return {
         "budget_chars": budget,
         "budget_tokens": int(budget / cpt),
@@ -315,13 +323,15 @@ def build_context_breakdown(
         "total_tokens": int(total / cpt),
         "pct": pct,
         "warn_pct": settings.compaction_warn_pct,
-        # Both conditions, always. The threshold alone would offer a no-op on a
-        # short conversation with a huge document; compressible history alone
-        # would nag on every routine chat.
-        "can_compact": bool(
-            settings.compaction_enabled
-            and compressible_messages > 0
-            and pct >= settings.compaction_warn_pct
+        "can_compact": can_compact,
+        # Built FROM can_compact, not alongside it, so "auto is a narrowing of the
+        # button" is structural and cannot drift. Firing unasked needs a higher bar
+        # than offering a button: see compaction_auto_min_messages in config.py for
+        # the churn loop the floor exists to prevent.
+        "auto_compact": bool(
+            can_compact
+            and settings.compaction_auto
+            and compressible_messages >= settings.compaction_auto_min_messages
         ),
         "compressible_messages": compressible_messages,
         "parts": parts,
