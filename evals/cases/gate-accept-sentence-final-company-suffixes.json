@@ -1,0 +1,29 @@
+{
+  "kind": "gate",
+  "why": "The price of keeping the abbreviation list narrow, and the reason company suffixes are deliberately NOT in it: 'Acme Inc.', 'Acme Corp.' and 'Main St.' commonly DO end a sentence in this domain. Listing them closes gate-residual-company-suffix-before-a-capitalised-name and breaks all three of these — that is the trade, and this case is what prices it.",
+  "input": {
+    "rows": [
+      {
+        "id": 25,
+        "role": "assistant",
+        "content": "We are dealing with Acme Inc. The cap is Green."
+      },
+      {
+        "id": 26,
+        "role": "assistant",
+        "content": "Payment goes to Acme Corp. The cap is Green."
+      },
+      {
+        "id": 27,
+        "role": "assistant",
+        "content": "Deliver to the office on Main St. The cap is Green."
+      }
+    ],
+    "body": "[#25 assistant, said earlier] \"The cap is Green\"\n[#26 assistant, said earlier] \"The cap is Green\"\n[#27 assistant, said earlier] \"The cap is Green\"",
+    "from_id": 25,
+    "to_id": 27
+  },
+  "expect": {
+    "valid": true
+  }
+}

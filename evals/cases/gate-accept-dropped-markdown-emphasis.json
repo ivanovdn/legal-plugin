@@ -1,0 +1,19 @@
+{
+  "kind": "gate",
+  "why": "The model copies the words, not the code fence or emphasis around them. Backticks and asterisks are dropped from BOTH sides of the comparison.",
+  "input": {
+    "rows": [
+      {
+        "id": 53,
+        "role": "assistant",
+        "content": "Placeholders for `[__]` remain blank."
+      }
+    ],
+    "body": "[#53 assistant, said earlier] \"Placeholders for [__] remain blank.\"",
+    "from_id": 53,
+    "to_id": 53
+  },
+  "expect": {
+    "valid": true
+  }
+}

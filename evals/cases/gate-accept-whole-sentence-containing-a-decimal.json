@@ -1,0 +1,19 @@
+{
+  "kind": "gate",
+  "why": "The flip side of gate-fabrication-decimal-boundary. A decimal INSIDE a quote must not block a legitimate whole sentence, or the rule would reject most numeric commercial terms — the fix for one fabrication shape taking out an ordinary class of quote with it.",
+  "input": {
+    "rows": [
+      {
+        "id": 16,
+        "role": "user",
+        "content": "We will accept 12.5 months only if the cap is raised."
+      }
+    ],
+    "body": "[#16 attorney] \"We will accept 12.5 months only if the cap is raised\"",
+    "from_id": 16,
+    "to_id": 16
+  },
+  "expect": {
+    "valid": true
+  }
+}

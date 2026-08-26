@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "KNOWN FAILING. 'Ltd.' is not in _NON_TERMINAL_ABBREVIATIONS, so the capital in 'Ltd. Partners' reads as a new sentence and the quote may stop mid-sentence, dropping 'only if wired by Monday'. This case expects the CORRECT behaviour (rejection) rather than pinning the bug, so closing the residual reports [now-passing] instead of looking like a regression. Its price is gate-accept-sentence-final-company-suffixes: measured, listing company suffixes costs three legitimate quote shapes to close this one.",
+  "input": {
+    "rows": [
+      {
+        "id": 24,
+        "role": "user",
+        "content": "We will accept payment from Acme Ltd. Partners only if wired by Monday."
+      }
+    ],
+    "body": "[#24 attorney] \"We will accept payment from Acme Ltd\"",
+    "from_id": 24,
+    "to_id": 24
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

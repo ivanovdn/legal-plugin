@@ -22,11 +22,11 @@ const BASELINE_PATH = resolve(process.cwd(), "../../evals/baseline.json");
 
 // Typed rather than Record<string, unknown>: under `strict`, comparing an
 // `unknown` against a boolean or a string is an error, and every use below
-// would need a cast. Declaring the union of all three kinds' fields once —
-// each optional — keeps the handlers cast-free.
+// would need a cast. Declaring the union of every kind's fields once — each
+// optional — keeps the handlers cast-free.
 type Case = {
   id: string;
-  kind: "parse" | "match" | "apply";
+  kind: "parse" | "match" | "apply" | "gate";
   why: string;
   input: {
     prose?: string;
@@ -190,16 +190,21 @@ async function runKind(
 }
 
 const KINDS = ["parse", "match", "apply"] as const;
-const KNOWN_KINDS = new Set<string>(KINDS);
+// Kinds this runner does not own but that ARE run — by evals/run_gate.py. They
+// must not look like an unrecognized kind to the corpus check below: "owned by
+// the other side" and "runs nowhere" have opposite meanings and identical
+// symptoms, and only one of them is a bug.
+const BACKEND_ONLY_KINDS = ["gate"] as const;
+const KNOWN_KINDS = new Set<string>([...KINDS, ...BACKEND_ONLY_KINDS]);
 
 async function main(): Promise<void> {
   const baseline = loadBaseline();
   const all = loadCases();
 
-  // A case whose "kind" isn't recognized never matches any of the three
-  // `c.kind === kind` filters below, so it would otherwise run in NO kind and
-  // the corpus would silently be short one case. Catch it here, before any
-  // kind runs, rather than letting it vanish.
+  // A case whose "kind" isn't recognized anywhere never matches any
+  // `c.kind === kind` filter on either side, so it would otherwise run in NO
+  // kind and the corpus would silently be short one case. Catch it here,
+  // before any kind runs, rather than letting it vanish.
   const unknown = all.filter((c) => !KNOWN_KINDS.has(c.kind)).map((c) => c.id);
   if (unknown.length > 0) {
     console.log(`  [corpus] unknown kind in: ${unknown.join(", ")}`);

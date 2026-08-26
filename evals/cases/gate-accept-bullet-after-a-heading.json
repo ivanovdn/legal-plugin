@@ -1,0 +1,19 @@
+{
+  "kind": "gate",
+  "why": "Markdown lists are how the assistant actually answers. Collapsing newlines into spaces welded a whole reply into one enormous 'sentence', leaving the first bullet under any '**Heading:**' with no boundary in front of it. Measured on a real conversation, this single shape rejected the segment and compaction never once succeeded — invisible to the entire test suite until a live smoke test.",
+  "input": {
+    "rows": [
+      {
+        "id": 50,
+        "role": "assistant",
+        "content": "I reviewed the SOW.\n\n**Required Actions:**\n- Fill all placeholders before signature.\n- Resolve the delay conflict between the MSA and SOW.\n"
+      }
+    ],
+    "body": "[#50 assistant, said earlier] \"Fill all placeholders before signature.\"",
+    "from_id": 50,
+    "to_id": 50
+  },
+  "expect": {
+    "valid": true
+  }
+}

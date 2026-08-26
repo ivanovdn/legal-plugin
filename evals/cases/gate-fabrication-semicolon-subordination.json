@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "The same shape through a semicolon, quote again including the punctuation so it exercises the _CLAUSE_END exclusion itself. The cost of excluding both is that a semicolon-joined clause cannot be quoted on its own; that is the safe direction to err.",
+  "input": {
+    "rows": [
+      {
+        "id": 11,
+        "role": "user",
+        "content": "We will accept 12 months; However, only for the first year."
+      }
+    ],
+    "body": "[#11 attorney] \"We will accept 12 months;\"",
+    "from_id": 11,
+    "to_id": 11
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

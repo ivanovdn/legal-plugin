@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "'v.' introduces a case name, so the capital after it does not start a new sentence. Before this was closed a quote could stop at 'Smith v' and drop the condition entirely.",
+  "input": {
+    "rows": [
+      {
+        "id": 20,
+        "role": "user",
+        "content": "We will accept the terms of Smith v. Jones only if the cap is raised."
+      }
+    ],
+    "body": "[#20 attorney] \"We will accept the terms of Smith v\"",
+    "from_id": 20,
+    "to_id": 20
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

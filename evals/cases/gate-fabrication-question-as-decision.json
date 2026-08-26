@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "The attorney ASKED whether to accept; dropping the '?' makes the summary say they DECIDED to. A modality flip inside a single sentence, from genuine characters.",
+  "input": {
+    "rows": [
+      {
+        "id": 30,
+        "role": "user",
+        "content": "We will accept 12 months?"
+      }
+    ],
+    "body": "[#30 attorney] \"We will accept 12 months\"",
+    "from_id": 30,
+    "to_id": 30
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

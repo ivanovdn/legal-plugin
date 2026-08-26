@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "'12.5' is one number, not the end of a statement. Reading its period as a full stop lets a quote stop mid-sentence and drop what followed. Commercial terms are dense with decimals, so this is ordinary text, not an exotic input.",
+  "input": {
+    "rows": [
+      {
+        "id": 14,
+        "role": "user",
+        "content": "We will accept 12.5 months only if the cap is raised."
+      }
+    ],
+    "body": "[#14 attorney] \"We will accept 12\"",
+    "from_id": 14,
+    "to_id": 14
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

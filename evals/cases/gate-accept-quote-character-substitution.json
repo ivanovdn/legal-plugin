@@ -1,0 +1,19 @@
+{
+  "kind": "gate",
+  "why": "The model MUST substitute here and is right to: the quote line is itself delimited by double quotes, so a row containing one cannot be reproduced literally. It wrote 'Consultants' where the row had \"Consultants\" — faithful quoting that our own normalisation rejected as absent from its own row. Every quote form now folds to one character.",
+  "input": {
+    "rows": [
+      {
+        "id": 52,
+        "role": "assistant",
+        "content": "The SOW's \"Consultants\" section aligns with the MSA."
+      }
+    ],
+    "body": "[#52 assistant, said earlier] \"The SOW's 'Consultants' section aligns with the MSA.\"",
+    "from_id": 52,
+    "to_id": 52
+  },
+  "expect": {
+    "valid": true
+  }
+}

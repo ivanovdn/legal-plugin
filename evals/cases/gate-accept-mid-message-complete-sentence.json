@@ -1,0 +1,19 @@
+{
+  "kind": "gate",
+  "why": "Sentence-aligned at both ends, taken from the middle of a longer message, so the trim cannot have inverted the meaning. This is the ordinary successful case and the thing every tightening must keep allowing.",
+  "input": {
+    "rows": [
+      {
+        "id": 9,
+        "role": "assistant",
+        "content": "I checked the playbook. The cap is Green under our standard position. Escalation is not required."
+      }
+    ],
+    "body": "[#9 assistant, said earlier] \"The cap is Green under our standard position\"",
+    "from_id": 9,
+    "to_id": 9
+  },
+  "expect": {
+    "valid": true
+  }
+}

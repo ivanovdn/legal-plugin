@@ -1,1 +1,3 @@
-{}
+{
+  "gate-residual-company-suffix-before-a-capitalised-name": "An unlisted abbreviation before a capitalised name ('…from Acme Ltd. Partners only if…') still lets a quote stop mid-sentence. Open deliberately: the fix is to add company suffixes to _NON_TERMINAL_ABBREVIATIONS, which was measured to cost three legitimate quote shapes (gate-accept-sentence-final-company-suffixes) to close this one. Revisit if a pilot shows it biting — the trade is priced by the two cases, not by argument."
+}

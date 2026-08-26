@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "A colon SUBORDINATES the condition after it, where a full stop separates two independent thoughts. Admitting ':' to _CLAUSE_END reopens the meaning-inverting chop through different punctuation — which is exactly how the first fix for this failed. The quote INCLUDES the colon on purpose: that is the only shape the _CLAUSE_END exclusion actually guards. A quote stopping just BEFORE the colon is rejected by a different rule (only a full stop may be dropped from the end of a quote), so a case written that way passes whether or not ':' is excluded — which is how three unit tests came to look like they pinned this and did not. Verified by mutation: adding ';:' to _CLAUSE_END flips this case and leaves the naive shape green.",
+  "input": {
+    "rows": [
+      {
+        "id": 10,
+        "role": "user",
+        "content": "We can accept 12 months: Provided the cap is raised to 2x."
+      }
+    ],
+    "body": "[#10 attorney] \"We can accept 12 months:\"",
+    "from_id": 10,
+    "to_id": 10
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

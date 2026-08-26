@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "A line break may BEGIN a sentence but never END one. The asymmetry is load-bearing: a hard-wrapped line would otherwise let the condition be dropped, which is the exact truncation this gate exists to prevent. See the accept-side bullet case for the half this rule must not break.",
+  "input": {
+    "rows": [
+      {
+        "id": 51,
+        "role": "user",
+        "content": "We will accept 12 months\nonly if the cap is raised."
+      }
+    ],
+    "body": "[#51 attorney] \"We will accept 12 months\"",
+    "from_id": 51,
+    "to_id": 51
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

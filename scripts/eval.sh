@@ -13,6 +13,9 @@ cd "$(dirname "$0")/.."
 echo "==> eval: backend parser"
 uv run python -m evals.run_parse
 
+echo "==> eval: compaction validation gate"
+uv run python -m evals.run_gate
+
 echo "==> eval: client parser, matcher, apply"
 (cd clients/word && npx tsx src/eval/runner.ts)
 

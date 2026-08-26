@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "The founding case. 'accept 12 months' is a genuine contiguous substring of the row and asserts the OPPOSITE of it. A pure substring check accepted this, and it is a fabrication built entirely from real characters.",
+  "input": {
+    "rows": [
+      {
+        "id": 7,
+        "role": "user",
+        "content": "We will not accept 12 months."
+      }
+    ],
+    "body": "[#7 attorney] \"accept 12 months\"",
+    "from_id": 7,
+    "to_id": 7
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

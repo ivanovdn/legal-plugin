@@ -1,0 +1,20 @@
+{
+  "kind": "gate",
+  "why": "The mirror image: a genuine PREFIX that silently drops the condition the acceptance depended on. Prefix and suffix chops have to be closed by the same rule or the other one walks straight through it.",
+  "input": {
+    "rows": [
+      {
+        "id": 8,
+        "role": "user",
+        "content": "We will accept 12 months only if the cap is raised."
+      }
+    ],
+    "body": "[#8 attorney] \"We will accept 12 months\"",
+    "from_id": 8,
+    "to_id": 8
+  },
+  "expect": {
+    "valid": false,
+    "error_contains": "not a complete sentence"
+  }
+}

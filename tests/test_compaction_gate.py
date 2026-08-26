@@ -1,9 +1,19 @@
 """The compaction validation gate — a deterministic, zero-LLM guard on an LLM's output.
 
 Every quote carries the conversation_store row id it came from, so a fabricated
-line is not merely detectable, it is REJECTABLE. Any failing quote invalidates
-the whole segment: a summary is legal recall, and one invented line in it is
-worse than no summary at all.
+line is not merely detectable, it is REJECTABLE — a summary is legal recall, and
+one invented line in it is worse than no summary at all.
+
+Two layers, tested here in order. `validate_segment` is strict: any failing quote
+invalidates the whole body. `partition_quotes` is what production calls — it keeps
+every line that verifies, drops the ones that do not, and is fatal only when NOTHING
+verifies. Both share `_quote_failure`, so the lenient path can never accept a line
+the strict path would reject.
+
+The gate is also scored as a corpus: `evals/cases/gate-*.json`, run by
+`evals/run_gate.py`. These tests assert the code's behaviour; the corpus prices the
+trade-off every change to the boundary rules makes between fabrications rejected and
+ordinary quotes still accepted.
 """
 from skills.legal_research.compaction import (
     parse_quote_lines,
@@ -185,6 +195,32 @@ def test_a_semicolon_does_not_make_a_quotable_boundary():
     assert "not a complete sentence" in err
 
 
+def test_a_quote_may_not_END_on_a_colon_or_semicolon():
+    """These two are what actually pin ';' and ':' out of _CLAUSE_END.
+
+    The three tests around this one look like they cover it and do not: a quote that
+    stops just BEFORE the punctuation is rejected by a different rule — only a full
+    stop may be dropped from a quote's end — so they stay green even with ';:' added
+    to _CLAUSE_END. Verified by mutation: with ';:' admitted the whole file passed.
+    The exclusion only bites when the quote INCLUDES the punctuation, which is this
+    shape, and a quote ending on a colon is a truncation like any other: it drops the
+    condition the statement depended on while looking terminated.
+    """
+    rows = [{
+        "id": 18, "role": "user",
+        "content": "We can accept 12 months: Provided the cap is raised to 2x.",
+    }]
+    err = validate_segment('[#18 attorney] "We can accept 12 months:"', rows, 18, 18)
+    assert "not a complete sentence" in err
+
+    rows = [{
+        "id": 19, "role": "user",
+        "content": "We will accept 12 months; However, only for the first year.",
+    }]
+    err = validate_segment('[#19 attorney] "We will accept 12 months;"', rows, 19, 19)
+    assert "not a complete sentence" in err
+
+
 def test_a_hedge_before_a_colon_cannot_be_dropped():
     # The mirror image: the hedge sits BEFORE the colon, so quoting what follows it
     # strips the condition the statement depended on.
@@ -285,19 +321,15 @@ def test_a_comma_qualifier_cannot_be_dropped():
 # nothing at all. See the module docstring in skills/legal_research/compaction.py.
 
 
-def test_residual_company_suffix_before_a_capitalised_name_is_not_caught():
-    # Still open, deliberately. "Ltd." is not in _NON_TERMINAL_ABBREVIATIONS because
-    # company suffixes commonly END a sentence in this domain, and listing them cost
-    # three legitimate quotes (see the module docstring) to close this one shape. Pinned
-    # so it stays visible: if someone adds "Ltd" to the list, this test fails and forces
-    # them to weigh that trade consciously.
-    rows = [{
-        "id": 24, "role": "user",
-        "content": "We will accept payment from Acme Ltd. Partners only if wired by Monday.",
-    }]
-    assert validate_segment(
-        '[#24 attorney] "We will accept payment from Acme Ltd"', rows, 24, 24
-    ) == ""
+# The gate's one known defect — an unlisted abbreviation before a capitalised name
+# ("…from Acme Ltd. Partners only if…") — is NOT pinned here. It lives in the eval
+# corpus as `gate-residual-company-suffix-before-a-capitalised-name`, baselined in
+# evals/baseline.json. A test can only pin a defect by asserting the buggy output is
+# correct, which makes FIXING it look like a regression; the eval baseline expects the
+# correct behaviour instead and reports `[now-passing]` when someone closes it. The
+# other half of that trade — the legitimate quotes a wider abbreviation list would
+# break — is priced by the case below and by
+# `gate-accept-sentence-final-company-suffixes`.
 
 
 def test_a_citation_abbreviation_is_not_a_sentence_boundary():
