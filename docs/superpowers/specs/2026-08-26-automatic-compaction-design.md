@@ -172,9 +172,28 @@ Ollama blip should not permanently disable the feature, and there is nowhere
 honest to persist it to — it is a client-side judgement about a transient
 condition, not a fact about the document. Reopening the pane re-arms it.
 
-A `reason` response (nothing to condense, or the net-benefit refusal) is **not**
-a failure and does not disarm. It renders the same quiet note the manual path
-shows.
+A `reason` response — nothing to condense, or the net-benefit refusal — renders
+the same quiet note the manual path shows. It is not a failure, but it **does**
+disarm automatic firing.
+
+> **Amended during implementation (2026-08-26).** This section originally read
+> "a `reason` response is not a failure and does not disarm." That was wrong, and
+> it contradicted this design's own governing principle — the one
+> `compaction_auto_min_messages` exists to serve: never spend an unrequested LLM
+> call that is guaranteed to write nothing. `compact_conversation` generates the
+> segment *before* it checks net benefit (`compaction.py:545` vs `:600`), so a
+> refusal costs a full 10–30s call. Nothing in the backend remembers that the
+> previous turn was refused, and `auto_compact` is computed purely from pressure
+> and message count, so a stable refusal condition would fire an unrequested,
+> guaranteed-fruitless call on **every turn** — the "cries wolf" failure this
+> design argues against two paragraphs above, arriving through a different door.
+>
+> Disarming on the *first* refusal rather than the second: while `auto_compact`
+> is true the only reachable `reason` **is** the net-benefit refusal, because
+> automatic firing requires at least `compaction_auto_min_messages` compressible
+> messages and so "nothing earlier to condense yet" cannot occur. The attorney
+> keeps the manual button, which still reports the refusal honestly, and the
+> whole design errs toward not firing unasked.
 
 ## Concurrency
 
