@@ -62,19 +62,20 @@ def _expected(state, compressible):
     """
     s, bd = get_settings(), state["context_breakdown"]
     msgs, chars = compressible
+    truncated = bool(state["context_truncated"])
     return (
         f"[compaction] auto={bd['auto_compact']} can={bd['can_compact']} "
         f"pct={bd['pct']}/{bd['warn_pct']} compressible={msgs} msgs/{chars} chars "
-        f"floors={s.compaction_auto_min_messages} msgs/{s.compaction_auto_min_chars} chars "
+        f"floor={s.compaction_auto_min_chars} chars truncated={truncated} "
         f"enabled={s.compaction_enabled} auto_cfg={s.compaction_auto} doc=doc-42"
     )
 
 
 def test_the_line_names_the_floor_that_held_when_auto_stays_silent(monkeypatch, caplog):
-    """The case the VM hit: over the warn line, but too little to be worth a call.
+    """Over the warn line, but too little to be worth a call.
 
-    Two messages of 100 chars clears neither floor, so auto is correctly quiet —
-    and the line has to make that legible without a database session.
+    Two messages of 100 chars is under the floor, so auto is correctly quiet — and
+    the line has to make that legible without a database session.
     """
     compressible = (2, 100)
     state, text = _run(monkeypatch, caplog, compressible=compressible,
@@ -117,5 +118,22 @@ def test_the_line_is_printed_on_an_unpressured_turn_too(monkeypatch, caplog):
 
     assert bd["pct"] < bd["warn_pct"]
     assert bd["can_compact"] is False and bd["auto_compact"] is False
+    assert _expected(state, compressible) in text
+    get_settings.cache_clear()
+
+
+def test_the_line_reports_truncation_so_the_worst_case_is_one_grep(monkeypatch, caplog):
+    """`truncated=True auto=False` is the pathology of 2026-08-27 in a single line.
+
+    Cutting the contract while condensable history sits there is the exact failure
+    this feature exists to prevent, and it used to take two log lines from
+    different modules plus a screenshot to see it. Now it is one grep.
+    """
+    compressible = (2, 100)
+    state, text = _run(monkeypatch, caplog, compressible=compressible,
+                       budget=1000, doc="NON-DISCLOSURE AGREEMENT\n\n1. Term " + "x" * 2000)
+
+    assert state["context_truncated"], "the budget is small enough to force a cut"
+    assert "truncated=True" in text
     assert _expected(state, compressible) in text
     get_settings.cache_clear()

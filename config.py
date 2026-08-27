@@ -149,24 +149,32 @@ class Settings(BaseSettings):
     # pilot can switch the behaviour off after seeing it, not so someone has to
     # switch it on to see it at all.
     compaction_auto: bool = True
-    # How much un-condensed history must pile up before firing UNASKED. This is an
-    # anti-churn floor, not a tuning knob. After a compaction, compressible history
-    # drops to ~0 and grows two rows per turn, so sharing the button's
-    # "> 0" threshold would fire an LLM call every turn against a segment
-    # the net-benefit guard then declines. The manual button keeps its threshold."
-    compaction_auto_min_messages: int = 6
-    # The SAME floor, measured the way the thing it guards is measured. The floor's
-    # job is to avoid a 10-30s call the net-benefit guard will decline, and net
-    # benefit is CHARACTERS (a 261-char header plus ~20 per quote line) — so a
-    # message count only ever approximated it, and approximates it badly at both
-    # ends. Found on the VM 2026-08-27: an attorney pasted a contract into the chat
-    # box, it was stored and replayed, history hit 87,282 chars = 96% of budget, and
-    # auto stayed silent because that was fewer than six messages. Compaction was
-    # exactly the right medicine and the floor refused to take it. This is the same
-    # unit error already fixed once in compaction_keep_recent_messages; either
-    # condition arming is enough. 20,000 is far above segment overhead, so a call
-    # that trips it is unambiguously worth making.
-    compaction_auto_min_chars: int = 20000
+    # The ONE floor for firing UNASKED, and it is derived from the SEGMENT FORMAT,
+    # not from the budget and not from an incident. A segment costs a 261-char
+    # header plus ~20 per quote line, and the trim loop stops at
+    # compaction_min_quotes=4, so the smallest segment we can emit is ~940 chars.
+    # Below roughly that, condensing makes history BIGGER and the net-benefit guard
+    # declines — measured, 1,293 chars in produced 1,825 out. 4,000 clears every
+    # measured decline by 3x while staying far below the point where the document
+    # starts being cut.
+    #
+    # It replaced two floors that were both DAMAGE-FIRST — they could not arm until
+    # after the contract had already been truncated. Measured locally 2026-08-27,
+    # grounded MSA turn at a 90,000 budget: playbook 30,412 + MSA 24,676 + system
+    # 7,212 + document 16,008 = 78,308 of fixed content, leaving history an
+    # allowance of 11,692. The old char floor was 20,000 — nearly TWICE what
+    # history can ever hold — so it could not arm until ~8,300 characters of
+    # contract had already been dropped. The old message floor (6) was the same
+    # failure in the other unit: the turn that truncated had 4 compressible
+    # messages and 12,485 chars, and auto stayed silent.
+    #
+    # The lesson, third occurrence: an absolute floor is only safe when its unit is
+    # a property of the THING IT BOUNDS. Segment overhead is a property of the
+    # format and holds at any budget. "20,000 characters" and "6 messages" were
+    # properties of one afternoon's incident, and both went stale the moment the
+    # grounding grew. If a floor's justification cites a measurement of the
+    # environment rather than of the mechanism, it will go stale.
+    compaction_auto_min_chars: int = 4000
 
     # Attorney preference memory (USER.md) — stage 1 of the self-improving harness
     preferences_enabled: bool = True          # per-attorney USER.md; False = no store/injection

@@ -161,7 +161,7 @@ export function withLiveDocument(b: ContextBreakdown, docChars: number): Context
     can_compact: b.compressible_messages > 0 && pct >= b.warn_pct,
     // Narrowed here, NEVER widened — note this reads b.auto_compact rather than
     // recomputing from scratch the way can_compact does. The backend already folded
-    // compaction_auto and compaction_auto_min_messages into that field and the
+    // compaction_auto and compaction_auto_min_chars into that field and the
     // client knows neither, so a live document edit may switch auto OFF (the
     // pressure is genuinely relieved) but must never switch it ON. The asymmetry
     // with can_compact is deliberate: making a button appear on the client's own

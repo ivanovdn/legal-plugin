@@ -34,7 +34,11 @@ Two conditions, both required:
 | condition | how to satisfy it |
 |---|---|
 | `pct >= compaction_warn_pct` (90) | ask **grounded** questions — see below |
-| `compressible_messages >= compaction_auto_min_messages` (6) | 8 stored messages past the last segment = **4 turns** |
+| `compressible_chars >= compaction_auto_min_chars` (4,000) | ~2 prose turns past the last segment, since the newest 2 rows stay verbatim |
+
+There is deliberately **no message-count condition**. A count cannot guard a size
+budget — that error was made three times running, and the third time shipped a
+floor that could not arm until the contract had already been cut.
 
 ### Grounded vs lean questions
 
@@ -99,30 +103,47 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   logs backend --since 30m | grep -i compaction
 ```
 
-Measured locally on 2026-08-27, five consecutive turns on one document at
-`CHAT_CONTEXT_MAX_CHARS=15000` and `COMPACTION_AUTO_MIN_CHARS=500` (both
-lowered to make the whole progression visible in five turns):
+Captured locally on 2026-08-27, a grounded MSA conversation at
+`CHAT_CONTEXT_MAX_CHARS=90000`, on the code that still had the damage-first
+floors:
 
 ```
-auto=False can=False pct=98/90  compressible=0 msgs/0 chars    floors=6 msgs/500 chars
-auto=False can=False pct=98/90  compressible=0 msgs/0 chars    floors=6 msgs/500 chars
-auto=False can=True  pct=235/90 compressible=2 msgs/235 chars  floors=6 msgs/500 chars
-auto=False can=True  pct=238/90 compressible=4 msgs/440 chars  floors=6 msgs/500 chars
-auto=True  can=True  pct=238/90 compressible=6 msgs/766 chars  floors=6 msgs/500 chars
+16:02:25  auto=False can=False pct=87/90 compressible=0 msgs/0 chars     floors=6 msgs/20000 chars
+16:05:17  auto=False can=False pct=96/90 compressible=0 msgs/0 chars     floors=6 msgs/20000 chars
+16:06:26  auto=False can=True  pct=99/90 compressible=2 msgs/8642 chars  floors=6 msgs/20000 chars
+16:07:27  WARNING chat context 90443 > budget 90000 — truncated document to 15524 chars
+16:07:27  auto=False can=True  pct=99/90 compressible=4 msgs/12485 chars floors=6 msgs/20000 chars
+```
+
+Replaying those exact inputs through the fixed decision arms auto at **16:06:26**
+— one turn before the cut, which never happens:
+
+```
+16:06:26  auto=True can=True pct=99/90 compressible=2 msgs/8642 chars  floor=4000
 ```
 
 Read it left to right: `pct` against the warn line says whether there is
-pressure, `compressible` against `floors` says whether there is anything worth
-condensing, and `auto` is the verdict the pane was actually sent. The first two
-turns are over the warn line and still correctly silent — the keep-recent floor
-leaves nothing compressible until a third turn exists.
+pressure, `compressible` against `floor` says whether there is anything worth
+condensing, `truncated` says whether contract text was lost on this turn, and
+`auto` is the verdict the pane was actually sent. The first two turns are
+correctly silent — the keep-recent floor leaves nothing compressible until a
+third turn exists.
+
+**`truncated=True` with `auto=False` is the alarm.** It means contract text was
+dropped on a turn where the system declined to condense, which is the exact
+failure the feature exists to prevent. Before the floors were fixed this was the
+NORMAL state: on 2026-08-27 the turn that cut 484 characters of the document
+logged `auto=False can=True pct=99/90 compressible=4 msgs/12485 chars` against a
+20,000-char floor that history could not have reached without losing another
+8,300 characters of contract first.
 
 The line is what separates the two ways this feature fails:
 
 | you see | it means |
 |---|---|
-| `auto=False`, a floor unmet | working as designed — the numbers name which floor |
-| `auto=False`, both floors met | a backend bug: `can_compact`, `enabled` or `auto_cfg` will say why |
+| `auto=False`, `compressible` under the floor, `truncated=False` | working as designed |
+| `auto=False`, `truncated=True` | **the alarm** — contract text lost on a turn that declined to condense |
+| `auto=False`, `compressible` over the floor | a backend bug: `can_compact`, `enabled` or `auto_cfg` will say why |
 | `auto=True`, then `[compaction] condensed rows N-M` | the whole path worked |
 | `auto=True`, then **nothing** | the PANE dropped it — almost always the disarm latch, cleared by reloading the task pane |
 

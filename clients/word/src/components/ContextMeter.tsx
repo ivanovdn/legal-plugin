@@ -169,11 +169,11 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         // compact_conversation generates the segment before it checks net
         // benefit (compaction.py:545 vs :600), so every refusal already cost a
         // full 10-30s call. Nothing on the backend remembers a turn was
-        // refused, and auto_compact is recomputed from pressure and message
-        // count alone, so a stable refusal would otherwise fire again, unasked,
-        // on every subsequent turn for zero benefit. Disarm on this FIRST
-        // refusal, not a second one: while auto_compact is true,
-        // compaction_auto_min_messages guarantees there's always something
+        // refused, and auto_compact is recomputed from pressure and the size of
+        // the compressible pool alone, so a stable refusal would otherwise fire
+        // again, unasked, on every subsequent turn for zero benefit. Disarm on
+        // this FIRST refusal, not a second one: while auto_compact is true,
+        // compaction_auto_min_chars guarantees there's always something
         // compressible, so "nothing earlier to condense yet" can't be the
         // reason here — the only refusal automatic firing can reach already IS
         // the net-benefit one. The attorney keeps the manual button either way.

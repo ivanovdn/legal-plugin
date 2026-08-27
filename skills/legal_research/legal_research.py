@@ -220,11 +220,11 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # and the run together.
     logger.info(
         "[compaction] auto=%s can=%s pct=%d/%d compressible=%d msgs/%d chars "
-        "floors=%d msgs/%d chars enabled=%s auto_cfg=%s doc=%s",
+        "floor=%d chars truncated=%s enabled=%s auto_cfg=%s doc=%s",
         breakdown["auto_compact"], breakdown["can_compact"],
         breakdown["pct"], breakdown["warn_pct"],
         compressible_count, compressible_chars,
-        settings.compaction_auto_min_messages, settings.compaction_auto_min_chars,
+        settings.compaction_auto_min_chars, bool(truncation),
         settings.compaction_enabled, settings.compaction_auto,
         state.get("document_id") or "-",
     )

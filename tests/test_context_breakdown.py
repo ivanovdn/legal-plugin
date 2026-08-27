@@ -165,38 +165,103 @@ def settings_env(monkeypatch):
     get_settings.cache_clear()
 
 
-def test_auto_compact_needs_more_history_than_the_button_does():
-    """The anti-churn floor, and the most important assertion in this slice.
 
-    After a compaction, compressible history drops to ~0 and grows by exactly two
-    rows per turn. If automatic firing shared the button's "> 0" threshold it would
-    fire on the very next turn against two short messages — and a segment carries a
-    261-char header plus ~20 chars per quote line, so the net-benefit guard would
-    decline it. That is a 10-30s LLM call, on a shared Ollama, guaranteed to write
-    nothing. So there must be a band where the button is offered and auto stays quiet.
+# --- firing UNASKED -------------------------------------------------------
+#
+# ONE floor now, in characters. can_compact has already established that there is
+# pressure, so the only remaining question is whether the compressible pool is big
+# enough for a segment to come out smaller than the rows it replaces.
+
+
+def test_the_floor_is_reachable_before_the_document_starts_being_cut(settings_env):
+    """The 2026-08-27 defect, and the property that kills its whole class.
+
+    A floor larger than history's ALLOWANCE cannot arm until the document has
+    already been truncated: it guarantees damage before it acts. Measured locally
+    on a grounded MSA turn at a 90,000 budget — playbook 30,412 + MSA 24,676 +
+    system 7,212 + document 16,008 = 78,308 fixed, leaving history 11,692. The
+    floor was 20,000, nearly twice what history can ever hold, so it could not arm
+    until roughly 8,300 characters of contract had been dropped.
+
+    Note this is a property of the FLOOR against a real turn, not of one incident:
+    any budget or grounding change that pushes the allowance under the floor makes
+    auto damage-first again, and this fails.
+    """
+    settings_env(CHAT_CONTEXT_MAX_CHARS=90000)
+    settings = get_settings()
+    fixed = 30412 + 24676 + 7212 + 16008
+    allowance = 90000 - fixed
+    assert allowance == 11692
+    assert settings.compaction_auto_min_chars < allowance, (
+        f"floor {settings.compaction_auto_min_chars} exceeds history's allowance "
+        f"{allowance} — it cannot arm until the contract has already been cut"
+    )
+    # And on the turn that actually crossed the line, auto is armed. These are the
+    # measured figures from the turn that truncated: 4 compressible messages,
+    # 12,485 chars, and the old floors said no to both.
+    b = _bd(doc_chars=16008, playbook_chars=30412, msa_chars=24676,
+            system_chars=7212, history_chars=allowance,
+            compressible_messages=4, compressible_chars=12485)
+    assert b["pct"] >= b["warn_pct"]
+    assert b["auto_compact"] is True
+
+
+def test_auto_stays_quiet_on_a_pool_too_small_to_net_a_saving():
+    """The anti-churn property, in the unit that actually governs it.
+
+    A segment carries a 261-char header plus ~20 per quote line and cannot go below
+    compaction_min_quotes, so condensing a very short history makes it BIGGER —
+    measured, 1,293 chars in produced 1,825 out and the net-benefit guard declined.
+    Firing there is a 10-30s call on a shared Ollama guaranteed to write nothing,
+    so there must be a band where the button is offered and auto stays silent.
     """
     settings = get_settings()
     b = _bd(
         doc_chars=int(settings.chat_context_max_chars * 0.95),
-        compressible_messages=settings.compaction_auto_min_messages - 1,
+        compressible_messages=2,
+        compressible_chars=settings.compaction_auto_min_chars - 1,
     )
     assert b["can_compact"] is True
     assert b["auto_compact"] is False
 
 
-def test_auto_compact_fires_once_the_floor_is_reached():
+def test_auto_fires_once_the_floor_is_reached():
     settings = get_settings()
     b = _bd(
         doc_chars=int(settings.chat_context_max_chars * 0.95),
-        compressible_messages=settings.compaction_auto_min_messages,
+        compressible_messages=2,
+        compressible_chars=settings.compaction_auto_min_chars,
     )
     assert b["auto_compact"] is True
+
+
+def test_a_message_count_never_gates_firing():
+    """Two messages holding a large history must arm; twenty tiny ones must not.
+
+    The same unit error was fixed three times — compaction_keep_recent_messages,
+    then compaction_auto_min_messages, then its 20,000-char replacement, which was
+    the right unit at a wrong magnitude. A count cannot guard a size budget, so no
+    count may appear in this decision at all.
+    """
+    settings = get_settings()
+    over = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=2,
+        compressible_chars=settings.compaction_auto_min_chars * 4,
+    )
+    under = _bd(
+        doc_chars=int(settings.chat_context_max_chars * 0.95),
+        compressible_messages=20,
+        compressible_chars=settings.compaction_auto_min_chars // 4,
+    )
+    assert over["auto_compact"] is True, "a few large messages must arm auto"
+    assert under["auto_compact"] is False, "many tiny messages must not"
 
 
 def test_auto_compact_is_a_narrowing_of_the_button_never_a_widening():
     """Below the warn line there is no pressure to relieve, however much history
     has piled up. auto_compact true with can_compact false is a defect anywhere."""
-    b = _bd(doc_chars=1000, compressible_messages=500)
+    b = _bd(doc_chars=1000, compressible_messages=500, compressible_chars=500000)
     assert b["can_compact"] is False
     assert b["auto_compact"] is False
 
@@ -208,7 +273,8 @@ def test_auto_is_armed_by_default():
     assert settings.compaction_auto is True
     b = _bd(
         doc_chars=int(settings.chat_context_max_chars * 0.95),
-        compressible_messages=settings.compaction_auto_min_messages + 10,
+        compressible_messages=6,
+        compressible_chars=settings.compaction_auto_min_chars * 10,
     )
     assert b["auto_compact"] is True
 
@@ -221,7 +287,8 @@ def test_the_master_switch_stops_auto_without_taking_away_the_button(settings_en
     assert settings.compaction_auto is False
     b = _bd(
         doc_chars=int(settings.chat_context_max_chars * 0.95),
-        compressible_messages=settings.compaction_auto_min_messages + 10,
+        compressible_messages=6,
+        compressible_chars=settings.compaction_auto_min_chars * 10,
     )
     assert b["can_compact"] is True
     assert b["auto_compact"] is False
@@ -232,7 +299,8 @@ def test_disabling_compaction_entirely_stops_both(settings_env):
     settings = get_settings()
     b = _bd(
         doc_chars=int(settings.chat_context_max_chars * 0.95),
-        compressible_messages=settings.compaction_auto_min_messages + 10,
+        compressible_messages=6,
+        compressible_chars=settings.compaction_auto_min_chars * 10,
     )
     assert b["can_compact"] is False
     assert b["auto_compact"] is False
@@ -244,10 +312,7 @@ def test_a_huge_history_of_few_messages_arms_auto():
     An attorney pasted a contract into the chat box. It was stored, replayed as
     history, and reached 87,282 chars = 96% of budget — while the attached document
     was truncated to nothing. Compaction was exactly the right medicine and auto
-    stayed silent, because three messages is fewer than compaction_auto_min_messages.
-
-    A message COUNT cannot guard a SIZE budget. This is the same unit error already
-    fixed once in compaction_keep_recent_messages.
+    stayed silent, because three messages was fewer than the message floor of the day.
     """
     settings = get_settings()
     b = _bd(
@@ -255,27 +320,12 @@ def test_a_huge_history_of_few_messages_arms_auto():
         compressible_messages=3, compressible_chars=87282,
     )
     assert b["pct"] >= b["warn_pct"]
-    assert 3 < settings.compaction_auto_min_messages     # the message floor says no
-    assert 87282 >= settings.compaction_auto_min_chars   # the size floor says yes
+    assert 87282 >= settings.compaction_auto_min_chars
     assert b["auto_compact"] is True
 
 
-def test_the_size_floor_does_not_arm_on_a_small_history():
-    """The anti-churn property has to survive the new floor. Two short messages are
-    what the net-benefit guard declines, and they must still not arm anything."""
-    settings = get_settings()
-    b = _bd(
-        doc_chars=int(get_settings().chat_context_max_chars * 0.95),
-        compressible_messages=2, compressible_chars=1300,
-    )
-    assert b["can_compact"] is True
-    assert 2 < settings.compaction_auto_min_messages
-    assert 1300 < settings.compaction_auto_min_chars
-    assert b["auto_compact"] is False
-
-
-def test_neither_floor_arms_when_there_is_nothing_to_condense():
-    """Both floors are ANDed with can_compact, so a huge char count cannot arm auto
+def test_the_floor_arms_nothing_when_there_is_nothing_to_condense():
+    """The floor is ANDed with can_compact, so a huge char count cannot arm auto
     when the compressible pool is empty — otherwise a long already-condensed history
     would fire a call that condenses nothing, get refused, and disarm for the session."""
     b = _bd(

@@ -336,22 +336,22 @@ def build_context_breakdown(
         "warn_pct": settings.compaction_warn_pct,
         "can_compact": can_compact,
         # Built FROM can_compact, not alongside it, so "auto is a narrowing of the
-        # button" is structural and cannot drift. Firing unasked needs a higher bar
-        # than offering a button: see compaction_auto_min_messages in config.py for
-        # the churn loop the floor exists to prevent.
-        # EITHER floor arms it, because they measure the same thing two ways and
-        # each is blind where the other sees. The message floor misses a small
-        # number of enormous messages (measured live: 87,282 chars of history at
-        # 96% of budget, silent because it was three messages); a char floor alone
-        # would fire on a long-but-already-condensed history. Both are ANDed with
-        # can_compact, so neither can arm when there is nothing to condense.
+        # button" is structural and cannot drift. ONE floor, in characters, because
+        # every question here is a question about size: can_compact already
+        # establishes that there is PRESSURE (pct past the warn line), so the only
+        # thing left to ask is whether the pool is big enough for a segment to come
+        # out smaller than the rows it replaces. That is compaction_auto_min_chars,
+        # and it is derived from segment overhead rather than from a budget — see
+        # config.py for why the two floors this replaced could not arm until after
+        # the contract had already been truncated.
+        #
+        # No churn loop results from the low floor: a successful compaction drops
+        # pct back under the warn line, which turns can_compact off, so nothing can
+        # re-arm until real pressure returns.
         "auto_compact": bool(
             can_compact
             and settings.compaction_auto
-            and (
-                compressible_messages >= settings.compaction_auto_min_messages
-                or compressible_chars >= settings.compaction_auto_min_chars
-            )
+            and compressible_chars >= settings.compaction_auto_min_chars
         ),
         "compressible_messages": compressible_messages,
         "parts": parts,
