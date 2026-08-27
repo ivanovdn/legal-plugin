@@ -115,12 +115,19 @@ floors:
 16:07:27  auto=False can=True  pct=99/90 compressible=4 msgs/12485 chars floors=6 msgs/20000 chars
 ```
 
-Replaying those exact inputs through the fixed decision arms auto at **16:06:26**
-— one turn before the cut, which never happens:
+Confirmed live on the fixed code at 16:26, same document and same questions:
 
 ```
-16:06:26  auto=True can=True pct=99/90 compressible=2 msgs/8642 chars  floor=4000
+16:26:04  auto=True can=True pct=99/90 compressible=2 msgs/8642 chars floor=4000 truncated=False
+16:26:55  [compaction] condensed rows 237-240 (4 messages) into 5 quotes (8 dropped),
+          freeing 9778 of 8173 chars requested
 ```
+
+It arms one turn earlier than the old floors ever could, `truncated=False`, and
+the cut never happens: history 12,022 → 1,085, document untouched at 16,008, no
+red notice. Note the two off-by-ones, both correct: the breakdown says 2
+compressible messages because it is measured at REQUEST time, and the run 51
+seconds later condenses 4 because that turn's own rows have since been stored.
 
 Read it left to right: `pct` against the warn line says whether there is
 pressure, `compressible` against `floor` says whether there is anything worth
@@ -224,7 +231,7 @@ you actually ship.
 
 ## What a good run looks like
 
-From 2026-08-26, one document, six prose turns:
+From 2026-08-26, one document, six prose turns (manual button):
 
 ```
 history   11,013 chars (12%)  ->  1,361 (1%)
@@ -235,3 +242,24 @@ segment 6 covers rows 189-196, 1,361 chars standing in for 11,013
 
 Before that, the floor was observed holding twice at `compressible = 4`: the
 manual button offered, auto deliberately silent.
+
+And the first automatic run to prevent a truncation, 2026-08-27, grounded SOW +
+MSA at a 90,000 budget:
+
+```
+fired at   pct=99, compressible 2 msgs / 8,642 chars
+condensed  rows 237-240 (4 messages) -> 5 quotes, 8 dropped
+freed      9,778 chars against a target of 8,173
+history    12,022 -> 1,085 (13% -> 1%)
+document   16,008, never cut
+```
+
+Two things worth knowing from that run. **8 of 13 quotes dropped, every one from
+a single row** — a list-shaped answer, the same structural unquotability as a
+markdown table. Its space was still reclaimed, because a segment replaces its
+whole range regardless. And **after condensing, the turn sat at 88%** — one
+point under the warn line, because fixed content (document + playbook + MSA +
+system) is 87% of a 90,000 budget before a single message of history. At that
+budget auto will re-fire roughly every two turns. That is the budget being
+small, not compaction misbehaving; the shipped 150,000 puts the same turn at
+52%.
