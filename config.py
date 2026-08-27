@@ -155,6 +155,18 @@ class Settings(BaseSettings):
     # "> 0" threshold would fire an LLM call every turn against a segment
     # the net-benefit guard then declines. The manual button keeps its threshold."
     compaction_auto_min_messages: int = 6
+    # The SAME floor, measured the way the thing it guards is measured. The floor's
+    # job is to avoid a 10-30s call the net-benefit guard will decline, and net
+    # benefit is CHARACTERS (a 261-char header plus ~20 per quote line) — so a
+    # message count only ever approximated it, and approximates it badly at both
+    # ends. Found on the VM 2026-08-27: an attorney pasted a contract into the chat
+    # box, it was stored and replayed, history hit 87,282 chars = 96% of budget, and
+    # auto stayed silent because that was fewer than six messages. Compaction was
+    # exactly the right medicine and the floor refused to take it. This is the same
+    # unit error already fixed once in compaction_keep_recent_messages; either
+    # condition arming is enough. 20,000 is far above segment overhead, so a call
+    # that trips it is unambiguously worth making.
+    compaction_auto_min_chars: int = 20000
 
     # Attorney preference memory (USER.md) — stage 1 of the self-improving harness
     preferences_enabled: bool = True          # per-attorney USER.md; False = no store/injection

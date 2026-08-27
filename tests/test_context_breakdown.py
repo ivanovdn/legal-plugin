@@ -9,13 +9,13 @@ import skills.legal_research.context as ctx
 from config import get_settings
 from memory.conversation_store import append_turn
 from memory.conversation_summary import append_segment
-from skills.legal_research.context import build_context_breakdown, compressible_message_count
+from skills.legal_research.context import build_context_breakdown, compressible_history
 
 
 def _bd(**kw):
     base = dict(
         doc_chars=0, playbook_chars=0, msa_chars=0, review_chars=0,
-        history_chars=0, system_chars=0, compressible_messages=0,
+        history_chars=0, system_chars=0, compressible_messages=0, compressible_chars=0,
     )
     return build_context_breakdown(**{**base, **kw})
 
@@ -90,7 +90,7 @@ def test_compressible_count_excludes_the_verbatim_window():
         append_turn("doc-cc", "atty-cc", f"q{i}", f"a{i}")
     state = {"document_id": "doc-cc", "user_id": "atty-cc"}
     keep = get_settings().compaction_keep_recent_messages
-    assert compressible_message_count(state) == 10 - keep
+    assert compressible_history(state)[0] == 10 - keep
 
 
 def test_compressible_count_excludes_rows_already_condensed():
@@ -103,7 +103,7 @@ def test_compressible_count_excludes_rows_already_condensed():
     append_segment("doc-cc", "atty-cc", rows[0]["id"], rows[3]["id"], "SEG")
     state = {"document_id": "doc-cc", "user_id": "atty-cc"}
     keep = get_settings().compaction_keep_recent_messages
-    assert compressible_message_count(state) == (12 - 4) - keep
+    assert compressible_history(state)[0] == (12 - 4) - keep
 
 
 def test_compressible_count_is_zero_when_nothing_is_condensable():
@@ -111,7 +111,7 @@ def test_compressible_count_is_zero_when_nothing_is_condensable():
     # offered, because pressing it would be a no-op and a control that does
     # nothing teaches attorneys to ignore it.
     append_turn("doc-cc", "atty-cc", "q", "a")
-    assert compressible_message_count({"document_id": "doc-cc", "user_id": "atty-cc"}) == 0
+    assert compressible_history({"document_id": "doc-cc", "user_id": "atty-cc"})[0] == 0
 
 
 def test_compressible_count_is_zero_when_compaction_is_disabled(monkeypatch):
@@ -120,15 +120,15 @@ def test_compressible_count_is_zero_when_compaction_is_disabled(monkeypatch):
     monkeypatch.setenv("COMPACTION_ENABLED", "false")
     get_settings.cache_clear()
     try:
-        assert compressible_message_count({"document_id": "doc-cc", "user_id": "atty-cc"}) == 0
+        assert compressible_history({"document_id": "doc-cc", "user_id": "atty-cc"})[0] == 0
     finally:
         get_settings.cache_clear()
 
 
 def test_compressible_count_is_zero_without_ids():
     append_turn("doc-cc", "atty-cc", "q", "a")
-    assert compressible_message_count({"document_id": "", "user_id": "atty-cc"}) == 0
-    assert compressible_message_count({"document_id": "doc-cc", "user_id": ""}) == 0
+    assert compressible_history({"document_id": "", "user_id": "atty-cc"})[0] == 0
+    assert compressible_history({"document_id": "doc-cc", "user_id": ""})[0] == 0
 
 
 def test_compressible_count_survives_a_store_failure_without_flagging_degraded(monkeypatch):
@@ -144,7 +144,7 @@ def test_compressible_count_survives_a_store_failure_without_flagging_degraded(m
 
     monkeypatch.setattr(ctx, "latest_to_id", boom)
     state = {"document_id": "doc-cc", "user_id": "atty-cc"}
-    assert compressible_message_count(state) == 0
+    assert compressible_history(state)[0] == 0
     assert "memory_degraded" not in state
 
 
@@ -236,3 +236,66 @@ def test_disabling_compaction_entirely_stops_both(settings_env):
     )
     assert b["can_compact"] is False
     assert b["auto_compact"] is False
+
+
+def test_a_huge_history_of_few_messages_arms_auto():
+    """The VM failure of 2026-08-27, pinned.
+
+    An attorney pasted a contract into the chat box. It was stored, replayed as
+    history, and reached 87,282 chars = 96% of budget — while the attached document
+    was truncated to nothing. Compaction was exactly the right medicine and auto
+    stayed silent, because three messages is fewer than compaction_auto_min_messages.
+
+    A message COUNT cannot guard a SIZE budget. This is the same unit error already
+    fixed once in compaction_keep_recent_messages.
+    """
+    settings = get_settings()
+    b = _bd(
+        playbook_chars=30412, history_chars=87282, system_chars=7188,
+        compressible_messages=3, compressible_chars=87282,
+    )
+    assert b["pct"] >= b["warn_pct"]
+    assert 3 < settings.compaction_auto_min_messages     # the message floor says no
+    assert 87282 >= settings.compaction_auto_min_chars   # the size floor says yes
+    assert b["auto_compact"] is True
+
+
+def test_the_size_floor_does_not_arm_on_a_small_history():
+    """The anti-churn property has to survive the new floor. Two short messages are
+    what the net-benefit guard declines, and they must still not arm anything."""
+    settings = get_settings()
+    b = _bd(
+        doc_chars=int(get_settings().chat_context_max_chars * 0.95),
+        compressible_messages=2, compressible_chars=1300,
+    )
+    assert b["can_compact"] is True
+    assert 2 < settings.compaction_auto_min_messages
+    assert 1300 < settings.compaction_auto_min_chars
+    assert b["auto_compact"] is False
+
+
+def test_neither_floor_arms_when_there_is_nothing_to_condense():
+    """Both floors are ANDed with can_compact, so a huge char count cannot arm auto
+    when the compressible pool is empty — otherwise a long already-condensed history
+    would fire a call that condenses nothing, get refused, and disarm for the session."""
+    b = _bd(
+        doc_chars=int(get_settings().chat_context_max_chars * 0.95),
+        compressible_messages=0, compressible_chars=90000,
+    )
+    assert b["can_compact"] is False
+    assert b["auto_compact"] is False
+
+
+def test_compressible_history_reports_chars_excluding_the_verbatim_window():
+    """The kept-verbatim rows are not reclaimable, so their characters must not
+    count toward the size floor — otherwise the floor arms on history compaction
+    would leave exactly where it is."""
+    append_turn("doc-ch", "atty-ch", "q" * 100, "a" * 200)
+    append_turn("doc-ch", "atty-ch", "q" * 300, "a" * 400)
+    state = {"document_id": "doc-ch", "user_id": "atty-ch"}
+    keep = get_settings().compaction_keep_recent_messages
+    assert keep == 2, "this test's arithmetic assumes the shipped floor of 2"
+    messages, chars = compressible_history(state)
+    # 4 rows of 100/200/300/400; the newest 2 (300, 400) stay verbatim.
+    assert messages == 2
+    assert chars == 300

@@ -129,6 +129,27 @@ consequence: the row's space is still reclaimed, because a segment replaces its
 whole range regardless of how much got quoted — so the largest answer in a
 conversation can end up with no representation in the summary at all.
 
+**Do not paste a large document into the chat box to give the session an MSA.**
+It lands in `system & question`, which `_cap_chat_context` never truncates and
+compaction can never touch — so the *attached* document is cut instead, to zero
+if the paste is big enough, and the model answers having read none of the
+contract. The paste is then stored and replayed as history on every later turn,
+so it keeps costing you the document until it is condensed. Measured on the VM
+2026-08-27: `system & question` 92,999 chars (103% of budget on its own),
+document 16,008 → 0. Real MSA grounding comes only from
+`scripts/ingest_demo_msa.py`, which puts it in Qdrant as `doc_type="msa"` where
+`attach_parent_msa` can find it — that is what makes the `governing MSA` row
+appear in the counter.
+
+**Without the MSA ingested, the budget has to come down further.** Fixed content
+on a VM with no MSA is document + playbook + system ≈ 53,500 chars, so at
+`CHAT_CONTEXT_MAX_CHARS=90000` a turn sits at ~59% and nothing ever fires. The
+arithmetic: auto fires when history ≥ `0.9 × budget − fixed`, and the document
+starts truncating when history > `budget − fixed`. At 68,000 that is a fire at
+7,673 chars of history with truncation not starting until 14,473 — a workable
+gap. Prefer ingesting the MSA and testing at 90,000, which is the configuration
+you actually ship.
+
 ## What a good run looks like
 
 From 2026-08-26, one document, six prose turns:

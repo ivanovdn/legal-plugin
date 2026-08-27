@@ -22,7 +22,7 @@ for any of them.
 A separate, NOT-shared set of names moved out of legal_research.py entirely and
 was never re-imported there: load_latest_review, load_recent,
 detect_contract_type, load_playbook_bundle, attach_parent_msa,
-_reconcile_review_with_doc, latest_to_id, load_segments, count_after.
+_reconcile_review_with_doc, latest_to_id, load_segments, row_lengths_after.
 Patching those via the entry module fails loudly with AttributeError instead
 of silently no-oping.
 """
@@ -31,7 +31,7 @@ import re
 
 from config import get_settings
 from graph.state import LegalAgentState
-from memory.conversation_store import count_after, load_recent
+from memory.conversation_store import load_recent, row_lengths_after
 from memory.conversation_summary import latest_to_id, load_segments
 from memory.review_store import load_latest_review
 from skills.grounding import (
@@ -236,29 +236,39 @@ def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) ->
     }
 
 
-def compressible_message_count(state: LegalAgentState) -> int:
-    """How many stored messages sit past the compaction floor AND outside the
-    verbatim window — i.e. what a Condense action would actually condense.
+def compressible_history(state: LegalAgentState) -> tuple[int, int]:
+    """(messages, characters) that a Condense action would actually condense —
+    past the last segment AND outside the verbatim window.
 
-    Best-effort: 0 on any failure, and 0 when compaction is off. This feeds a
+    BOTH numbers, because the two floors this feeds are measured differently: the
+    manual button only asks whether anything exists at all, while automatic firing
+    has to decide whether a 10-30s call is worth making, and that is a question
+    about SIZE. Returning only a count is what let a 96%-of-budget history sit
+    uncondensed because it happened to be three messages.
+
+    Best-effort: (0, 0) on any failure, and when compaction is off. This feeds a
     UI affordance, so a store hiccup must cost the attorney a button, never a
     turn. It does NOT flag memory_degraded — that is reserved for reads the
     answer depends on.
     """
     settings = get_settings()
     if not settings.compaction_enabled:
-        return 0
+        return 0, 0
     document_id = state.get("document_id", "")
     attorney_id = state.get("user_id", "")
     if not document_id or not attorney_id:
-        return 0
+        return 0, 0
     try:
         boundary = latest_to_id(document_id, attorney_id)
-        total = count_after(document_id, attorney_id, boundary)
+        lengths = row_lengths_after(document_id, attorney_id, boundary)
     except Exception as e:
-        logger.warning("[legal_research] compressible-count failed: %s", e)
-        return 0
-    return max(0, total - settings.compaction_keep_recent_messages)
+        logger.warning("[legal_research] compressible-history read failed: %s", e)
+        return 0, 0
+    # Drop the newest keep_recent_messages: compaction leaves those verbatim, so
+    # their characters are not reclaimable and must not arm anything.
+    keep = settings.compaction_keep_recent_messages
+    compressible = lengths[: max(0, len(lengths) - keep)]
+    return len(compressible), sum(compressible)
 
 
 # Display order. Only `history` is compactable: the document is the source of
@@ -275,6 +285,7 @@ def build_context_breakdown(
     history_chars: int,
     system_chars: int,
     compressible_messages: int,
+    compressible_chars: int,
 ) -> dict:
     """What this turn actually spent, as the pane's counter renders it.
 
@@ -328,10 +339,19 @@ def build_context_breakdown(
         # button" is structural and cannot drift. Firing unasked needs a higher bar
         # than offering a button: see compaction_auto_min_messages in config.py for
         # the churn loop the floor exists to prevent.
+        # EITHER floor arms it, because they measure the same thing two ways and
+        # each is blind where the other sees. The message floor misses a small
+        # number of enormous messages (measured live: 87,282 chars of history at
+        # 96% of budget, silent because it was three messages); a char floor alone
+        # would fire on a long-but-already-condensed history. Both are ANDed with
+        # can_compact, so neither can arm when there is nothing to condense.
         "auto_compact": bool(
             can_compact
             and settings.compaction_auto
-            and compressible_messages >= settings.compaction_auto_min_messages
+            and (
+                compressible_messages >= settings.compaction_auto_min_messages
+                or compressible_chars >= settings.compaction_auto_min_chars
+            )
         ),
         "compressible_messages": compressible_messages,
         "parts": parts,

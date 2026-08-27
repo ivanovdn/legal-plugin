@@ -83,19 +83,27 @@ def load_rows_after(
     return [{"id": r[0], "role": r[1], "content": r[2]} for r in rows]
 
 
-def count_after(document_id: str, attorney_id: str, after_id: int) -> int:
-    """How many messages sit past the compaction floor.
+def row_lengths_after(document_id: str, attorney_id: str, after_id: int) -> list[int]:
+    """Content lengths of the messages past the compaction floor, OLDEST FIRST.
 
     Feeds the counter's "compressible history exists" condition — without it the
     Condense control would appear when there is nothing left to condense, and a
     control that offers a no-op teaches attorneys to ignore it.
+
+    Lengths rather than a bare COUNT(*) because the automatic floor is measured in
+    characters: six one-line questions and two pasted contracts are the same count
+    and nothing alike as a budget problem. Order matters — the caller drops the
+    newest `compaction_keep_recent_messages` before summing, and those are the rows
+    compaction would leave verbatim. Cheap enough for a per-turn UI query: integers,
+    never content.
     """
     if not document_id or not attorney_id:
-        return 0
+        return []
     with get_pool().connection() as conn:
         cur = conn.execute(
-            """SELECT COUNT(*) FROM conversation_store
-               WHERE document_id = %s AND attorney_id = %s AND id > %s""",
+            """SELECT length(content) FROM conversation_store
+               WHERE document_id = %s AND attorney_id = %s AND id > %s
+               ORDER BY id""",
             (document_id, attorney_id, after_id),
         )
-        return int(cur.fetchone()[0])
+        return [int(r[0]) for r in cur.fetchall()]

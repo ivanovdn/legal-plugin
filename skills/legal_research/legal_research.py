@@ -23,7 +23,7 @@ from skills.legal_research.context import (
     _load_prior_review_block,
     _needs_grounding,
     build_context_breakdown,
-    compressible_message_count,
+    compressible_history,
 )
 from skills.legal_research.edit_parsing import (
     _extract_proposed_edits,
@@ -187,6 +187,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # — the hazard recorded in CLAUDE.md.
     truncation = _cap_chat_context(messages, uploaded_text, request)
     state["context_truncated"] = truncation
+    compressible_count, compressible_chars = compressible_history(state)
     # Report what was SENT, not what was asked for: when the document was cut,
     # the counter's document line must show the kept size or it contradicts the
     # truncation notice sitting right beside it.
@@ -198,7 +199,8 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         history_chars=sum(len(m["content"]) for m in chat_history),
         system_chars=len(CHAT_SYSTEM_PROMPT) + len(prefs_block) + len(request)
         + len((state.get("attorney_notes") or "").strip()),
-        compressible_messages=compressible_message_count(state),
+        compressible_messages=compressible_count,
+        compressible_chars=compressible_chars,
     )
 
     # Same reason as llm_caller: without a pre-call line an in-flight doc-chat

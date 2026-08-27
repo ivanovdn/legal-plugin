@@ -2,7 +2,7 @@
 import pytest
 
 import memory.conversation_store as cs
-from memory.conversation_store import append_turn, count_after, load_recent, load_rows_after
+from memory.conversation_store import append_turn, load_recent, load_rows_after, row_lengths_after
 
 
 def test_append_turn_writes_two_rows_in_order():
@@ -94,14 +94,16 @@ def test_load_rows_after_floor_and_isolation():
     assert [r["content"] for r in load_rows_after("doc-1", "atty-2", 0, 100)] == ["other", "reply"]
 
 
-def test_count_after_counts_only_rows_past_the_floor():
-    append_turn("doc-1", "atty-1", "q1", "a1")
-    append_turn("doc-1", "atty-1", "q2", "a2")
-    assert count_after("doc-1", "atty-1", 0) == 4
+def test_row_lengths_after_returns_sizes_past_the_floor_oldest_first():
+    """Lengths, not a count: the automatic floor is measured in characters, and
+    order is load-bearing because the caller drops the NEWEST rows before summing."""
+    append_turn("doc-1", "atty-1", "q1", "aaaa")
+    append_turn("doc-1", "atty-1", "qq2", "aaaaaa")
+    assert row_lengths_after("doc-1", "atty-1", 0) == [2, 4, 3, 6]
     rows = load_rows_after("doc-1", "atty-1", 0, 100)
-    assert count_after("doc-1", "atty-1", rows[1]["id"]) == 2
-    assert count_after("doc-1", "atty-1", rows[-1]["id"]) == 0
-    assert count_after("", "atty-1", 0) == 0
+    assert row_lengths_after("doc-1", "atty-1", rows[1]["id"]) == [3, 6]
+    assert row_lengths_after("doc-1", "atty-1", rows[-1]["id"]) == []
+    assert row_lengths_after("", "atty-1", 0) == []
 
 
 def test_load_rows_after_rejects_nonpositive_limit():
