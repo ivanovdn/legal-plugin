@@ -191,7 +191,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # Report what was SENT, not what was asked for: when the document was cut,
     # the counter's document line must show the kept size or it contradicts the
     # truncation notice sitting right beside it.
-    state["context_breakdown"] = build_context_breakdown(
+    breakdown = build_context_breakdown(
         doc_chars=truncation["kept_chars"] if truncation else len(uploaded_text),
         playbook_chars=len(playbook),
         msa_chars=len(msa_block),
@@ -202,11 +202,36 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         compressible_messages=compressible_count,
         compressible_chars=compressible_chars,
     )
+    state["context_breakdown"] = breakdown
+
+    settings = get_settings()
+    # Why auto-compaction did or did not fire, on EVERY turn. Nothing else logs
+    # the decision — compaction.py only speaks once a run is already underway —
+    # so a turn where auto stayed silent left no evidence anywhere, and the
+    # question could only be reconstructed from screenshots after the fact. That
+    # cost three round trips on the VM (2026-08-27) and still did not settle
+    # whether the backend had withheld the flag or the pane had ignored it.
+    # Both halves are answerable from this one line: `auto=True` with no
+    # `[compaction] condensed` following it puts the fault in the pane;
+    # `auto=False` names the floor that held. The verdict is READ BACK off the
+    # breakdown rather than recomputed, so the line cannot disagree with what
+    # the pane was actually sent — the numbers beside it are inputs, not a
+    # second derivation. Prefixed `[compaction]` so one grep finds the decision
+    # and the run together.
+    logger.info(
+        "[compaction] auto=%s can=%s pct=%d/%d compressible=%d msgs/%d chars "
+        "floors=%d msgs/%d chars enabled=%s auto_cfg=%s doc=%s",
+        breakdown["auto_compact"], breakdown["can_compact"],
+        breakdown["pct"], breakdown["warn_pct"],
+        compressible_count, compressible_chars,
+        settings.compaction_auto_min_messages, settings.compaction_auto_min_chars,
+        settings.compaction_enabled, settings.compaction_auto,
+        state.get("document_id") or "-",
+    )
 
     # Same reason as llm_caller: without a pre-call line an in-flight doc-chat
     # turn leaves no trace anywhere until it finishes, so a slow shared Ollama
     # is indistinguishable from a hang.
-    settings = get_settings()
     logger.info(
         "[legal_research] -> doc_chat model=%s doc=%d chars grounded=%s history=%d msgs=%d",
         settings.llm_model, len(uploaded_text), bool(playbook), len(chat_history), len(messages),

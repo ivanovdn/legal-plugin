@@ -85,6 +85,51 @@ not edits:
 5. The counterparty pushed back on three points: they want the liability cap at 6 months of fees, they will not accept the mutual non-solicit, and they want to strike the audit right. Take each in turn and tell me where we can move and where we cannot.
 6. Explain how the confidentiality obligations here interact with the IP ownership clause, and whether the combination protects us on residual knowledge.
 
+## Reading the decision
+
+Every doc-chat turn logs why auto-compaction did or did not fire, whether or
+not anything happened:
+
+```bash
+# local — start.sh logs to its own terminal, so pipe it when you start it:
+bash scripts/start.sh 2>&1 | tee /tmp/backend.log
+grep -i compaction /tmp/backend.log
+# VM
+docker compose -f docker-compose.yml -f docker-compose.remote.yml \
+  logs backend --since 30m | grep -i compaction
+```
+
+Measured locally on 2026-08-27, five consecutive turns on one document at
+`CHAT_CONTEXT_MAX_CHARS=15000` and `COMPACTION_AUTO_MIN_CHARS=500` (both
+lowered to make the whole progression visible in five turns):
+
+```
+auto=False can=False pct=98/90  compressible=0 msgs/0 chars    floors=6 msgs/500 chars
+auto=False can=False pct=98/90  compressible=0 msgs/0 chars    floors=6 msgs/500 chars
+auto=False can=True  pct=235/90 compressible=2 msgs/235 chars  floors=6 msgs/500 chars
+auto=False can=True  pct=238/90 compressible=4 msgs/440 chars  floors=6 msgs/500 chars
+auto=True  can=True  pct=238/90 compressible=6 msgs/766 chars  floors=6 msgs/500 chars
+```
+
+Read it left to right: `pct` against the warn line says whether there is
+pressure, `compressible` against `floors` says whether there is anything worth
+condensing, and `auto` is the verdict the pane was actually sent. The first two
+turns are over the warn line and still correctly silent — the keep-recent floor
+leaves nothing compressible until a third turn exists.
+
+The line is what separates the two ways this feature fails:
+
+| you see | it means |
+|---|---|
+| `auto=False`, a floor unmet | working as designed — the numbers name which floor |
+| `auto=False`, both floors met | a backend bug: `can_compact`, `enabled` or `auto_cfg` will say why |
+| `auto=True`, then `[compaction] condensed rows N-M` | the whole path worked |
+| `auto=True`, then **nothing** | the PANE dropped it — almost always the disarm latch, cleared by reloading the task pane |
+
+Note the last row: the pane disarms auto for its lifetime after one failed or
+refused automatic run, and from the server that looks identical to a pane that
+never tried. This line is the only place the difference is visible.
+
 ## The six checks
 
 | # | Do | Pass |
@@ -103,16 +148,22 @@ pass on the most important check.
 
 ## Gotchas that cost time on the first run
 
-**`compressible_message_count` is scoped to `(document_id, attorney_id)`.**
+**`compressible_history` is scoped to `(document_id, attorney_id)`.**
 Switching documents mid-test restarts the count: a document you have not
 chatted on has no segments and its own floor. To check the live figure, use the
 real function rather than SQL — a hand-written `max(to_id)` across the whole
 table is wrong and will mispredict:
 
 ```python
-from skills.legal_research.context import compressible_message_count
-compressible_message_count({"document_id": DOC, "user_id": ATTY})
+from skills.legal_research.context import compressible_history
+compressible_history({"document_id": DOC, "user_id": ATTY})   # -> (messages, chars)
 ```
+
+**But prefer the log to any query run after the fact.** A store query answers
+"what is compressible *now*", which is a different question from "what was
+compressible when the turn fired" — and a manual Condense in between advances
+`latest_to_id`, so the query legitimately returns `(0, 0)` no matter what the
+turn saw. Reading the decision off the log avoids the trap entirely.
 
 **The breakdown is measured at REQUEST time.** The counter you are looking at
 describes the turn that produced it, before that turn's own two rows were

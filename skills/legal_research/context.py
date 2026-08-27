@@ -10,7 +10,7 @@ the document, never the grounding.
 Testing note — patch the module whose globals the call path resolves through.
 legal_research.py re-imports the seven functions above (_load_prior_review_block,
 _load_prior_conversation, _needs_grounding, _build_chat_grounding,
-_cap_chat_context, build_context_breakdown, compressible_message_count), so
+_cap_chat_context, build_context_breakdown, compressible_history), so
 those names exist on BOTH modules bound to the same object; get_settings hits
 the same hazard by a different route (both modules independently do `from
 config import get_settings` — same object, not a re-export). Patch *this*
