@@ -197,6 +197,68 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
     return playbook, msa_block
 
 
+_MSA_BLOCK_START = "--- GOVERNING MSA ("
+_MSA_BLOCK_END = "--- END GOVERNING MSA ---"
+_MSA_CUT_NOTE = "\n\n[MSA truncated to fit the context budget]"
+
+
+def _trim_msa_to_fit(messages: list[dict], overflow: int) -> int:
+    """Give up governing-MSA text to keep the document whole. Returns chars freed.
+
+    This reverses the old rule that grounding is never truncated. That rule was
+    written when msa_max_chars was 24,000 and the MSA therefore could not itself
+    be the reason a turn overflowed; now that it is a ceiling rather than a size,
+    it can be — and between the two, the contract under review wins. The MSA is
+    reference material we already choose to truncate; the document is the source
+    of truth, and its cut is a TAIL cut, so what goes is liability, indemnity,
+    termination, governing law and the signature blocks.
+
+    But the MSA is spent ONLY when spending it actually saves the document. If
+    the overflow is bigger than the whole block, the contract is getting cut
+    either way, and surrendering the comparison as well buys nothing — so we
+    leave it whole and fall through to the document cut, exactly as before. That
+    makes this strictly non-regressive: the only turns whose behaviour changes
+    are the ones where the document now survives intact.
+
+    The playbook is never touched. It is the ceiling on legal judgment, not
+    reference material.
+    """
+    for m in messages:
+        if m.get("role") != "system" or _MSA_BLOCK_START not in m.get("content", ""):
+            continue
+        content = m["content"]
+        head_end = content.index("\n", content.index(_MSA_BLOCK_START)) + 1
+        tail_start = content.rindex(_MSA_BLOCK_END)
+        msa_text = content[head_end:tail_start]
+        # Removing n chars of MSA costs len(note) back, so saving `overflow`
+        # needs overflow + len(note) available. Short of that, spending it is a
+        # loss on both sides.
+        if len(msa_text) < overflow + len(_MSA_CUT_NOTE):
+            return 0
+        keep = len(msa_text) - overflow - len(_MSA_CUT_NOTE)
+        m["content"] = content[:head_end] + msa_text[:keep] + _MSA_CUT_NOTE + content[tail_start:]
+        freed = len(content) - len(m["content"])
+        logger.warning(
+            "[legal_research] trimmed the governing MSA by %d chars (%d -> %d) to keep "
+            "the document whole", freed, len(msa_text), keep,
+        )
+        return freed
+    return 0
+
+
+def msa_chars_sent(messages: list[dict]) -> int:
+    """Size of the governing-MSA block as it will actually be sent, post-trim.
+
+    The caller holds `msa_block` as a local, but _cap_chat_context trims the
+    MESSAGE, so that local is stale the moment a trim happens. Reporting it would
+    put a 73,152-char MSA row in the pane beside a 36,325-char reality, and a
+    total over budget with no truncation notice — a counter that contradicts
+    itself, which is the exact defect the sideload caught twice before.
+    """
+    return sum(len(m["content"]) for m in messages
+               if m.get("role") == "system" and _MSA_BLOCK_START in m.get("content", ""))
+
+
 def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> dict | None:
     """If total assembled content exceeds the budget, truncate ONLY the document
     portion of the trailing user message — never the grounding. Mutates messages
@@ -215,6 +277,10 @@ def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) ->
     """
     budget = get_settings().chat_context_max_chars
     total = sum(len(m["content"]) for m in messages)
+    if total <= budget:
+        return None
+    # The MSA gives way first. Only what it cannot cover comes out of the contract.
+    total -= _trim_msa_to_fit(messages, total - budget)
     if total <= budget:
         return None
     overflow = total - budget

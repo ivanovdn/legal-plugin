@@ -1,5 +1,30 @@
 # Testing context compaction by hand
 
+## What compaction is actually for
+
+Read the rest of this document in chars and percentages and it looks like we are
+fighting a capacity limit. We are not. qwen3.6's window is **131,072 tokens**;
+`chat_context_max_chars` is 150,000 characters ≈ **30,700 tokens — 23% of it**.
+There is 4x headroom, and there always has been since `ollama_num_ctx` went to
+131,072.
+
+The budget is a **latency ceiling**, derived in `config.py` from a 30-second turn:
+prefill runs at 1,397 tok/s on Spark, an answer costs ~7.8s of decode, so ~31,000
+tokens of prompt is what fits in the remainder. Compaction buys back **prefill
+seconds**, and it protects the contract because the document is what
+`_cap_chat_context` cuts when the budget is exceeded.
+
+Two consequences worth holding onto while testing:
+
+- **Raising the budget is a real option, not a capacity violation.** It costs
+  latency, nothing else. KV is cheap here — ~49.5 MB per 1k tokens, because
+  qwen3.6 is a hybrid SSM/attention MoE with only ~10 full-attention layers of 40.
+- **Latency measured locally does not transfer.** 1,397 tok/s is Spark. Local Mac
+  turns ran 37–78s on 2026-08-27 where the arithmetic predicts ~13s. Judge budget
+  and latency changes on the VM.
+
+## The manual gate
+
 The auto-fire effect has **no automated coverage and cannot have any**: the Word
 add-in has no React test harness — its tests are plain `tsx` assertion scripts
 that can neither render a component nor drive a `useEffect`. `scripts/check.sh`

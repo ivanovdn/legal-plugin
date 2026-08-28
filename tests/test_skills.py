@@ -1148,7 +1148,15 @@ def test_contract_review_nda_does_not_attach_msa(monkeypatch):
 
 
 def test_contract_review_truncates_oversized_msa(monkeypatch):
-    big = "Z" * 30000
+    """msa_max_chars is a CEILING, so it still bites — just far higher than it did.
+
+    It was 24,000, which cut the real 73,152-char Trinetix MSA to 33% on every
+    grounded turn including the SOW-vs-MSA conflict check that is the reason the
+    MSA is attached at all. At 100,000 no real MSA is truncated; this asserts the
+    ceiling is still enforced for one larger than any we have seen.
+    """
+    cap = get_settings().msa_max_chars
+    big = "Z" * (cap + 20000)
     _patch_msa(monkeypatch, lambda client_id, **kw: ("Big MSA", big))
     state = _make_state(
         request="Review this contract.",
@@ -1158,8 +1166,30 @@ def test_contract_review_truncates_oversized_msa(monkeypatch):
     result = contract_review(state)
 
     user_msg = result["messages"][-1]["content"]
-    assert "[MSA truncated to 24000 chars for review]" in user_msg
-    assert ("Z" * 30000) not in user_msg  # full text not injected
+    assert f"[MSA truncated to {cap} chars for review]" in user_msg
+    assert big not in user_msg  # full text not injected
+
+
+def test_contract_review_sends_a_real_sized_msa_whole(monkeypatch):
+    """The 73,152-char Trinetix MSA must now arrive intact on the review path.
+
+    The review path has no input cap and ~600,883 chars of headroom, so the old
+    24,000 was throwing away two thirds of the MSA for nothing. Pinned at the
+    real measured size: if the ceiling is ever lowered under it, this fails.
+    """
+    real_msa_chars = 73152
+    body = "Clause. " * (real_msa_chars // 8)
+    _patch_msa(monkeypatch, lambda client_id, **kw: ("Trinetix Model MSA", body))
+    state = _make_state(
+        request="Review this contract.",
+        uploaded_docs=[{"text": _SOW_SAMPLE}],
+        task_type="contract_review",
+    )
+    result = contract_review(state)
+
+    user_msg = result["messages"][-1]["content"]
+    assert body in user_msg, "a real-sized MSA must not be truncated"
+    assert "MSA truncated" not in user_msg
 
 
 def test_contract_review_msa_lookup_error_reviews_standalone(monkeypatch):
