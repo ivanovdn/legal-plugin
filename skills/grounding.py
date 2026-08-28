@@ -75,6 +75,16 @@ def attach_parent_msa(text: str, client_id: str, max_chars: int) -> tuple[str, s
     `text` is accepted for a future party-name match; today it selects the single
     MSA on file for the client. Returns None when no MSA / no client_id.
     """
+    # A non-positive allowance means the document and playbook already fill the
+    # budget. Guarded HERE rather than at the callers because both now compute
+    # max_chars by subtraction and either can go negative — and Python would not
+    # complain: msa_text[:-33446] silently returns everything but the LAST 33,446
+    # chars, i.e. the head-slice inverted, with a truncation note quoting a
+    # negative size.
+    if max_chars <= 0:
+        logger.warning("[grounding] no room for the governing MSA (allowance %d) — "
+                       "reviewing standalone", max_chars)
+        return None
     parent = get_parent_msa(client_id)
     if not parent:
         return None

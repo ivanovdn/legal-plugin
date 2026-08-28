@@ -167,7 +167,12 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
     if contract_type == "sow" and uploaded_text:
         client_id = (state.get("filters") or {}).get("client_id", "")
         try:
-            parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
+            # What is LEFT, not a fixed cap. A constant here is really a
+            # measurement of whichever MSA happened to be on file when it was
+            # written; this bound moves with the document and the playbook.
+            allowance = (get_settings().review_headroom_chars
+                         - len(uploaded_text) - len(playbook))
+            parent = attach_parent_msa(uploaded_text, client_id, allowance)
         except Exception:
             logger.exception("[contract_review] parent-MSA lookup failed — reviewing SOW standalone")
             parent = None

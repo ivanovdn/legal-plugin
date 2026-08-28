@@ -185,7 +185,12 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
         playbook = load_playbook_bundle(contract_type)
         if contract_type == "sow":
             client_id = (state.get("filters") or {}).get("client_id", "")
-            parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
+            # What is LEFT of the chat budget, not a fixed cap. This is a loose
+            # upper bound only — _cap_chat_context enforces the real one, and it
+            # knows the history and review block this cannot see.
+            allowance = (get_settings().chat_context_max_chars
+                         - len(uploaded_text) - len(playbook))
+            parent = attach_parent_msa(uploaded_text, client_id, allowance)
             if parent:
                 title, msa_text = parent
                 msa_block = (

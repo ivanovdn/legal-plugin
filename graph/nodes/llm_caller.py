@@ -112,10 +112,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
     # real design question, and the chat path's answer (cut the document) is
     # precisely the bug this change exists to fix. Report it and let the review
     # proceed; a visible degraded answer beats a silent wrong one.
-    headroom_chars = int(
-        (settings.ollama_num_ctx - settings.ollama_num_predict_review)
-        * settings.est_chars_per_token
-    )
+    headroom_chars = settings.review_headroom_chars
     if chars > headroom_chars:
         logger.error(
             "[llm_caller] review input %d chars EXCEEDS headroom %d "

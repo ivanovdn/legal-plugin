@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
+from config import Settings
 from observability.tracing import (
     ollama_usage,
     message_usage,
@@ -385,6 +386,18 @@ def test_llm_caller_routes_token_usage_to_state(monkeypatch):
     assert result["token_usage"]["output"] == 412
 
 
+
+def _settings(**over):
+    """A REAL Settings, so review_headroom_chars stays a derivation the test exercises.
+
+    A SimpleNamespace has to carry that value as a literal — restating the very
+    formula under test, and going quietly stale the next time llm_caller reads a
+    field the fake does not have (which is exactly how these three broke).
+    """
+    return Settings(llm_model="m", ollama_base_url="http://x",
+                    ollama_num_predict_chat=2048, **over)
+
+
 def test_llm_caller_flags_review_input_over_headroom(monkeypatch):
     """A review whose assembled input exceeds the window's headroom must SAY so.
 
@@ -405,11 +418,8 @@ def test_llm_caller_flags_review_input_over_headroom(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
     # num_ctx 1000 - num_predict_review 500 = 500 tokens * 4.0 chars = 2000 chars headroom
-    monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
-        llm_model="m", ollama_base_url="http://x", ollama_num_ctx=1000,
-        ollama_num_predict_chat=100, ollama_num_predict_review=500,
-        est_chars_per_token=4.0,
-    ))
+    monkeypatch.setattr(mod, "get_settings", lambda: _settings(
+        ollama_num_ctx=1000, ollama_num_predict_review=500, est_chars_per_token=4.0))
     state = {"request": "x" * 5000, "task_type": "contract_review", "retrieved_chunks": []}
     result = mod.llm_caller(state)
 
@@ -431,11 +441,7 @@ def test_llm_caller_does_not_flag_review_within_headroom(monkeypatch):
             return {"message": {"content": "review"}}
 
     monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
-    monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
-        llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
-        ollama_num_predict_chat=2048, ollama_num_predict_review=8192,
-        est_chars_per_token=4.89,
-    ))
+    monkeypatch.setattr(mod, "get_settings", lambda: _settings())
     state = {"request": "short request", "task_type": "contract_review", "retrieved_chunks": []}
     result = mod.llm_caller(state)
     assert result.get("context_truncated") is None
@@ -459,11 +465,7 @@ def test_llm_caller_clears_stale_context_truncated_flag(monkeypatch):
             return {"message": {"content": "review"}}
 
     monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
-    monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
-        llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
-        ollama_num_predict_chat=2048, ollama_num_predict_review=8192,
-        est_chars_per_token=4.89,
-    ))
+    monkeypatch.setattr(mod, "get_settings", lambda: _settings())
     state = {
         "request": "short request", "task_type": "contract_review", "retrieved_chunks": [],
         "context_truncated": {"doc_chars": 999, "kept_chars": 1, "kept_pct": 0},

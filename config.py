@@ -131,27 +131,20 @@ class Settings(BaseSettings):
     # prompt components every turn, to decide a question a free len() already
     # answers, is the cost this avoids.
     est_chars_per_token: float = 4.89
+    @property
+    def review_headroom_chars(self) -> int:
+        """Input characters the review path can send before Ollama middle-drops.
+
+        Mechanism, not corpus: the model's window less the reserved generation
+        budget, converted at the measured ratio. ~600,883 chars today. Used both
+        by llm_caller's overflow detector and to bound the governing MSA — see
+        attach_parent_msa's callers, which subtract what the document and playbook
+        already spend rather than applying a fixed cap.
+        """
+        return int((self.ollama_num_ctx - self.ollama_num_predict_review)
+                   * self.est_chars_per_token)
+
     chat_conditional_grounding: bool = True   # gate playbook/MSA on _needs_grounding; False = always attach (A/B + future cloud path)
-    # A CEILING on the governing MSA, not a size — the same shape as
-    # compaction_max_quotes. Send the whole thing when there is room, trim only
-    # when there is not.
-    #
-    # It was 24,000, which cut the 73,152-char Trinetix MSA to 33% on EVERY
-    # grounded turn, including the SOW-vs-MSA conflict check that is the whole
-    # reason the MSA is attached (sow/SKILL.md:6). That number was load
-    # management measured against an ollama_num_ctx of 32,768 — a window we have
-    # not run since feat/context-budget. At the shipped 131,072 window and a
-    # 150,000-char budget the full MSA fits with room: document 16,008 +
-    # playbook 30,412 + MSA 73,152 + system 7,214 = 126,786 chars = 25,928
-    # tokens, 20% of the window, leaving 23,214 for history. The only cost is
-    # ~9,900 tokens of extra prefill, about 7s on Spark.
-    #
-    # 100,000 is set to clear any real MSA rather than to fit a budget: the
-    # BUDGET is what bounds the chat path, and _cap_chat_context now enforces it
-    # by trimming this block before it will touch the contract. On the review
-    # path there is no cap at all and ~600,883 chars of headroom, so raising this
-    # simply stops throwing away two-thirds of the MSA for no reason.
-    msa_max_chars: int = 100000
     conversation_store_enabled: bool = True   # durable per-(document,attorney) chat store; False = Redis-only history
     conversation_max_messages: int = 20       # messages injected from the durable store (~10 turns); store retains all
 
