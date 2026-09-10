@@ -24,7 +24,6 @@ from skills.legal_research.context import (
     _needs_grounding,
     build_context_breakdown,
     compressible_history,
-    msa_chars_sent,
 )
 from skills.legal_research.edit_parsing import (
     _extract_proposed_edits,
@@ -195,7 +194,7 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     breakdown = build_context_breakdown(
         doc_chars=truncation["kept_chars"] if truncation else len(uploaded_text),
         playbook_chars=len(playbook),
-        msa_chars=msa_chars_sent(messages),   # post-trim: report what was SENT
+        msa_chars=len(msa_block),
         review_chars=len(review_block),
         history_chars=sum(len(m["content"]) for m in chat_history),
         system_chars=len(CHAT_SYSTEM_PROMPT) + len(prefs_block) + len(request)
