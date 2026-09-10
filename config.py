@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # 131,072 window — 4x headroom. The WINDOW is no longer binding, PREFILL
     # LATENCY is. That is why this is not simply set to the window, and why
     # history compaction is about bounding prefill rather than about fitting.
+    #
+    # 1,397 tok/s is a SPARK measurement (the shared inference box at
+    # 172.20.0.22). A local Mac Ollama is far slower — chat turns measured at
+    # 37-78s end to end on 2026-08-27 against a 90,000-char budget, where this
+    # arithmetic predicts ~13s of prefill. Do NOT re-derive this budget, or
+    # judge a latency regression, from a local run: test budget changes on the
+    # VM against Spark, which is what the number describes.
     chat_context_max_chars: int = 150000
     # Measured on real legal text, not a rule of thumb: the Trinetix MSA plus
     # its playbook bundle is 123,612 chars = 25,270 real prompt tokens (the
@@ -112,6 +119,17 @@ class Settings(BaseSettings):
     # overstates token counts by ~22%, which is why every budget comment that
     # used it was wrong. Used for the budget invariants in tests/test_config.py
     # and the review-path overflow guard in graph/nodes/llm_caller.py.
+    #
+    # WHY A CHARACTER PROXY IS SAFE AT ALL. Budgeting in characters against a
+    # limit expressed in tokens looks like a latent overflow bug, and would be
+    # one if the budget sat near the window. It does not, and that margin — not
+    # the precision of 4.89 — is what makes the estimate sound. chars/token
+    # varies with content (dense tables and figures tokenize worse than prose),
+    # but even at a pessimistic 3.0 the 150,000-char budget is 50,000 tokens,
+    # still 38% of a 131,072 window. The proxy enforces a policy far below a
+    # hard limit; it is never asked to squeeze up against one. Tokenizing five
+    # prompt components every turn, to decide a question a free len() already
+    # answers, is the cost this avoids.
     est_chars_per_token: float = 4.89
     chat_conditional_grounding: bool = True   # gate playbook/MSA on _needs_grounding; False = always attach (A/B + future cloud path)
     msa_max_chars: int = 24000             # MSA cap, shared by review + chat paths
