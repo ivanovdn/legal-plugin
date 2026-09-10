@@ -225,9 +225,13 @@ compaction ran in between — so nothing called `setFailure(null)`, the old code
 only escape hatch. The line was gone. Set the test up that way or it proves
 nothing: any compaction run clears the notice under the old code too.
 
-**Check 8 is NOT verified.** It needs an AUTOMATIC failure (a manual one does not
-disarm), then a successful manual condense, then two more turns to re-clear the
-floor. Note that editing any add-in source in between invalidates it — Vite HMR
+**Check 8 verified 2026-09-10** — an automatic failure disarmed the pane, the
+next turn showed `auto=True` with no run (the latch holding), a manual condense
+succeeded, and the following qualifying turn fired. It needs an AUTOMATIC failure
+(a manual one does not disarm), then a successful manual condense, then enough
+turns to re-clear the floor — cheapest with `COMPACTION_AUTO_MIN_CHARS=1000` in
+`.env`, which is a config change and so does NOT remount the pane the way a source
+edit does. Note that editing any add-in source in between invalidates it — Vite HMR
 remounts the component, and `disarmed` is `useState(false)`, so a hot reload
 resets the latch exactly as a pane reload would. That is what happened on the
 first attempt: auto fired at 16:37:41 and looked like a pass, but the remount had
