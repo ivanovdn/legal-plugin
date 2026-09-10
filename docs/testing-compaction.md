@@ -219,6 +219,20 @@ Reading check 8 in the log: after the manual condense, the next qualifying turn
 must show `auto=True` **followed by** `[compaction] condensed rows N-M`. `auto=True`
 with nothing after it means the latch is still holding and the fix regressed.
 
+**Check 7 verified 2026-09-10.** The shape that makes it decisive: a manual
+condense failed at 16:43:29, a doc-chat turn completed at 16:44:22, and NO
+compaction ran in between — so nothing called `setFailure(null)`, the old code's
+only escape hatch. The line was gone. Set the test up that way or it proves
+nothing: any compaction run clears the notice under the old code too.
+
+**Check 8 is NOT verified.** It needs an AUTOMATIC failure (a manual one does not
+disarm), then a successful manual condense, then two more turns to re-clear the
+floor. Note that editing any add-in source in between invalidates it — Vite HMR
+remounts the component, and `disarmed` is `useState(false)`, so a hot reload
+resets the latch exactly as a pane reload would. That is what happened on the
+first attempt: auto fired at 16:37:41 and looked like a pass, but the remount had
+cleared the latch, not the fix.
+
 ## Gotchas that cost time on the first run
 
 **`compressible_history` is scoped to `(document_id, attorney_id)`.**
