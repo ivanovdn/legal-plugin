@@ -158,7 +158,7 @@ intake → intent_router → skill_dispatcher → legal_research
 [
   { system: CHAT_SYSTEM_PROMPT },                 // embedded-in-Word rules + edit-JSON format
   ( system: playbook bundle ),                    // CONDITIONAL — see grounding gate below
-  ( system: governing MSA block ),                // CONDITIONAL — SOWs only, bounded by what the budget has left
+  ( system: governing MSA block ),                // CONDITIONAL — SOWs only, capped at msa_max_chars
   ( system: PRIOR REVIEW block ),                 // latest stored review for this document, redlines stripped
   ...chat_history,                                // durable conversation (≤20 msgs); Redis fallback if empty
   { user: "--- ATTACHED DOCUMENT ---\n<FULL doc>\n--- END ---\n\nUser request: <question>" }
@@ -186,8 +186,7 @@ prefix-cache reuse across turns. In practice that reuse **does not engage** (see
   when the durable store returns empty (`:537-539`). This is what makes "Legal name the same we
   filled recently" resolve across a fresh session.
 - **Context cap** (`_cap_chat_context`, `:487`) — if the assembled content exceeds
-  `chat_context_max_chars` (150 000), it spends the **governing MSA** first and the **document** only
-  after; the playbook and findings are never truncated. (Updated 2026-08-27.)
+  `chat_context_max_chars` (100 000), it truncates **only the document**, never the grounding.
 - **JSON-mode retry** (`_build_json_llm`) — if the prose promised an edit but emitted no `json`
   block, a second `ChatOllama(format="json")` call is made. It does **not** see `chat_history`.
 
@@ -238,7 +237,7 @@ sets `state["messages"]`, then `llm_caller` runs the generation.
   (SOW only) `attach_parent_msa` — the *same* module the chat path uses. This shared module is what
   keeps the two surfaces from drifting apart (the old asymmetry the 2026-06-26 audit flagged).
 - **SOW + governing MSA on file** → appends a `--- GOVERNING MSA (title) ---` block (capped at
-  a bound derived from the review headroom less the document and playbook; was `config.msa_max_chars`, before that the inline `_MSA_MAX_CHARS`) and adds `_MSA_COMPARISON_DIRECTIVE` as
+  `config.msa_max_chars`, was the inline `_MSA_MAX_CHARS`) and adds `_MSA_COMPARISON_DIRECTIVE` as
   the last system message. Strictly additive: non-SOW / no-MSA / lookup error → standalone review.
 - `memory_writer` then **persists the full review** to the review store, keyed by `document_id`.
 
@@ -328,7 +327,7 @@ All in `config.py` (env-overridable):
 | `chat_conditional_grounding` | `True` | Gate playbook/MSA on `_needs_grounding`; False = always attach |
 | `chat_context_max_chars` | `100000` | Assembled chat-context budget; truncates the **document** only |
 | `ollama_num_ctx` | `32768` | Context window for grounded LLM calls; unset → ~4k default silently truncates grounding |
-| ~~`msa_max_chars`~~ | *deleted 2026-08-27* | Was a corpus-derived cap that cut the 73 152-char MSA to 33%. The bound is now derived per path: `review_headroom_chars − document − playbook` on review, the chat budget less the same on chat. |
+| `msa_max_chars` | `24000` | Max MSA chars inlined (review + chat), shared via `config` |
 | `database_url` | `postgresql://legal:legal@localhost:5434/legal` | The `app-db` Postgres holding all three durable stores |
 | `sso_enabled` | `False` | On → `attorney_id` becomes the verified O365 `oid` (dormant today) |
 

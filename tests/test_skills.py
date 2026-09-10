@@ -1155,9 +1155,7 @@ def test_contract_review_truncates_oversized_msa(monkeypatch):
     MSA is attached at all. At 100,000 no real MSA is truncated; this asserts the
     ceiling is still enforced for one larger than any we have seen.
     """
-    # The bound is what is LEFT of the review headroom, not a constant — so the
-    # MSA that trips it has to be sized against the headroom, not against a cap.
-    cap = get_settings().review_headroom_chars - len(_SOW_SAMPLE)
+    cap = get_settings().msa_max_chars
     big = "Z" * (cap + 20000)
     _patch_msa(monkeypatch, lambda client_id, **kw: ("Big MSA", big))
     state = _make_state(
@@ -1168,7 +1166,7 @@ def test_contract_review_truncates_oversized_msa(monkeypatch):
     result = contract_review(state)
 
     user_msg = result["messages"][-1]["content"]
-    assert "chars for review]" in user_msg, "an MSA past the headroom is still cut"
+    assert f"[MSA truncated to {cap} chars for review]" in user_msg
     assert big not in user_msg  # full text not injected
 
 

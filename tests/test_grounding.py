@@ -31,22 +31,3 @@ def test_attach_parent_msa_truncates(monkeypatch):
     assert title == "Model MSA"
     assert len(text) <= 1000 + 60   # truncation marker allowance
     assert "truncated" in text
-
-
-def test_no_room_means_no_msa_rather_than_an_inverted_slice():
-    """Both callers derive max_chars by subtraction, so both can go negative.
-
-    Python does not complain: msa_text[:-33446] returns everything but the LAST
-    33,446 characters — the head-slice inverted — and the truncation note would
-    quote a negative size. Reachable today at the 90,000 test budget with a large
-    document (84,859 + playbook 38,587 leaves -33,446).
-    """
-    called = []
-    original = g.get_parent_msa
-    g.get_parent_msa = lambda c: called.append(c)
-    try:
-        assert g.attach_parent_msa("SOW text", "internal", -33446) is None
-        assert g.attach_parent_msa("SOW text", "internal", 0) is None
-    finally:
-        g.get_parent_msa = original
-    assert called == [], "the store is not even queried when there is no room"
