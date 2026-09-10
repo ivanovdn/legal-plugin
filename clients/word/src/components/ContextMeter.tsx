@@ -39,6 +39,24 @@ interface Outcome {
   reclaimed: number;
 }
 
+interface Failure {
+  /** The breakdown that was current when the run FAILED. Scopes DISPLAY exactly
+   *  as Outcome.shownFor does, and for the same reason: unscoped, the notice
+   *  stays on screen for the rest of the session. That is not hypothetical —
+   *  measured 2026-09-10, an automatic failure at 16:04 was still on screen at
+   *  16:08 through a completed turn, because the ONLY thing that cleared the
+   *  error was the start of the next run, and an automatic failure disarms auto
+   *  so there is no next run. The two behaviours were individually correct and
+   *  lethal together. */
+  shownFor: ContextBreakdown | null;
+  message: string;
+  /** Whether the run that failed was AUTOMATIC, captured at failure time rather
+   *  than read from busyAuto at render time. busyAuto describes the most recent
+   *  run, so a later manual run would silently relabel this failure as one the
+   *  attorney asked for. */
+  automatic: boolean;
+}
+
 /**
  * The shared-header context counter.
  *
@@ -71,7 +89,7 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   // button's suppression must NOT, because a newer breakdown is the backend's own
   // fresh measurement and we do not second-guess it.
   const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   // Set when an AUTOMATIC run fails, stopping auto for the life of the pane.
   // The manual path can afford to surface an error on every attempt because a
   // human just pressed a button and is owed an answer; an unrequested error on
@@ -92,6 +110,9 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
   const outcomeIsForThisTurn = outcome !== null && outcome.forBreakdown === breakdown;
   // Display scope — see the Outcome type. One turn, then gone.
   const outcomeVisible = outcome !== null && outcome.shownFor === breakdown;
+  // A failure expires the same way a success does. It used to be unscoped,
+  // which made it permanent after an automatic failure.
+  const failureVisible = failure !== null && failure.shownFor === breakdown;
 
   let shown =
     breakdown && liveDocChars !== null && !docTruncated
@@ -105,7 +126,7 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
     if (!shown) return;
     setBusy(true);
     setBusyAuto(automatic);
-    setError(null);
+    setFailure(null);
     try {
       const documentId = await resolveDocumentId();
       // How much has to come back for the counter to fall below the warn line. The
@@ -156,6 +177,20 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
           caveat: `${skipped}${why}`.trim(),
           reclaimed,
         });
+        // A SUCCESSFUL run disproves whatever disarmed us, so re-arm. Both causes
+        // are settled by it: a transport failure means the model is reachable
+        // again, and a net-benefit refusal means the pool is now large enough to
+        // be worth condensing. Without this the latch outlives its own reason —
+        // measured 2026-09-10, one transient Ollama blip at 16:04 disabled
+        // automatic compaction for the rest of the pane's life even though a
+        // manual run at 16:10 proved the model was back, and the only cure was
+        // reloading a task pane, which no attorney would know to do.
+        //
+        // Not a churn risk: a successful run empties the compressible pool, so
+        // can_compact is false on the next turn and nothing can re-fire until
+        // real pressure returns. Automatic successes reach this line too, where
+        // it is a no-op — auto cannot have been armed while disarmed.
+        setDisarmed(false);
       } else {
         setOutcome({
           forBreakdown: breakdown,
@@ -184,7 +219,11 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         if (automatic) setDisarmed(true);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setFailure({
+        shownFor: latestBreakdown.current,
+        message: e instanceof Error ? e.message : String(e),
+        automatic,
+      });
       // Cleared here, not at the function's head (that would wipe a
       // just-finished run's success note within one frame) — a fresh failure
       // must not render beneath a stale "Condensed…" note either.
@@ -293,13 +332,13 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
           {outcome.headline}
         </p>
       )}
-      {/* busyAuto is not reset when a run ends, so it still names which kind of
-          run produced this error — an automatic failure owes the same "you
-          didn't ask for this" disclosure a successful automatic run gets. */}
-      {error && (
+      {/* An automatic failure owes the same "you didn't ask for this" disclosure
+          a successful automatic run gets, so the wording names which kind of run
+          produced it — from the failure itself, not from busyAuto. */}
+      {failureVisible && failure && (
         <p className="status error">
-          {busyAuto ? "Couldn't condense automatically: " : "Couldn't condense: "}
-          {error}
+          {failure.automatic ? "Couldn't condense automatically: " : "Couldn't condense: "}
+          {failure.message}
         </p>
       )}
     </div>

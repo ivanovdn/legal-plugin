@@ -193,11 +193,31 @@ never tried. This line is the only place the difference is visible.
 | 4 | Send a message *while* a run is in flight | The turn answers; the finished run's headline is still readable when it lands |
 | 5 | Stop Ollama, force a trigger | Error renders **once**, says "automatically", never reappears; manual button still works |
 | 6 | `COMPACTION_AUTO=false`, restart | Nothing auto-fires; the manual button is unchanged |
+| 7 | Force an automatic failure, then send a grounded message | The red error is **gone**. It expires with its turn, like the success note |
+| 8 | After that failure, condense **manually**, then send a grounded message | Auto fires again. A successful run re-arms it |
 
 **#2 must use a grounded question.** Follow an auto run with *"who signs this?"*
 and grounding detaches, `pct` falls under the warn line, and nothing fires
 because the *pressure* vanished — not because the floor held. That is a vacuous
 pass on the most important check.
+
+**Checks 7 and 8 exist because an automatic failure used to leave the pane in a
+state only a reload could clear.** Both were found by sideload on 2026-09-10 and
+neither is unit-testable — the add-in has no React test harness. They share one
+root: two behaviours that were individually correct and lethal together.
+
+- The error notice had no turn scoping, and `setError(null)` ran only at the
+  start of the *next* run. An automatic failure also disarms auto, so there was
+  no next run: the red line stayed for the life of the pane. Measured — a failure
+  at 16:04 was still on screen at 16:08, through a completed turn.
+- `setDisarmed(false)` did not exist. One transient Ollama blip disabled
+  automatic compaction for the rest of the session, even after a manual run had
+  proved the model was reachable again. The only cure was reloading a task pane,
+  which no attorney would know to do.
+
+Reading check 8 in the log: after the manual condense, the next qualifying turn
+must show `auto=True` **followed by** `[compaction] condensed rows N-M`. `auto=True`
+with nothing after it means the latch is still holding and the fix regressed.
 
 ## Gotchas that cost time on the first run
 
