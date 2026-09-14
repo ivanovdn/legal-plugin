@@ -224,11 +224,153 @@ npx office-addin-manifest validate clients/word/manifest.prod.xml
 
 Sideload per surface:
 
-- **Windows (shared-folder catalog):** point a trusted network share at `manifest.prod.xml`, register it as an add-in catalog (Word Options → Trust Center → Trusted Add-in Catalogs), then insert from **My Add-ins → Shared Folder**.
-- **Mac (`wef` folder):** `cp clients/word/manifest.prod.xml ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/legal-triage.manifest.xml`, then quit/reopen Word and insert from **My Add-ins → Shared Folder** (see `clients/word/README.md` for the full walkthrough — written for the dev manifest, same mechanism).
-- **Word-for-web:** **Insert → Add-ins → Upload My Add-in**, upload `manifest.prod.xml` directly (per-user, no catalog needed).
+- **Windows:** try **Insert → Add-ins → Upload My Add-in** first (per-user, no admin, no share) — it is present on some Word builds and absent on others. Otherwise a **shared-folder catalog**: put `manifest.prod.xml` on a **UNC share** (`\\server\share` — a local `C:\…` path is silently rejected), register the *folder* under Word Options → Trust Center → Trusted Add-in Catalogs, tick *Show in Menu*, restart Word, then insert from **My Add-ins → Shared Folder**. As with Mac, hand a legal-team user [`docs/tester-setup.md`](tester-setup.md) (Part B) rather than walking them through this.
+- **Mac (`wef` folder):** `cp clients/word/manifest.prod.xml ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/legal-triage.manifest.xml`, then quit/reopen Word and insert from **My Add-ins → Shared Folder**. Don't walk a legal-team user through this — hand them [`docs/tester-setup.md`](tester-setup.md), which covers the same mechanism plus the hosts/CA steps, written for a non-engineer. (`clients/word/README.md` is the dev-manifest equivalent.)
+- **Word-for-web: not sideloadable on this tenant.** The self-service **Upload My Add-in** entry is gone from the browser Apps store (verified 2026-08-11) — the browser/SharePoint surface needs Centralized Deployment by a Global Admin ([`docs/deploy-it-request.md`](deploy-it-request.md) Request 2). Don't promise it to a tester as a fallback for a desktop problem.
 
-Note: `manifest.prod.xml` reuses the dev manifest's `<Id>` (`D57831EF-…`), since it's rendered from the same `manifest.template.xml`. Office keys sideloaded add-ins by `<Id>`, so a single machine can't have both the dev and prod add-in sideloaded at once. If the machine doing a prod smoke test also has the dev add-in sideloaded (e.g. the author's own machine), remove the dev add-in first — testers on other machines are unaffected.
+Note: **dev and prod coexist on one machine, deliberately.** Office keys sideloaded add-ins by `<Id>`, and the two differ — `clients/word/manifest.xml` is `A8A5F2CD-…` / "Legal Triage (Dev)" pointing at `https://localhost:3001`, while the rendered `manifest.prod.xml` is `D57831EF-…` / "Legal Triage" pointing at the deployed hostname. So a prod smoke test on the author's own machine needs no uninstall, and both appear side by side in Word's Add-ins panel (confirmed on Word for Mac 2026-09-14, listed under *Developer Add-ins*). **An earlier version of this note said they shared an `<Id>` and that one had to be removed before testing the other; that was wrong** — check the two files before repeating the claim, since a future edit to `manifest.template.xml` could make it true again.
+
+---
+
+## Step 7 — Hand-off pack for the legal team (Bucket B — interim, self-signed cert)
+
+Produces the two files [`docs/tester-setup.md`](tester-setup.md) tells a legal-team
+user to expect. That guide covers **desktop Word on both Mac (Part A) and Windows
+(Part B)** and assumes this step was run. Word-for-web is not covered there because
+it can't be hand-installed on this tenant — see Step 6.
+
+Pick the hostname and use the **same string everywhere** — this doc uses
+`legal-triage.internal.trinetix.net`.
+
+1. **Point the deployment at the hostname.** In `.env` on the VM:
+
+   ```
+   ADDIN_ORIGIN_HOST=legal-triage.internal.trinetix.net
+   ```
+
+2. **Rebuild the pane image and recreate Caddy.** Caddy mints a self-signed cert for
+   that hostname from its internal CA (the `tls internal` line in the `Caddyfile`):
+
+   ```bash
+   $DC up -d --build --force-recreate caddy
+   ```
+
+   > `--build` because the pane is built **inside** the caddy image (Step 3), so this
+   > is also what makes the served bundle match the current commit. `--force-recreate`
+   > so the new `ADDIN_ORIGIN_HOST` is definitely picked up. **Do not hand-build
+   > `clients/word/dist` and expect Caddy to serve it** — that bind mount is gone, and
+   > building by hand is exactly how the VM came to serve a two-day-old bundle on
+   > 2026-08-13 with nothing reporting the mismatch.
+
+3. **Extract the root CA** the users will trust. It lives in the `caddy_data` volume,
+   so this file is stable across redeploys:
+
+   ```bash
+   $DC cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root-ca.crt
+   ```
+
+4. **Render the manifest.** Just URLs — runs anywhere with Python + the repo, no VM
+   access needed:
+
+   ```bash
+   ADDIN_ORIGIN=https://legal-triage.internal.trinetix.net python scripts/build_manifest.py
+   npx office-addin-manifest validate clients/word/manifest.prod.xml
+   ```
+
+5. **Windows needs nothing extra from you.** Part B5 of the guide is
+   self-contained: a PowerShell block creates `C:\LegalTriage`, shares it read-only
+   to the user's own account, and writes the catalog entry straight into
+   `HKCU:\…\Office\16.0\WEF\TrustedCatalogs` — the same entry the Trust Center UI
+   writes. It derives the UNC path from `$env:COMPUTERNAME`, so there is no
+   "hand out a share path" step and no dependency on a file server. (An earlier
+   draft did have one; it made the install wait on an email from us.) **Upload My
+   Add-in** is documented only as an optional shortcut, since it is absent on most
+   builds.
+
+   The PowerShell itself is checked without a Windows machine by
+   [`scripts/test-windows-install.ps1`](../scripts/test-windows-install.ps1)
+   (`brew install powershell`, then `pwsh -NoProfile -File …`). It stubs the
+   Windows-only cmdlets and pins what the prose claims: the hosts line lands on
+   its own row whether or not the file ends in a newline, the GUID keeps its
+   braces, a second run adds nothing, and an unrelated catalogue already on the
+   machine is neither edited nor removed. Deliberately not in `check.sh` — the
+   repo has no other pwsh dependency. Run it after editing any PowerShell in the
+   guide, along with a parse check of every block.
+
+   Three things Microsoft's own page on this
+   ([network-share sideload](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins))
+   pins down, all now reflected in the guide: the `TrustedCatalogs` GUID **must
+   keep its enclosing braces** in both the subkey name and the `Id` value (hence
+   `NewGuid().ToString('B')`); the share needs at least **read/write**, not
+   read-only; and the backslash-doubling in their `.reg` example is `.reg` file
+   escaping only — a PowerShell `New-ItemProperty` takes the literal path, which
+   is why B5 writes the key directly instead of shipping a `.reg`. **The dialog
+   moved**: on current builds the ribbon's Add-ins button opens a store panel and
+   SHARED FOLDER is behind its **Advanced** button. Two limitations to remember
+   when this stops being a pilot: network-share sideload is **explicitly not
+   supported for production** (Centralized Deployment, Request 2, is the
+   production route), and a manifest update that **changes the ribbon** forces
+   every user to reinstall.
+
+6. **Send each person three things:** `caddy-root-ca.crt`, `manifest.prod.xml`, and
+   [`docs/tester-setup.md`](tester-setup.md) (plus the UNC path from step 5 if it
+   applies). The guide expects both files in their **Downloads** folder under
+   exactly those names.
+
+   > **Windows needs local admin** for the hosts entry and the root-CA import
+   > (`certutil -addstore -f Root`, machine store — *Current User* is not enough for
+   > Word's WebView2). The guide tells users without admin to stop and come back to
+   > us rather than chase IT, so expect that question instead of a failed install.
+
+> ⚠ **Never run `docker compose … down -v`.** It deletes `caddy_data`, which
+> regenerates the CA and invalidates every install — everyone has to re-import the
+> new `caddy-root-ca.crt`. The user guide's troubleshooting table has a row for this
+> symptom ("worked yesterday, today Word rejects the certificate"); don't make anyone
+> use it.
+
+> **Verification status of the user guide (2026-09-11).** Part A (Mac) is the
+> path the author's own machine runs. Part B **B1–B4 are verified on real Windows**
+> — rehearsed against a Mac-hosted Caddy on the LAN (hostname pointed at the Mac
+> instead of the VM; the manifest needs no change because it carries only the
+> hostname). The PowerShell `Add-Content` escaping, `certutil -addstore -f Root`,
+> and the resulting trust all worked, and **Chrome on Windows reads the same root
+> store as Word's WebView2**, so B4 achieves its purpose for Word.
+>
+> **B5 is verified too, via the PowerShell route (2026-09-14).** On a second,
+> licensed Windows machine the B5.1 block installed cleanly, the add-in appeared
+> under **SHARED FOLDER** exactly as Microsoft documents (not the *Developer
+> Add-ins* heading a Mac shows), and the pane rendered. A full review then ran
+> end-to-end from Windows Word against the Mac-hosted stack: `review_store` holds
+> a 3,371-char `nda` review, `interaction_event` a `findings_rendered` with
+> `detail=4`, and the row carries a **different `attorney_id` from the Mac's** —
+> the per-install `localStorage` UUID, which is what proves it came from a
+> separate install rather than the developer's own machine. **Upload My Add-in**
+> therefore stays documented only as an optional shortcut; the PowerShell catalog
+> route is the one with a run behind it.
+>
+> **The apply path runs on Windows Word too (same session).** *"set legal name is
+> Sony"* proposed one edit and it applied 5.2 s later against
+> `target_ref = [Legal Name]` — a **bracketed** placeholder, i.e. the exact class
+> `CLAUDE.md` documents as the `body.search` wildcard hazard (`[](){}<>?*` are
+> treated as wildcards even with `matchWildcards:false`). Every gotcha in that
+> section was measured on Word for Mac; this is the first evidence the escaping
+> and fallback logic behaves the same on Windows. A second turn, *"who signs?"*,
+> recorded `edits_proposed = 0` — the SCOPE rule holding on a factual question.
+> Across the whole Windows install: **1 `edit_applied`, 2 `edits_proposed`,
+> 1 `findings_rendered`, and zero `edit_failed` / `redline_failed` /
+> `*_jump_notfound`.** Chat and `conversation_store` are exercised as well.
+>
+> **Still unproven:** **VPN reachability to `172.20.1.10:443` from a Windows
+> machine.** The rehearsal used the LAN, and a non-corporate machine can never
+> answer that one — the first corporate Windows laptop will. Note what this does
+> *not* cover: multi-paragraph clause spans, tab-separated signature blocks and
+> `replace_all` have still only been exercised on Mac.
+
+> Asking someone to trust a private CA by hand is **security-sensitive**. Keep it to
+> a small, informed pilot and loop in security before going wider. Once Request 1 in
+> [`docs/deploy-it-request.md`](deploy-it-request.md) lands (real DNS + a cert from
+> the internal CA), steps 2–4 of the user guide disappear and this whole hand-off pack
+> reduces to sending `manifest.prod.xml`.
 
 ---
 
