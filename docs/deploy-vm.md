@@ -348,13 +348,23 @@ Pick the hostname and use the **same string everywhere** — this doc uses
 > therefore stays documented only as an optional shortcut; the PowerShell catalog
 > route is the one with a run behind it.
 >
-> **Still unproven.** The apply path (`findClauseRange`, the 85% guard, wildcard
-> escaping) has never run on Windows Word — every gotcha in `CLAUDE.md` about
-> `body.search` was measured on Word for Mac, and `interaction_event` shows no
-> `edit_applied`/`redline_applied` from Windows. Chat is untouched there too
-> (`conversation_store` unchanged). And **VPN reachability to `172.20.1.10:443`
-> from a Windows machine** remains open — the rehearsal used the LAN, and a
-> non-corporate machine can never answer that one.
+> **The apply path runs on Windows Word too (same session).** *"set legal name is
+> Sony"* proposed one edit and it applied 5.2 s later against
+> `target_ref = [Legal Name]` — a **bracketed** placeholder, i.e. the exact class
+> `CLAUDE.md` documents as the `body.search` wildcard hazard (`[](){}<>?*` are
+> treated as wildcards even with `matchWildcards:false`). Every gotcha in that
+> section was measured on Word for Mac; this is the first evidence the escaping
+> and fallback logic behaves the same on Windows. A second turn, *"who signs?"*,
+> recorded `edits_proposed = 0` — the SCOPE rule holding on a factual question.
+> Across the whole Windows install: **1 `edit_applied`, 2 `edits_proposed`,
+> 1 `findings_rendered`, and zero `edit_failed` / `redline_failed` /
+> `*_jump_notfound`.** Chat and `conversation_store` are exercised as well.
+>
+> **Still unproven:** **VPN reachability to `172.20.1.10:443` from a Windows
+> machine.** The rehearsal used the LAN, and a non-corporate machine can never
+> answer that one — the first corporate Windows laptop will. Note what this does
+> *not* cover: multi-paragraph clause spans, tab-separated signature blocks and
+> `replace_all` have still only been exercised on Mac.
 
 > Asking someone to trust a private CA by hand is **security-sensitive**. Keep it to
 > a small, informed pilot and loop in security before going wider. Once Request 1 in
