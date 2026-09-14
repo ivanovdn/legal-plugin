@@ -302,20 +302,29 @@ if (-not (Get-SmbShare -Name LegalTriage -ErrorAction SilentlyContinue)) {
   New-SmbShare -Name LegalTriage -Path C:\LegalTriage -ChangeAccess "$env:USERDOMAIN\$env:USERNAME" | Out-Null
 }
 
-# Tell Word to trust that shared folder as an add-in catalogue
+# Tell Word to trust that shared folder as an add-in catalogue.
+# This ADDS one entry next to whatever is already there. It never edits or
+# removes an existing one, and it does nothing at all if it already ran.
 $url  = "\\$env:COMPUTERNAME\LegalTriage"
-$guid = [guid]::NewGuid().ToString('B')
-$key  = "HKCU:\Software\Microsoft\Office\16.0\WEF\TrustedCatalogs\$guid"
-New-Item -Path $key -Force | Out-Null
-New-ItemProperty -Path $key -Name Id    -Value $guid -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $key -Name Url   -Value $url  -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $key -Name Flags -Value 1     -PropertyType DWord  -Force | Out-Null
+$root = "HKCU:\Software\Microsoft\Office\16.0\WEF\TrustedCatalogs"
+if (-not (Test-Path $root)) { New-Item -Path $root -Force | Out-Null }
+$existing = Get-ChildItem $root -ErrorAction SilentlyContinue |
+  Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).Url -eq $url }
+if (-not $existing) {
+  $guid = [guid]::NewGuid().ToString('B')
+  $key  = Join-Path $root $guid
+  New-Item -Path $key | Out-Null
+  New-ItemProperty -Path $key -Name Id    -Value $guid -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $key -Name Url   -Value $url  -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $key -Name Flags -Value 1     -PropertyType DWord  -Force | Out-Null
+}
 
 Write-Host "Done. Word will look for the add-in in: $url"
 ```
 
-The only thing it prints is that last line, naming the folder Word will use. It is
-safe to run twice.
+The only thing it prints is that last line, naming the folder Word will use. It
+changes nothing you already have — see the drop-down below — and running it twice
+does nothing the second time.
 
 ### B5.2 — Check what it just did
 
@@ -370,6 +379,16 @@ Three things, all undone by *Removing it* at the end of this guide:
 3. Added one entry to your own user settings telling Word it may load add-ins from
    that folder (the same entry the **File → Options → Trust Center → Trusted
    Add-in Catalogs** screen writes when you fill it in by hand).
+
+**What it does not touch.** Your documents, your templates and AutoText, your
+Word settings, and any add-in you already have — including anything IT installed
+for you. The Trust Center entry is *added alongside* whatever is already listed;
+nothing existing is edited or removed. And the add-in itself never changes a
+document on its own: it reads the open file when you ask it to, and every edit it
+proposes arrives as a normal tracked change you can reject.
+
+The one thing that does reach beyond this add-in is the optional cache-clearing
+command in *Removing it*, and it says so there.
 </details>
 
 <details>
@@ -610,8 +629,11 @@ sudo sed -i '' '/legal-triage\.internal\.trinetix\.net/d' /etc/hosts
    Remove-Item "$env:LOCALAPPDATA\Microsoft\Office\16.0\Wef" -Recurse -Force -ErrorAction SilentlyContinue
    ```
 
-   (That clears Word's cache of *sideloaded* add-ins only. Any others you've
-   sideloaded will need re-adding; add-ins installed normally are untouched.)
+   ⚠ **This one is broader than the rest.** It empties Word's cache for **all**
+   Office add-ins on your account, not just this one — anything they had saved
+   locally is cleared, and other sideloaded add-ins may need re-adding. Add-ins
+   installed for you by IT reappear by themselves. Use it only if Legal Triage is
+   still showing after a restart, and if you're unsure, ask us first.
 
 2. **Remove the server name** — administrator PowerShell, one line:
 
