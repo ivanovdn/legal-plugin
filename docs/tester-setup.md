@@ -249,10 +249,11 @@ In the **administrator** PowerShell window, paste this and press **Enter**:
 
 ```powershell
 certutil -addstore -f Root "$env:USERPROFILE\Downloads\caddy-root-ca.crt"
+if ($LASTEXITCODE -eq 0) { Write-Host "OK - certificate trusted." } else { Write-Host "FAILED - do not continue; send us this screen." }
 ```
 
-Look for **`CertUtil: -addstore command completed successfully.`** at the end of
-what it prints. That's the confirmation.
+`certutil` prints several lines of its own. **Ignore all of it and read the last
+line**, which is the one we added: `OK - certificate trusted.`
 
 - **`The system cannot find the file specified`** → the certificate file isn't in
   your Downloads folder. Put it there and run the command again.
@@ -295,36 +296,45 @@ Then, in the **administrator** PowerShell window, paste the whole block below �
 all of it, in one go — and press **Enter**:
 
 ```powershell
-# Make the folder, put the add-in file in it, share it with your own account
-New-Item -ItemType Directory -Force -Path C:\LegalTriage | Out-Null
-Copy-Item "$env:USERPROFILE\Downloads\manifest.prod.xml" C:\LegalTriage\ -Force
-if (-not (Get-SmbShare -Name LegalTriage -ErrorAction SilentlyContinue)) {
-  New-SmbShare -Name LegalTriage -Path C:\LegalTriage -ChangeAccess "$env:USERDOMAIN\$env:USERNAME" | Out-Null
-}
+$ErrorActionPreference = 'Stop'
+try {
+  # Make the folder, put the add-in file in it, share it with your own account
+  New-Item -ItemType Directory -Force -Path C:\LegalTriage | Out-Null
+  Copy-Item "$env:USERPROFILE\Downloads\manifest.prod.xml" C:\LegalTriage\ -Force
+  if (-not (Get-SmbShare -Name LegalTriage -ErrorAction SilentlyContinue)) {
+    New-SmbShare -Name LegalTriage -Path C:\LegalTriage -ChangeAccess "$env:USERDOMAIN\$env:USERNAME" | Out-Null
+  }
 
-# Tell Word to trust that shared folder as an add-in catalogue.
-# This ADDS one entry next to whatever is already there. It never edits or
-# removes an existing one, and it does nothing at all if it already ran.
-$url  = "\\$env:COMPUTERNAME\LegalTriage"
-$root = "HKCU:\Software\Microsoft\Office\16.0\WEF\TrustedCatalogs"
-if (-not (Test-Path $root)) { New-Item -Path $root -Force | Out-Null }
-$existing = Get-ChildItem $root -ErrorAction SilentlyContinue |
-  Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).Url -eq $url }
-if (-not $existing) {
-  $guid = [guid]::NewGuid().ToString('B')
-  $key  = Join-Path $root $guid
-  New-Item -Path $key | Out-Null
-  New-ItemProperty -Path $key -Name Id    -Value $guid -PropertyType String -Force | Out-Null
-  New-ItemProperty -Path $key -Name Url   -Value $url  -PropertyType String -Force | Out-Null
-  New-ItemProperty -Path $key -Name Flags -Value 1     -PropertyType DWord  -Force | Out-Null
-}
+  # Tell Word to trust that shared folder as an add-in catalogue.
+  # This ADDS one entry next to whatever is already there. It never edits or
+  # removes an existing one, and it does nothing at all if it already ran.
+  $url  = "\\$env:COMPUTERNAME\LegalTriage"
+  $root = "HKCU:\Software\Microsoft\Office\16.0\WEF\TrustedCatalogs"
+  if (-not (Test-Path $root)) { New-Item -Path $root -Force | Out-Null }
+  $existing = Get-ChildItem $root -ErrorAction SilentlyContinue |
+    Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).Url -eq $url }
+  if (-not $existing) {
+    $guid = [guid]::NewGuid().ToString('B')
+    $key  = "$root\$guid"
+    New-Item -Path $key | Out-Null
+    New-ItemProperty -Path $key -Name Id    -Value $guid -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $key -Name Url   -Value $url  -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $key -Name Flags -Value 1     -PropertyType DWord  -Force | Out-Null
+  }
 
-Write-Host "Done. Word will look for the add-in in: $url"
+  Write-Host "OK - done. Word will look for the add-in in: $url"
+}
+catch {
+  Write-Host "STOPPED: $($_.Exception.Message)"
+  Write-Host "Nothing further was changed. Send us this screen and don't continue."
+}
+finally { $ErrorActionPreference = 'Continue' }
 ```
 
-The only thing it prints is that last line, naming the folder Word will use. It
-changes nothing you already have — see the drop-down below — and running it twice
-does nothing the second time.
+**Read the last line.** `OK - done…` means it worked. `STOPPED:…` means it hit a
+problem and deliberately stopped rather than leave things half-done — send us that
+screen. It changes nothing you already have (see the drop-down below), and running
+it twice does nothing the second time.
 
 ### B5.2 — Check what it just did
 

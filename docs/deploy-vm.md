@@ -287,6 +287,16 @@ Pick the hostname and use the **same string everywhere** — this doc uses
    Add-in** is documented only as an optional shortcut, since it is absent on most
    builds.
 
+   The PowerShell itself is checked without a Windows machine by
+   [`scripts/test-windows-install.ps1`](../scripts/test-windows-install.ps1)
+   (`brew install powershell`, then `pwsh -NoProfile -File …`). It stubs the
+   Windows-only cmdlets and pins what the prose claims: the hosts line lands on
+   its own row whether or not the file ends in a newline, the GUID keeps its
+   braces, a second run adds nothing, and an unrelated catalogue already on the
+   machine is neither edited nor removed. Deliberately not in `check.sh` — the
+   repo has no other pwsh dependency. Run it after editing any PowerShell in the
+   guide, along with a parse check of every block.
+
    Three things Microsoft's own page on this
    ([network-share sideload](https://learn.microsoft.com/en-us/office/dev/add-ins/testing/create-a-network-shared-folder-catalog-for-task-pane-and-content-add-ins))
    pins down, all now reflected in the guide: the `TrustedCatalogs` GUID **must
