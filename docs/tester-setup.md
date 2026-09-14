@@ -159,11 +159,14 @@ Then, in Word:
    Word only notices the new add-in on a full restart.
 2. Reopen Word and open any document.
 3. On the **Home** tab, click **Add-ins** (the puzzle-piece icon).
-4. In the dialog, click **My Add-ins**, then look for the **SHARED FOLDER**
-   heading near the top. *(If clicking **Add-ins** opens a store panel instead of
-   a dialog, click **Advanced** at the bottom of it first.)*
+4. A panel drops down. Scroll to the **Developer Add-ins** heading — **Legal
+   Triage** is listed there, below *My Add-ins*.
 5. Click **Legal Triage**.
 6. The panel opens down the right-hand side of the document.
+
+> **Nothing under "Developer Add-ins"?** Older versions of Word open a dialog
+> instead of this panel — click **My Add-ins**, then look for a **SHARED FOLDER**
+> heading. Same add-in, older wording.
 
 If **Legal Triage** isn't under SHARED FOLDER, see *If something goes wrong* below.
 
@@ -373,6 +376,12 @@ the team hits it.
 > **Can't find SHARED FOLDER?** It's the **Advanced** button that gets you there
 > on current versions of Word — the store panel that opens first doesn't show it.
 > This one catches everybody.
+
+> **A note if you've seen this on a Mac.** On a Mac the same add-in is listed
+> under **Developer Add-ins**; on Windows it's under **SHARED FOLDER**. The
+> add-in is identical — the heading differs because Windows loads it from the
+> shared folder you made in B5.1, and a Mac loads it from a folder inside Word
+> itself.
 
 <details>
 <summary>What did that command actually do to my PC?</summary>
@@ -584,7 +593,7 @@ behaviour tomorrow. It gets the problem fixed properly instead.
 
 | What you see | What to do |
 |---|---|
-| **You can't find SHARED FOLDER at all** | You're in the new store panel. Click **Advanced** at the bottom of it to reach the dialog that has SHARED FOLDER. |
+| **You can't find SHARED FOLDER at all** | You're in the new store panel. Click **Advanced** at the bottom of it to reach the dialog that has SHARED FOLDER. (Don't look for *Developer Add-ins* — that's the Mac's heading for this.) |
 | **Legal Triage isn't under SHARED FOLDER** | Close Word completely and reopen — the shared folder is only picked up at startup. Then re-run the B5.2 check; all three lines must be right. |
 | **B5.2's middle line says `False`** | Word can't read the file through the share. Re-run B5.1 in an **administrator** window and watch for an error on the `New-SmbShare` line. |
 | **`New-SmbShare` fails** | Windows file sharing is switched off. In the same administrator window: `Set-Service LanmanServer -StartupType Automatic; Start-Service LanmanServer`, then re-run B5.1. |
