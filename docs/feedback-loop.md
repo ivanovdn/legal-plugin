@@ -1,7 +1,8 @@
 # Feedback loop — running it and reading it
 
 **Audience:** whoever is running the pilot. The tester-facing half is
-[`docs/tester-setup.md`](tester-setup.md) step 7 — hand testers that, not this.
+[`docs/tester-setup.md`](tester-setup.md), the *"Telling us what it got wrong"*
+section — hand testers that, not this.
 
 **What exists:** two Postgres tables in `app-db`. `feedback` holds what an
 attorney wrote plus a replayable snapshot of the input; `interaction_event`
