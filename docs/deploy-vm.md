@@ -334,14 +334,26 @@ Pick the hostname and use the **same string everywhere** — this doc uses
 > instead of the VM; the manifest needs no change because it carries only the
 > hostname). The PowerShell `Add-Content` escaping, `certutil -addstore -f Root`,
 > and the resulting trust all worked, and **Chrome on Windows reads the same root
-> store as Word's WebView2**, so B4 achieves its purpose for Word. **B5 (sideload)
-> and the pane rendering in Windows Word are still unverified** — the test machine
-> had no licensed Word, only reduced-functionality mode, which can't host add-ins.
-> That is why B5 hedges "try Upload My Add-in, else the catalog": one run on a
-> licensed Windows Word settles which is the primary path. Nothing in the repo has
-> ever exercised the apply path (`findClauseRange`, the 85% guard, wildcard
-> escaping) on Windows Word either. **Also still unproven: VPN reachability to
-> `172.20.1.10:443` from a Windows machine** — the rehearsal used the LAN, and a
+> store as Word's WebView2**, so B4 achieves its purpose for Word.
+>
+> **B5 is verified too, via the PowerShell route (2026-09-14).** On a second,
+> licensed Windows machine the B5.1 block installed cleanly, the add-in appeared
+> under **SHARED FOLDER** exactly as Microsoft documents (not the *Developer
+> Add-ins* heading a Mac shows), and the pane rendered. A full review then ran
+> end-to-end from Windows Word against the Mac-hosted stack: `review_store` holds
+> a 3,371-char `nda` review, `interaction_event` a `findings_rendered` with
+> `detail=4`, and the row carries a **different `attorney_id` from the Mac's** —
+> the per-install `localStorage` UUID, which is what proves it came from a
+> separate install rather than the developer's own machine. **Upload My Add-in**
+> therefore stays documented only as an optional shortcut; the PowerShell catalog
+> route is the one with a run behind it.
+>
+> **Still unproven.** The apply path (`findClauseRange`, the 85% guard, wildcard
+> escaping) has never run on Windows Word — every gotcha in `CLAUDE.md` about
+> `body.search` was measured on Word for Mac, and `interaction_event` shows no
+> `edit_applied`/`redline_applied` from Windows. Chat is untouched there too
+> (`conversation_store` unchanged). And **VPN reachability to `172.20.1.10:443`
+> from a Windows machine** remains open — the rehearsal used the LAN, and a
 > non-corporate machine can never answer that one.
 
 > Asking someone to trust a private CA by hand is **security-sensitive**. Keep it to
