@@ -9,7 +9,7 @@ asserts the declared set and the used set agree in BOTH directions:
   - used but not declared    -> a typo silently creating a new category
 
 A unit test cannot catch either: a green test_record_degradation_emits_event
-passes with 21 of 22 sites unwired, because the call sites simply do not exist.
+passes with 21 of 22 codes unwired, because the call sites simply do not exist.
 
 Class 4 (telemetry self-catch) deliberately has NO codes. Tracing reporting its
 own best-effort catches as application degradations is how a dashboard becomes

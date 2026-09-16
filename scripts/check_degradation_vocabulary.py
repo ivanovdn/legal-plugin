@@ -9,7 +9,7 @@ Also rejects string literals at call sites: a literal cannot be checked either
 way, so it is a hole in both directions at once.
 
 A unit test structurally cannot do this. test_record_degradation_adds_event
-passes with 21 of 22 sites unwired.
+passes with 21 of 22 codes unwired.
 """
 from __future__ import annotations
 

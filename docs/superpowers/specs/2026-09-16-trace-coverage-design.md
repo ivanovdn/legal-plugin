@@ -294,7 +294,7 @@ Each is written first, run, and confirmed red. TDD entry point and mutation proo
 
 ### The hazard a test suite cannot reach
 
-A perfect `test_record_degradation_emits_event` can pass with **21 of 22 sites unwired** — the unit test passes, the call sites do not exist. Same shape as the `setattr`-on-the-wrong-module hazard.
+A perfect `test_record_degradation_emits_event` can pass with **21 of 22 codes unwired** — the unit test passes, the call sites do not exist. Same shape as the `setattr`-on-the-wrong-module hazard.
 
 So a `scripts/check.sh` assertion, checked **both ways** like the eval baseline:
 
