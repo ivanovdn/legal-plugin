@@ -138,3 +138,57 @@ def test_mark_failed_accumulates_like_a_degradation():
         return degradations()
 
     assert root() == [LLM_CALL_FAILED]
+
+
+def test_set_outcome_lands_on_root_from_a_nested_span():
+    from observability.spans import traced, set_outcome
+
+    @traced("child")
+    def child():
+        set_outcome("degraded")
+
+    @traced("root")
+    def root():
+        child()
+
+    root()
+    assert spans_by_name("root")[0].attributes.get("app.outcome") == "degraded"
+    assert "app.outcome" not in spans_by_name("child")[0].attributes
+
+
+def test_failed_outcome_also_sets_root_status_error():
+    """Two spans end up ERROR and that is intended: the node says WHERE it
+    broke, the root says the attorney got nothing."""
+    import json
+    from observability.degradations import LLM_CALL_FAILED
+    from observability.spans import traced, mark_failed, set_outcome, degradations
+
+    @traced("llm_caller")
+    def node():
+        mark_failed(LLM_CALL_FAILED)
+
+    @traced("root")
+    def root():
+        node()
+        set_outcome("failed")
+
+    root()
+    root_span = spans_by_name("root")[0]
+    assert root_span.status.status_code == StatusCode.ERROR
+    assert root_span.attributes["app.outcome"] == "failed"
+    assert json.loads(root_span.attributes["app.degradations"]) == [LLM_CALL_FAILED]
+    assert spans_by_name("llm_caller")[0].status.status_code == StatusCode.ERROR
+
+
+def test_ok_outcome_leaves_status_alone_and_writes_no_reason_list():
+    from observability.spans import traced, set_outcome
+
+    @traced("root")
+    def root():
+        set_outcome("ok")
+
+    root()
+    span = spans_by_name("root")[0]
+    assert span.attributes["app.outcome"] == "ok"
+    assert span.status.status_code != StatusCode.ERROR
+    assert "app.degradations" not in span.attributes

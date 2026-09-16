@@ -241,3 +241,28 @@ def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = 
         span.set_status(Status(StatusCode.ERROR, detail or reason))
     except Exception:
         pass
+
+
+def set_outcome(outcome: str) -> None:
+    """Stamp app.outcome on the ROOT span. Never raises.
+
+    Called once per request root — submit_query, resume_query, post_compact.
+    One derived field so "show me the bad turns" is `app.outcome != "ok"`
+    rather than an OR-chain across attributes you have to remember.
+
+    When outcome == "failed" the root status is set to ERROR as well, which is
+    the point of the whole exercise: afterwards, ERROR means exactly "the
+    attorney did not get their answer".
+    """
+    try:
+        span = _root_span.get() or trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        span.set_attribute("app.outcome", outcome)
+        reasons = degradations()
+        if reasons:
+            span.set_attribute("app.degradations", json.dumps(reasons, ensure_ascii=False))
+        if outcome == "failed":
+            span.set_status(Status(StatusCode.ERROR, ", ".join(reasons) or "failed"))
+    except Exception:
+        pass
