@@ -36,13 +36,17 @@ services:
       - phoenix_data:/mnt/data
     # Container port 6006 = Phoenix UI + OTLP/HTTP ingest (/v1/traces); the backend
     # reaches it in-network at phoenix:6006. Published on host 6007 (6006 is taken by
-    # compliance-bot's phoenix on this host) so the UI is browsable over the VPN at
-    # http://<vm>:6007 — same posture as compliance-bot's phoenix on 6006.
-    # ⚠ Phoenix has NO auth and traces carry contract text, so anyone who can reach the
-    # VM on 6007 can read them. To lock down, bind 127.0.0.1:6007:6006 + SSH-tunnel, or
-    # front it with a Caddy route + auth.
+    # compliance-bot's phoenix on this host).
+    # ⚠ CLOSED 2026-09-16 (was "6007:6006", browsable by anyone on the VPN).
+    # Phoenix has NO auth and its spans carry the full uploaded contract, the
+    # governing MSA and the firm's playbook bundle — `data/contract_review_skills/`
+    # is gitignored precisely because it is canonical legal-team IP. Bound to
+    # loopback so only someone already on the VM can read them. To browse the UI:
+    #     ssh -L 6007:localhost:6007 <vm>     then http://localhost:6007
+    # Do NOT widen this back to 0.0.0.0 to "make the UI easier to reach" — the
+    # SSH tunnel is the replacement, documented in docs/deploy-vm.md Step 4.
     ports:
-      - "6007:6006"
+      - "127.0.0.1:6007:6006"
 
   caddy:
     # Builds the task pane INTO the image (see clients/word/Dockerfile) instead
