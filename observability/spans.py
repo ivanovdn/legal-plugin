@@ -33,6 +33,9 @@ _root_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
 _root_metadata: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "otel_root_metadata", default=None
 )
+_root_degradations: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "otel_root_degradations", default=None
+)
 
 
 def _as_attr(value: Any) -> Any:
@@ -54,9 +57,11 @@ def traced(name: str, kind: str | None = None) -> Callable:
             with _tracer.start_as_current_span(name) as span:
                 root_token = None
                 meta_token = None
+                deg_token = None
                 if _root_span.get() is None:
                     root_token = _root_span.set(span)
                     meta_token = _root_metadata.set({})
+                    deg_token = _root_degradations.set([])
                 if kind == "LLM":
                     span.set_attribute(
                         SpanAttributes.OPENINFERENCE_SPAN_KIND,
@@ -69,6 +74,8 @@ def traced(name: str, kind: str | None = None) -> Callable:
                         _root_span.reset(root_token)
                     if meta_token is not None:
                         _root_metadata.reset(meta_token)
+                    if deg_token is not None:
+                        _root_degradations.reset(deg_token)
         return wrapper
     return decorator
 
@@ -168,3 +175,49 @@ def current_trace_id() -> str:
         return format(ctx.trace_id, "032x")
     except Exception:
         return ""
+
+
+def _accumulate(reason: str) -> None:
+    """Append to the root's reason list, de-duplicated.
+
+    Runs BEFORE any is_recording() guard on purpose: the accumulator is set by
+    `traced` whether or not a provider exists, so outcome derivation behaves
+    identically with tracing on and off. A turn's verdict must not depend on
+    whether anyone was watching."""
+    acc = _root_degradations.get()
+    if acc is not None and reason not in acc:
+        acc.append(reason)
+
+
+def record_degradation(reason: str, *, announced: bool, detail: str = "") -> None:
+    """Record a degradation as an EVENT on the current span. Never raises.
+
+    Does NOT touch span status — a fallback that worked is not an error.
+
+    `announced` has no default on purpose: whether the attorney was told is
+    exactly the thing you must not get wrong by accident. True mirrors the
+    existing `memory_degraded` convention (a banner reaches the pane); False is
+    the silent class this instrumentation exists to expose.
+
+    An EVENT rather than an attribute because one span can degrade twice —
+    attributes overwrite, events keep both, in order, with timestamps.
+    """
+    try:
+        _accumulate(reason)
+        span = trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        attributes: dict[str, Any] = {
+            "degradation.reason": reason,
+            "degradation.announced": announced,
+        }
+        if detail:
+            attributes["degradation.detail"] = detail
+        span.add_event("degradation", attributes=attributes)
+    except Exception:
+        pass
+
+
+def degradations() -> list[str]:
+    """Reason codes accumulated on this request, for the rollup to read back."""
+    return list(_root_degradations.get() or [])

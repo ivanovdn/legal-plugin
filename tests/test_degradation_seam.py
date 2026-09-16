@@ -1,6 +1,10 @@
 """The degradation vocabulary and the four seam helpers."""
 from __future__ import annotations
 
+from opentelemetry.trace import StatusCode
+
+from tests.conftest import spans_by_name
+
 
 def test_vocabulary_is_closed_and_partitioned():
     import observability.degradations as D
@@ -37,3 +41,68 @@ def test_derive_outcome_maps_reasons_to_the_three_states():
     assert derive_outcome([GRAPH_INVOKE_FAILED]) == "failed"
     # A failure anywhere in the list wins over any number of degradations.
     assert derive_outcome([CHAT_GROUNDING_FAILED, GRAPH_INVOKE_FAILED]) == "failed"
+
+
+def test_record_degradation_adds_event_and_accumulates_on_root():
+    from observability.degradations import CHAT_GROUNDING_FAILED
+    from observability.spans import traced, record_degradation, degradations
+
+    seen = {}
+
+    @traced("child")
+    def child():
+        record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail="qdrant down")
+
+    @traced("root")
+    def root():
+        child()
+        seen["reasons"] = degradations()
+
+    root()
+    events = [e for e in spans_by_name("child")[0].events if e.name == "degradation"]
+    assert len(events) == 1
+    assert events[0].attributes["degradation.reason"] == CHAT_GROUNDING_FAILED
+    assert events[0].attributes["degradation.announced"] is False
+    assert events[0].attributes["degradation.detail"] == "qdrant down"
+    # Recorded on the child span, but accumulated for the ROOT to read back.
+    assert seen["reasons"] == [CHAT_GROUNDING_FAILED]
+
+
+def test_record_degradation_never_changes_span_status():
+    """A fallback that worked is not an error. This is the whole class-2/3 point."""
+    from observability.degradations import PREFERENCES_LOAD_FAILED
+    from observability.spans import traced, record_degradation
+
+    @traced("node")
+    def node():
+        record_degradation(PREFERENCES_LOAD_FAILED, announced=False)
+
+    node()
+    assert spans_by_name("node")[0].status.status_code != StatusCode.ERROR
+
+
+def test_degradations_do_not_leak_between_turns():
+    from observability.degradations import AUDIT_WRITE_FAILED, SUMMARY_LOAD_FAILED
+    from observability.spans import traced, record_degradation, degradations
+
+    @traced("turn")
+    def turn(reason):
+        record_degradation(reason, announced=True)
+        return degradations()
+
+    assert turn(AUDIT_WRITE_FAILED) == [AUDIT_WRITE_FAILED]
+    assert turn(SUMMARY_LOAD_FAILED) == [SUMMARY_LOAD_FAILED]
+
+
+def test_record_degradation_deduplicates():
+    """A retry loop must not inflate the reason list."""
+    from observability.degradations import MSA_LOOKUP_FAILED
+    from observability.spans import traced, record_degradation, degradations
+
+    @traced("turn")
+    def turn():
+        record_degradation(MSA_LOOKUP_FAILED, announced=False)
+        record_degradation(MSA_LOOKUP_FAILED, announced=False)
+        return degradations()
+
+    assert turn() == [MSA_LOOKUP_FAILED]
