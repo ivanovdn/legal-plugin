@@ -25,6 +25,37 @@ class TokenUsage(TypedDict):
     unit: str
 
 
+class OllamaTimings(TypedDict, total=False):
+    total_ms: int
+    load_ms: int
+    prompt_eval_ms: int
+    eval_ms: int
+
+
+_TIMING_FIELDS = (
+    ("total_ms", "total_duration"),
+    ("load_ms", "load_duration"),
+    ("prompt_eval_ms", "prompt_eval_duration"),
+    ("eval_ms", "eval_duration"),
+)
+
+
+def ollama_timings(response_json: dict[str, Any]) -> OllamaTimings | None:
+    """Ollama's nanosecond duration fields, as milliseconds.
+
+    `load_ms` is why this exists: asking for a num_ctx that differs from the
+    resident one reloads the model in EITHER direction, which cost a measured
+    4.7 s on every single call against a shared box. The number was in this
+    payload all along; ollama_usage simply never read it.
+    """
+    out: dict[str, int] = {}
+    for out_key, src_key in _TIMING_FIELDS:
+        ns = response_json.get(src_key)
+        if ns is not None:
+            out[out_key] = int(ns) // 1_000_000
+    return out or None      # type: ignore[return-value]
+
+
 def ollama_usage(response_json: dict[str, Any]) -> TokenUsage | None:
     """Map a non-streaming Ollama /api/chat response to token usage."""
     pin = response_json.get("prompt_eval_count")

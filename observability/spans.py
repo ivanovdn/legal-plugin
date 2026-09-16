@@ -130,11 +130,14 @@ def set_gen_attributes(
     output: Any = None,
     model: str | None = None,
     usage: dict | None = None,
+    timings: dict | None = None,
     metadata: dict | None = None,
 ) -> None:
     """Record GENERATION attributes on the CURRENT span. Best-effort; never raises.
 
     `usage` is the {input, output, total, unit} dict from observability.tracing.
+    `timings` is the {total_ms, load_ms, prompt_eval_ms, eval_ms} dict from
+    observability.tracing.ollama_timings.
     """
     try:
         span = trace.get_current_span()
@@ -155,6 +158,9 @@ def set_gen_attributes(
                 span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, int(usage["output"]))
             if usage.get("total") is not None:
                 span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, int(usage["total"]))
+        if timings:
+            for key, value in timings.items():
+                span.set_attribute(f"llm.ollama.{key}", int(value))
         if metadata:
             span.set_attribute(
                 SpanAttributes.METADATA, json.dumps(metadata, default=str, ensure_ascii=False)

@@ -9,7 +9,7 @@ import httpx
 from config import get_settings
 from graph.state import LegalAgentState
 from observability.spans import traced, set_gen_attributes
-from observability.tracing import ollama_usage
+from observability.tracing import ollama_timings, ollama_usage
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
             output=content,
             model=settings.llm_model,
             usage=ollama_usage(data),
+            timings=ollama_timings(data),
             metadata={
                 "task_type": state.get("task_type", ""),
                 "chunks_count": len(chunks),

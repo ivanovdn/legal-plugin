@@ -462,3 +462,41 @@ def test_llm_caller_early_return_leaves_chat_path_flag_untouched(monkeypatch):
     result = mod.llm_caller(state)
     assert result["context_truncated"] == {"doc_chars": 999, "kept_chars": 1, "kept_pct": 0}
     assert result["token_usage"] == {"input": 1, "output": 2}
+
+
+def test_ollama_timings_converts_nanoseconds_to_milliseconds():
+    from observability.tracing import ollama_timings
+
+    timings = ollama_timings({
+        "total_duration": 34_659_000_000,
+        "load_duration": 4_713_000_000,
+        "prompt_eval_duration": 8_902_000_000,
+        "eval_duration": 21_044_000_000,
+    })
+    assert timings == {
+        "total_ms": 34_659, "load_ms": 4_713,
+        "prompt_eval_ms": 8_902, "eval_ms": 21_044,
+    }
+
+
+def test_ollama_timings_none_when_absent():
+    from observability.tracing import ollama_timings
+    assert ollama_timings({"message": {"content": "hi"}}) is None
+
+
+def test_ollama_timings_partial_payload():
+    from observability.tracing import ollama_timings
+    assert ollama_timings({"load_duration": 4_713_000_000}) == {"load_ms": 4_713}
+
+
+def test_set_gen_attributes_records_timings_on_the_span():
+    from observability.spans import traced, set_gen_attributes
+
+    @traced("gen", kind="LLM")
+    def gen():
+        set_gen_attributes(model="m", timings={"load_ms": 4713, "eval_ms": 21044})
+
+    gen()
+    attrs = _spans_by_name("gen")[0].attributes
+    assert attrs["llm.ollama.load_ms"] == 4713
+    assert attrs["llm.ollama.eval_ms"] == 21044
