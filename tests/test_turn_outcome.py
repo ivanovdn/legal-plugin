@@ -7,6 +7,7 @@ suite here means nothing unless you have watched them fail first.
 from __future__ import annotations
 
 import httpx
+import pytest
 from opentelemetry.trace import StatusCode
 
 from tests.conftest import spans_by_name
@@ -871,3 +872,83 @@ def test_planning_failure_records_a_silent_degradation(monkeypatch):
     assert [e.attributes["degradation.reason"] for e in events] == [PLANNING_FAILED]
     assert events[0].attributes["degradation.announced"] is False
     assert span.status.status_code != StatusCode.ERROR
+
+
+# --- post_compact -------------------------------------------------------
+# /api/compact has no user, session or document attached to it today, so
+# compact_conversation's internal traced_invoke ("llm") span is its own
+# parentless trace — the most-debugged subsystem in the repo (the auto-fire
+# decision, its floors, its disarm latch) is the least traceable thing in it.
+# Three exit paths, three distinct outcomes: success (ok), a terminal error
+# from compact_conversation (failed), and a net-benefit refusal (ok — the
+# guard working correctly, not a degradation).
+
+
+def test_compact_route_gives_the_llm_span_a_parent(monkeypatch):
+    """RED TEST #3. Today the compaction LLM span is an orphan root with no
+    user, session or document attached to it."""
+    from api.routes import compact as mod
+    from api.models import CompactRequest
+
+    monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: {
+        "error": "", "reason": "", "segment_id": 1, "freed_chars": 500,
+    })
+
+    mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+
+    span = spans_by_name("compact")[0]
+    assert span.parent is None, "compact is a request root"
+    assert span.attributes["app.outcome"] == "ok"
+
+
+def test_compact_route_marks_failed_when_compaction_errors(monkeypatch):
+    import json
+    from fastapi import HTTPException
+    from api.routes import compact as mod
+    from api.models import CompactRequest
+    from observability.degradations import COMPACTION_FAILED
+
+    monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: {
+        "error": "the condensed segment could not be saved (OperationalError)",
+    })
+
+    with pytest.raises(HTTPException):
+        mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+
+    span = spans_by_name("compact")[0]
+    assert span.attributes["app.outcome"] == "failed"
+    assert span.status.status_code == StatusCode.ERROR
+    # Not just the status — the specific reason, so a test asserting only
+    # ERROR would not pass if the wrong constant were ever passed to mark_failed.
+    assert span.attributes["degradation.reason"] == COMPACTION_FAILED
+    assert COMPACTION_FAILED in json.loads(span.attributes["app.degradations"])
+
+
+def test_compact_route_records_a_net_benefit_refusal_without_marking_it_failed(monkeypatch):
+    """The net-benefit guard declining to condense (the summary would be no
+    smaller than the messages it replaces) is correct behaviour, not a
+    degradation: app.outcome must stay "ok" and the span must not go to
+    ERROR. But the refusal disarms the pane's auto-compaction latch, which is
+    operationally significant, so it still has to land on the span."""
+    import json
+    from api.routes import compact as mod
+    from api.models import CompactRequest
+
+    refusal_reason = (
+        "condensing these messages would not save space — the summary's own "
+        "header and per-quote labels cost more than the messages do"
+    )
+    monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: {
+        "error": "", "reason": refusal_reason, "segment_id": 0,
+        "compacted": False, "reclaimed": 0,
+    })
+
+    mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+
+    span = spans_by_name("compact")[0]
+    assert span.attributes["app.outcome"] == "ok"
+    assert span.status.status_code != StatusCode.ERROR
+    metadata = json.loads(span.attributes["metadata"])
+    assert metadata["compaction.refused_reason"] == refusal_reason
+    # A refusal is not a degradation, so it must not touch the reason accumulator.
+    assert "app.degradations" not in span.attributes
