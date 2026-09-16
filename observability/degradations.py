@@ -84,6 +84,16 @@ SILENT_REASONS = frozenset({
 
 ALL_REASONS = FAILED_REASONS | ANNOUNCED_REASONS | SILENT_REASONS
 
+# --- Outcomes ----------------------------------------------------------------
+# The three values app.outcome can take, per request root. Named, not typed
+# out at each of the (now four, soon seven — Tasks 8/13) call sites: a typo on
+# either side of `set_outcome(...)`/`derive_outcome(...)` would silently skip
+# the root ERROR status, which is the one thing this seam exists to make
+# reliable.
+OUTCOME_OK = "ok"
+OUTCOME_DEGRADED = "degraded"
+OUTCOME_FAILED = "failed"
+
 
 def derive_outcome(reasons: list[str]) -> str:
     """ok | degraded | failed, from the reason codes recorded this request.
@@ -95,7 +105,7 @@ def derive_outcome(reasons: list[str]) -> str:
     would create two sources that can disagree.
     """
     if FAILED_REASONS & set(reasons):
-        return "failed"
+        return OUTCOME_FAILED
     if reasons:
-        return "degraded"
-    return "ok"
+        return OUTCOME_DEGRADED
+    return OUTCOME_OK

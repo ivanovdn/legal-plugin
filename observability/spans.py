@@ -21,6 +21,8 @@ from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 
+from observability.degradations import OUTCOME_FAILED
+
 _tracer = trace.get_tracer("legal-triage")
 
 # The outermost @traced span of a request is the "trace root". Deep nodes call
@@ -250,6 +252,10 @@ def set_outcome(outcome: str) -> None:
     One derived field so "show me the bad turns" is `app.outcome != "ok"`
     rather than an OR-chain across attributes you have to remember.
 
+    Must be called INSIDE the root traced function — outside it, the
+    accumulator is already reset, so this silently stamps a fresh, empty
+    reason list rather than the request's real one.
+
     When outcome == "failed" the root status is set to ERROR as well, which is
     the point of the whole exercise: afterwards, ERROR means exactly "the
     attorney did not get their answer".
@@ -262,7 +268,7 @@ def set_outcome(outcome: str) -> None:
         reasons = degradations()
         if reasons:
             span.set_attribute("app.degradations", json.dumps(reasons, ensure_ascii=False))
-        if outcome == "failed":
-            span.set_status(Status(StatusCode.ERROR, ", ".join(reasons) or "failed"))
+        if outcome == OUTCOME_FAILED:
+            span.set_status(Status(StatusCode.ERROR, ", ".join(reasons) or OUTCOME_FAILED))
     except Exception:
         pass
