@@ -11,7 +11,7 @@
 
 ### 1. The application degrades; it does not raise
 
-`api/ graph/ skills/ memory/ rag/` contain **40 `except Exception` sites**, and nearly every one is load-bearing and correct. The codebase states the rule repeatedly: *tracing must never break a turn*, *retrieval must never break a review*, *telemetry must never break an Apply*, *Redis down → stateless run*, *Postgres down → log and flag*.
+`api/ graph/ skills/ memory/ rag/` **catch nearly everything** — 36 `except Exception` sites when this spec was written, 37 as merged (the branch added one itself, see *Accounting*) — and nearly every one is load-bearing and correct. The codebase states the rule repeatedly: *tracing must never break a turn*, *retrieval must never break a review*, *telemetry must never break an Apply*, *Redis down → stateless run*, *Postgres down → log and flag*.
 
 OpenTelemetry marks a span `ERROR` only when an exception **propagates out of** the `with start_as_current_span(...)` block. In this codebase almost nothing propagates. Confirmed at two independent layers:
 
@@ -71,7 +71,7 @@ Destination on the VM: Phoenix, **no auth**, published on `0.0.0.0:6007`, reacha
 
 Rejected alternative: attribute-existence filtering (`degraded.memory = true OR degraded.context_truncated = true OR status = ERROR`). It works, but it makes "show me the bad turns" an OR-chain across attributes you have to remember, and it has no single field to sort or group by.
 
-The one-source discipline is deliberate. `degradations()` is complete **by construction**: every site that sets a report flag (`memory_degraded`, `context_truncated`, `review_persist_error`) is in the vocabulary below, so the accumulator already sees everything the pane sees. Also OR-ing the report flags would create two sources that can disagree — the failure mode the gate-verdict rule exists to prevent.
+The one-source discipline is deliberate. `degradations()` is complete **by construction**: every **producer** of a report flag (`memory_degraded`, `context_truncated`, `review_persist_error`) is in the vocabulary below, so the accumulator already sees everything the pane sees. *Producer, not site* — `context_truncated` has two, and wiring only one leaves this premise false while the vocabulary gate still reads green, because the gate counts codes. Also OR-ing the report flags would create two sources that can disagree — the failure mode the gate-verdict rule exists to prevent.
 
 ### D2 — Three classes of bad, and class 4 stays invisible
 
@@ -128,8 +128,8 @@ def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = 
 
     For failures this app CATCHES and converts into a degraded answer. OTel
     marks a span ERROR only when an exception propagates out of the `with`
-    block — 40 `except Exception` sites mean almost none do, so status has to
-    be set by hand at the point of the catch."""
+    block; this codebase degrades rather than raises, so almost nothing does
+    and status has to be set by hand at the point of the catch."""
 
 def record_degradation(reason: str, *, announced: bool, detail: str = "") -> None:
     """Record a degradation as a span EVENT. Never touches span status —
@@ -162,18 +162,18 @@ Free-text reasons fragment into things you cannot filter on. Constants live in a
 | **Failed** (8) | `llm_call_failed` | `llm_caller:180` |
 | | `legal_research_failed` | `legal_research.py:428` — **the Word chat path** |
 | | `contract_generation_failed` | `contract_generation.py:77` (revision) / `:173` (agent) — one code, distinguished by `detail` |
-| | `compaction_failed` | `compaction.py:546/611` |
+| | `compaction_failed` | `api/routes/compact.py` — **moved here by Task 13**, two exits: the unguarded store read and `result["error"]`. NOT `compaction.py`'s own excepts: generation retries twice internally, so per-attempt recording would mark a run failed that then succeeded |
 | | `graph_invoke_failed` | `query.py:211` |
 | | `stateless_fallback_failed` | `query.py:227` |
 | | `resume_state_load_failed` | `query.py:260` — `get_state` failed |
 | | `resume_failed` | `query.py:279` — graph invoke failed on resume |
-| **Announced** (7) | `checkpointer_unavailable` | `query.py:211` Redis branch **and** `checkpointer.py:34` (startup-absent) |
+| **Announced** (7) | `checkpointer_unavailable` | `api/routes/query.py` — the mid-invoke Redis branch **and** a per-turn startup-absent check, twice (submit + resume). **Moved here by ruling R12**, NOT `checkpointer.py:34`: `_get_graph()` caches the compiled graph, so `build_checkpointer()` runs exactly once and a record there would fire on turn #1 and never again. `graph/checkpointer.py` is deliberately unwired |
 | | `audit_write_failed` | `memory_writer:55` |
 | | `review_persist_failed` | `memory_writer:72` |
 | | `prior_review_load_failed` | `context.py:66` |
 | | `summary_load_failed` | `context.py:122` |
 | | `prior_conversation_load_failed` | `context.py:136` |
-| | `context_truncated` | `llm_caller` / `_cap_chat_context` (a condition, not an `except`) |
+| | `context_truncated` | `llm_caller` (detects overflow, does not cut) **and** `_cap_chat_context`'s caller in `legal_research.py` (actually cuts) — a condition, not an `except`. **Both** producers must be wired; only the first was, until the final fix wave. See *Accounting* |
 | **Silent** (7) | `chat_grounding_failed` | `context.py:195` — answers with no playbook and no MSA |
 | | `review_reconciliation_failed` | `context.py:76` |
 | | `compressible_history_read_failed` | `context.py:264` — silently disarms compaction |
@@ -184,20 +184,36 @@ Free-text reasons fragment into things you cannot filter on. Constants live in a
 
 `msa_lookup_failed` is retained despite the RAG descope: it is a review-**grounding** degradation, not part of the retrieval pipeline, and its failure mode is a legal-quality problem.
 
-#### Accounting — all 40 `except Exception` sites
+#### Accounting — every `except Exception` site
 
-The count moved four times while writing this spec (14 → 19 → 23 → 22) because it was estimated rather than enumerated. It is now enumerated, and this table is what the `check.sh` assertion checks against. Every site is either wired or explicitly excluded; nothing is unclassified.
+The count moved four times while writing this spec (14 → 19 → 23 → 22) because it was estimated rather than enumerated. Enumerating it exposed a second problem: **the figure is only meaningful with its scoping**, because this branch *adds* `except` sites while classifying them. Stated precisely, and reproducible:
+
+```bash
+grep -rn "except Exception" api graph skills memory rag | grep '\.py:' | wc -l   # 37 as merged (36 before this branch)
+grep -rn "except Exception" observability          | grep '\.py:' | wc -l   # 10 — Class 4 by definition; this branch grew it from 4
+```
+
+The original "40" was 36 application-directory sites plus the four `observability/` sites the first version of this table listed by name. The figure is deliberately **not** restated in the living docs (`CLAUDE.md`, `docs/wiki.md`, `docs/testing-observability.md`, `observability/spans.py`): a number a reader checks with one `grep`, and which drifted during the branch that introduced it, does not belong in five files. The superseded plan document still carries "40" — it records what was *planned*, not what shipped. Every application site below is either wired or explicitly excluded; nothing is unclassified.
+
+**This table is NOT what the `check.sh` assertion checks against.** `scripts/check_degradation_vocabulary.py` compares the *constants used at call sites* in `api graph skills memory` against the constants *declared* in `observability/degradations.py`, both ways — it never reads this document. The distinction matters: the gate counts **codes**, not **producers**, so a second producer of an already-used code is invisible to it. That is exactly how `_cap_chat_context`'s `context_truncated` shipped unwired.
 
 | Disposition | Count | Sites |
 |---|---|---|
-| **Wired** (22 codes across 23 sites) | 23 | as above |
-| **Class 4 — telemetry self-catch, excluded on principle** | 9 | `spans.py:113/153/169`, `otel.py:65`, `risk_assessor:164`, `contract_review:143/205`, `memory_writer:89` (best-effort `append_turn`), `feedback_store:164` (quiet `interaction_event`) |
+| **Wired** | 21 | the sites above, minus the four that are conditions rather than `except` blocks. `query.py`'s outer `except` hosts two of them (`checkpointer_unavailable` on the Redis branch, `graph_invoke_failed` on the fall-through) |
+| **Wired — a condition, not an `except`** | +4 *(outside the total; these are not `except` sites)* | `query.py` startup-absent checkpointer, `compact.py`'s `result["error"]`, `llm_caller`'s headroom check, `legal_research`'s post-truncation check |
+| **Class 4 — telemetry self-catch, excluded on principle** | 5 (+10 in `observability/`) | `risk_assessor:164`, `contract_review:144/207`, `memory_writer:92` (best-effort `append_turn`), `feedback_store:164` (quiet `interaction_event`) |
 | **RAG — descoped 2026-09-16** | 3 | `documents.py:62`, `reranker.py:119`, `bm25_index.py:179` |
 | **Dormant SSO** (`sso_enabled=False`) | 2 | `auth.py:67/145` — will need codes when SSO turns on; noted, not wired |
 | **Startup, not the turn path** | 1 | `main.py:41` — a bad `.env` must still produce a readable traceback |
 | **Off-turn endpoint, not instrumented** | 1 | `feedback_store.py:142` — LOUD by design, has its own store and report |
 | **Deliberately excluded — real but low-stakes** | 1 | `checkpointer.py:55` — a failed `refresh_ttl` shortens session life silently. Dropped from the vocabulary on review (2026-09-16) to keep it tight; recorded here so the accounting still closes and a future reader knows it was considered, not overlooked |
-| **Total** | **40** | |
+| **Deliberately unwired — ruling R12** | 1 | `checkpointer.py:34` — recorded per turn in `query.py` instead; see the `checkpointer_unavailable` row above |
+| **Recording moved to the route — Task 13** | 2 | `compaction.py:546/611` — generation retries twice internally; `api/routes/compact.py` owns the code |
+| **Total (application directories)** | **37** | |
+
+**So: 22 codes, 26 call sites** — four codes have two producers each (`checkpointer_unavailable`, `contract_generation_failed`, `compaction_failed`, `context_truncated`). The earlier "22 codes across 23 sites" was wrong in both halves; the codes-to-sites ratio is not 1:1 and never was.
+
+> **Line numbers in the tables above are from design time and drift.** The live index is the `grep` in this section plus `scripts/check_degradation_vocabulary.py`. **Three rows were moved by rulings taken during execution — R12 (`checkpointer_unavailable`), Task 13 (`compaction_failed`) and the final fix wave (`context_truncated`'s second producer).** Every ruling, with its reasoning, is in the execution ledger: [`.superpowers/sdd/2026-09-16-trace-coverage/progress.md`](../../../.superpowers/sdd/2026-09-16-trace-coverage/progress.md). Where this spec and the merged code disagree, the code and the ledger win.
 
 ### Outcome derivation
 
