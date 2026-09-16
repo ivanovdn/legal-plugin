@@ -15,6 +15,8 @@ from rag.related_docs import get_parent_msa
 from skills.base import load_bundle
 from config import get_settings
 from memory.preferences import load_preferences
+from observability.degradations import PREFERENCES_LOAD_FAILED
+from observability.spans import record_degradation
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,7 @@ def load_attorney_preferences_block(attorney_id: str, base_dir: str, max_chars: 
         md = load_preferences(base_dir, attorney_id)
     except Exception as e:
         logger.warning("[grounding] preferences load failed for %r: %s", attorney_id, e)
+        record_degradation(PREFERENCES_LOAD_FAILED, announced=False, detail=e.__class__.__name__)
         return ""
     md = md.strip()
     if not md:

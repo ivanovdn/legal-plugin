@@ -673,3 +673,201 @@ def test_prior_conversation_load_failure_records_an_announced_degradation(monkey
     events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
     assert [e.attributes["degradation.reason"] for e in events] == [PRIOR_CONVERSATION_LOAD_FAILED]
     assert events[0].attributes["degradation.announced"] is True
+
+
+# --- Task 11: the silent (class 3) sites -------------------------------
+# The class this work exists for: the answer lands, quality is quietly
+# worse, and nobody is told. announced=False on every site below.
+
+
+def test_grounding_failure_records_a_SILENT_degradation(monkeypatch):
+    """RED TEST #2. The attorney gets a fluent answer with no playbook and no
+    MSA, and is told nothing. announced=False is the whole point."""
+    from skills.legal_research import context as ctx
+    from observability.degradations import CHAT_GROUNDING_FAILED
+    from observability.spans import traced, degradations
+
+    def boom(*a, **k):
+        raise RuntimeError("qdrant unreachable")
+
+    monkeypatch.setattr(ctx, "load_playbook_bundle", boom)
+
+    @traced("turn")
+    def turn():
+        playbook, msa = ctx._build_chat_grounding(
+            {"filters": {"client_id": "c1"}}, "SOME AGREEMENT TEXT"
+        )
+        return playbook, msa, degradations()
+
+    playbook, msa, reasons = turn()
+    assert playbook == "" and msa == ""          # answers ungrounded, as before
+    assert reasons == [CHAT_GROUNDING_FAILED]
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert events[0].attributes["degradation.announced"] is False
+
+
+def test_review_reconciliation_failure_records_a_silent_degradation(monkeypatch):
+    """Companion to the PRIOR_REVIEW_LOAD_FAILED test above: same function,
+    the SECOND except block. `load_latest_review` succeeds this time —
+    `_reconcile_review_with_doc` is what fails — so the review still injects
+    (unchanged) and memory_degraded must NOT be set: this is reserved for
+    real store failures, not a reconciliation hiccup."""
+    import importlib
+    from observability.degradations import REVIEW_RECONCILIATION_FAILED
+    from observability.spans import traced
+
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    monkeypatch.setattr(
+        ctx, "load_latest_review",
+        lambda document_id: {"markdown": "# Prior Review\nFinding"},
+    )
+
+    def boom(review_text, uploaded_text):
+        raise RuntimeError("bad regex state")
+
+    monkeypatch.setattr(ctx, "_reconcile_review_with_doc", boom)
+    state = {"document_id": "doc-rc"}
+
+    @traced("turn")
+    def turn():
+        return ctx._load_prior_review_block(state, "SOME AGREEMENT TEXT")
+
+    result = turn()
+    assert "Prior Review" in result            # injected unchanged, as before
+    assert "memory_degraded" not in state      # reserved for real store failures
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [REVIEW_RECONCILIATION_FAILED]
+    assert events[0].attributes["degradation.announced"] is False
+
+
+def test_compressible_history_failure_records_a_silent_degradation(monkeypatch):
+    """Same seam as test_compressible_count_survives_a_store_failure_without_
+    flagging_degraded in test_context_breakdown.py (patches ctx.latest_to_id),
+    wrapped in a traced root so the event can be asserted."""
+    import importlib
+    from observability.degradations import COMPRESSIBLE_HISTORY_READ_FAILED
+    from observability.spans import traced
+
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    def boom(*a, **k):
+        raise RuntimeError("app-db unavailable")
+
+    monkeypatch.setattr(ctx, "latest_to_id", boom)
+    state = {"document_id": "doc-ch", "user_id": "atty-ch"}
+
+    @traced("turn")
+    def turn():
+        return ctx.compressible_history(state)
+
+    result = turn()
+    assert result == (0, 0)
+    assert "memory_degraded" not in state
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [COMPRESSIBLE_HISTORY_READ_FAILED]
+    assert events[0].attributes["degradation.announced"] is False
+
+
+def test_preferences_load_failure_records_a_silent_degradation(monkeypatch, tmp_path):
+    import importlib
+    from observability.degradations import PREFERENCES_LOAD_FAILED
+    from observability.spans import traced
+
+    grounding = importlib.import_module("skills.grounding")
+
+    def boom(*a, **k):
+        raise RuntimeError("disk error")
+
+    monkeypatch.setattr(grounding, "load_preferences", boom)
+
+    @traced("turn")
+    def turn():
+        return grounding.load_attorney_preferences_block("atty-1", str(tmp_path), 4000)
+
+    result = turn()
+    assert result == ""
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [PREFERENCES_LOAD_FAILED]
+    assert events[0].attributes["degradation.announced"] is False
+
+
+def test_msa_lookup_failure_records_a_silent_degradation(monkeypatch):
+    """Same seam as test_contract_review_msa_lookup_error_reviews_standalone in
+    test_skills.py: patch get_parent_msa on the grounding module (attach_parent_msa
+    calls it for real), which is what actually raises inside contract_review's
+    bare `except Exception:`."""
+    import skills.grounding as grounding
+    from skills.contract_review.contract_review import contract_review
+    from observability.degradations import MSA_LOOKUP_FAILED
+
+    def boom(client_id, **kw):
+        raise RuntimeError("qdrant down")
+
+    monkeypatch.setattr(grounding, "get_parent_msa", boom)
+
+    state = {
+        "request": "Review this contract.",
+        "uploaded_docs": [{"text": (
+            "STATEMENT OF WORK\n\n"
+            "This Statement of Work is issued under the Master Services Agreement dated...\n"
+            "Project scope: design a new web portal.\n"
+        )}],
+        "filters": {"client_id": "internal"},
+    }
+    result = contract_review(state)  # must NOT raise
+
+    assert result["contract_type_detected"] == "sow"
+    assert "GOVERNING MSA" not in result["messages"][-1]["content"]
+
+    span = spans_by_name("contract_review")[0]
+    events = [e for e in span.events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [MSA_LOOKUP_FAILED]
+    assert events[0].attributes["degradation.announced"] is False
+    assert span.status.status_code != StatusCode.ERROR
+
+
+def test_intent_classification_failure_records_a_silent_degradation(monkeypatch):
+    from graph.nodes import intent_router as mod
+    from observability.degradations import INTENT_CLASSIFICATION_FAILED
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(mod.httpx, "post", boom)
+
+    state = {"request": "who signs this?", "task_type": "", "skill_plan": []}
+    result = mod.intent_router(state)
+
+    assert result["task_type"] == "research"   # existing fallback contract unchanged
+
+    span = spans_by_name("intent_router")[0]
+    events = [e for e in span.events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [INTENT_CLASSIFICATION_FAILED]
+    assert events[0].attributes["degradation.announced"] is False
+    assert span.status.status_code != StatusCode.ERROR
+
+
+def test_planning_failure_records_a_silent_degradation(monkeypatch):
+    from graph.nodes import planner as mod
+    from observability.degradations import PLANNING_FAILED
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(mod.httpx, "post", boom)
+
+    state = {"request": "review and then draft", "skill_plan": ["contract_review", "drafting"]}
+    result = mod.planner(state)
+
+    assert result["task_type"] == "contract_review"   # skill_plan[0], unchanged fallback
+
+    span = spans_by_name("planner")[0]
+    events = [e for e in span.events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [PLANNING_FAILED]
+    assert events[0].attributes["degradation.announced"] is False
+    assert span.status.status_code != StatusCode.ERROR

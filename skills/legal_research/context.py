@@ -35,7 +35,9 @@ from memory.conversation_store import load_recent, row_lengths_after
 from memory.conversation_summary import latest_to_id, load_segments
 from memory.review_store import load_latest_review
 from observability.degradations import (
-    PRIOR_CONVERSATION_LOAD_FAILED, PRIOR_REVIEW_LOAD_FAILED, SUMMARY_LOAD_FAILED,
+    CHAT_GROUNDING_FAILED, COMPRESSIBLE_HISTORY_READ_FAILED,
+    PRIOR_CONVERSATION_LOAD_FAILED, PRIOR_REVIEW_LOAD_FAILED,
+    REVIEW_RECONCILIATION_FAILED, SUMMARY_LOAD_FAILED,
 )
 from observability.spans import record_degradation
 from skills.grounding import (
@@ -82,6 +84,7 @@ def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
             logger.warning(
                 "[legal_research] review reconciliation failed: %s — injecting review unchanged", e
             )
+            record_degradation(REVIEW_RECONCILIATION_FAILED, announced=False, detail=e.__class__.__name__)
     return (
         "--- PRIOR REVIEW (most recent, this document) ---\n"
         "Answer recall questions from this review; do not re-derive or contradict it.\n\n"
@@ -201,6 +204,7 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
                 )
     except Exception as e:
         logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
+        record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail=e.__class__.__name__)
     return playbook, msa_block
 
 
@@ -270,6 +274,7 @@ def compressible_history(state: LegalAgentState) -> tuple[int, int]:
         lengths = row_lengths_after(document_id, attorney_id, boundary)
     except Exception as e:
         logger.warning("[legal_research] compressible-history read failed: %s", e)
+        record_degradation(COMPRESSIBLE_HISTORY_READ_FAILED, announced=False, detail=e.__class__.__name__)
         return 0, 0
     # Drop the newest keep_recent_messages: compaction leaves those verbatim, so
     # their characters are not reclaimable and must not arm anything.

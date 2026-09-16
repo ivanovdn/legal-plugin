@@ -8,7 +8,10 @@ import httpx
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.spans import traced, set_trace_attributes, set_gen_attributes
+from observability.degradations import INTENT_CLASSIFICATION_FAILED
+from observability.spans import (
+    record_degradation, set_gen_attributes, set_trace_attributes, traced,
+)
 from observability.tracing import ollama_usage
 
 logger = logging.getLogger(__name__)
@@ -80,6 +83,7 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
         logger.info("[intent_router] LLM classified: %s", task_type)
     except Exception as e:
         logger.warning("[intent_router] LLM classification failed: %s — defaulting to research", e)
+        record_degradation(INTENT_CLASSIFICATION_FAILED, announced=False, detail="defaulted to research")
 
     state["task_type"] = task_type
     state["skill_plan"] = [task_type]

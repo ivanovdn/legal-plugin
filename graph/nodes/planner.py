@@ -9,7 +9,8 @@ import httpx
 from config import get_settings
 
 from graph.state import LegalAgentState
-from observability.spans import traced, set_gen_attributes
+from observability.degradations import PLANNING_FAILED
+from observability.spans import record_degradation, set_gen_attributes, traced
 from observability.tracing import ollama_usage
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ def planner(state: LegalAgentState) -> LegalAgentState:
 
     except Exception as e:
         logger.warning("[planner] LLM planning failed: %s — using first skill in plan", e)
+        record_degradation(PLANNING_FAILED, announced=False, detail=f"fell back to {skill_plan[0]}")
         state["task_type"] = skill_plan[0]
 
     return state
