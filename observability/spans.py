@@ -238,12 +238,21 @@ def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = 
     marks a span ERROR only when an exception propagates out of the `with`
     block; there are 40 `except Exception` sites here and almost none of them
     propagate, so without this call every failed turn looks like a healthy one.
+
+    `reason` (and `detail`, when given) are also stamped as attributes —
+    `degradation.reason` / `degradation.detail`, the same keys record_degradation
+    puts on its event — so a failed span names WHICH of the eight failure
+    reasons it was, not just that it failed. Without this a failed span carried
+    only the exception class, and reason was unreadable from the span itself.
     """
     try:
         _accumulate(reason)
         span = trace.get_current_span()
         if span is None or not span.is_recording():
             return
+        span.set_attribute("degradation.reason", reason)
+        if detail:
+            span.set_attribute("degradation.detail", detail)
         if exc is not None:
             span.record_exception(exc)
         span.set_status(Status(StatusCode.ERROR, detail or reason))

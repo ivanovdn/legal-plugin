@@ -155,6 +155,37 @@ def test_mark_failed_accumulates_like_a_degradation():
     assert root() == [LLM_CALL_FAILED]
 
 
+def test_mark_failed_sets_reason_and_detail_attributes():
+    """The reason must be readable FROM THE SPAN ITSELF, not just inferred from
+    ERROR status — a test that only checks status_code cannot tell
+    LLM_CALL_FAILED from RESUME_FAILED apart; swap the constant at any
+    mark_failed call site and such a test still passes. Mirrors
+    record_degradation's `degradation.reason`/`degradation.detail` keys, as
+    attributes on the span itself rather than an event, since mark_failed
+    marks the span, not something that happened alongside it."""
+    from observability.degradations import GRAPH_INVOKE_FAILED
+    from observability.spans import traced, mark_failed
+
+    @traced("with_detail")
+    def with_detail():
+        mark_failed(GRAPH_INVOKE_FAILED, detail="checkpoint missing")
+
+    @traced("without_detail")
+    def without_detail():
+        mark_failed(GRAPH_INVOKE_FAILED)
+
+    with_detail()
+    without_detail()
+
+    span_with = spans_by_name("with_detail")[0]
+    assert span_with.attributes["degradation.reason"] == GRAPH_INVOKE_FAILED
+    assert span_with.attributes["degradation.detail"] == "checkpoint missing"
+
+    span_without = spans_by_name("without_detail")[0]
+    assert span_without.attributes["degradation.reason"] == GRAPH_INVOKE_FAILED
+    assert "degradation.detail" not in span_without.attributes
+
+
 def test_set_outcome_lands_on_root_from_a_nested_span():
     from observability.degradations import OUTCOME_DEGRADED
     from observability.spans import traced, set_outcome
