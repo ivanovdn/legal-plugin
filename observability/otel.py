@@ -83,14 +83,21 @@ def _instrument_libraries() -> None:
     redis is config-gated (otel_instrument_redis, default False): the LangGraph
     checkpointer issues many RediSearch ops per turn and that chatter would
     bury everything else — flip the flag on only to investigate the
-    checkpointer. Default-off is about SIGNAL, not about the dependency:
-    opentelemetry-instrumentation-redis is declared in requirements.txt like
-    httpx, so the import sits at the top of this file with every other one. It
-    was briefly lazy, on the argument that the package arrived only as a
-    chainlit transitive and a top-level import would hard-fail startup if that
-    tree changed — but declaring it buys the same protection for one
-    requirements line, and depending on an undeclared transitive is the exact
-    fragility that ruled out Traceloop's instrumentors in the first place.
+    checkpointer. Default-off is about SIGNAL, not about the dependency.
+
+    Both instrumentors are imported at the TOP of this file, and both are
+    declared in requirements.txt AND requirements-runtime.txt — both files, not
+    one. The Dockerfile installs requirements-runtime.txt only, so a
+    requirements.txt line proves nothing about the deployed image. R18 hoisted
+    the redis import out of a lazy call arguing that "declaring it buys the
+    same protection for one requirements line": true of the dev venv, false of
+    the container, which died at api/main.py's import of this module with
+    ModuleNotFoundError (httpx tripping first) until requirements-runtime.txt
+    declared them too. It survived 27 commits and a green gate because nothing
+    built the image; scripts/check.sh now does, as its last step. Any
+    top-level import added here is startup-critical for `uvicorn api.main:app`
+    and must be declared in BOTH requirement files — and is only ever verified
+    by building, never by importing in .venv.
     """
     try:
         HTTPXClientInstrumentor().instrument()

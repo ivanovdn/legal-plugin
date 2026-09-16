@@ -39,7 +39,11 @@ openinference-semantic-conventions>=0.1.9
 opentelemetry-instrumentation-httpx>=0.50b0
 # Default-off diagnostic (otel_instrument_redis) — declared anyway: it arrives
 # as a transitive of chainlit today, and depending on that is the fragility
-# that sank the Traceloop option. One line buys a top-of-file import.
+# that sank the Traceloop option. This line alone does NOT license the
+# top-of-file import in observability/otel.py: the Docker image installs
+# requirements-runtime.txt, not this file, so both instrumentors must be
+# declared THERE too (and are). Declaring an import in one of the two files is
+# how a container that could not start shipped past a green check.sh.
 opentelemetry-instrumentation-redis>=0.50b0
 
 # Frontend

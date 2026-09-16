@@ -1,7 +1,25 @@
-# Slim runtime deps for the backend Docker image (Word add-in API).
-# = requirements.txt minus chainlit (separate web client, not imported by
-# api.main) and the test stack (pytest/pytest-asyncio/testcontainers).
-# For local dev + tests use requirements.txt.
+# Runtime deps for the backend Docker image. `Dockerfile` installs THIS file
+# and never requirements.txt, so this is the dependency set the deployed
+# artifact actually has.
+#
+# It is a SEPARATE, self-contained set — NOT "requirements.txt minus some
+# lines". It used to describe itself that way and the description was false in
+# both directions, which is how a container that could not start shipped
+# through 27 commits and a green `scripts/check.sh`:
+#
+#   - it carries lines requirements.txt does NOT (python-multipart, and the
+#     two instrumentors below), because requirements.txt receives them
+#     TRANSITIVELY via chainlit — and chainlit is excluded here, so a
+#     transitive that the dev venv gets for free must be explicit in this file;
+#   - so "installed in my venv" is NOT evidence about the image. The two
+#     environments diverge by construction, and for 27 commits nothing in
+#     `scripts/check.sh` built the image to notice. Its last step now does.
+#
+# RULE: every top-level import in a module reachable from `api.main` must be
+# declared in BOTH files. A dependency declared only in requirements.txt is a
+# container that dies at `uvicorn api.main:app` before serving one request.
+#
+# For local dev + tests use requirements.txt (adds chainlit + the test stack).
 
 # API
 fastapi>=0.115,<1.0
@@ -43,6 +61,14 @@ psycopg-pool>=3.2,<4.0
 opentelemetry-sdk>=1.27
 opentelemetry-exporter-otlp-proto-http>=1.27
 openinference-semantic-conventions>=0.1.9
+# STARTUP-CRITICAL, not optional extras: both are imported at the TOP of
+# observability/otel.py, which api/main.py imports at line 12. Neither can
+# arrive transitively in this set — nothing here requires -httpx at all, and
+# the only distribution requiring -redis is traceloop-sdk, a chainlit
+# transitive, and chainlit is excluded above. Omitting either one is a
+# ModuleNotFoundError at `uvicorn api.main:app` (httpx trips first).
+opentelemetry-instrumentation-httpx>=0.50b0
+opentelemetry-instrumentation-redis>=0.50b0
 
 # HTTP client (reranker, Ollama direct calls)
 httpx>=0.28,<1.0
