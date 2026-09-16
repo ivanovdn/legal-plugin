@@ -414,35 +414,64 @@ review_persist_error: null
 All three absent. Nothing amber, nothing red, no notice of any kind. Exactly as
 designed, and exactly the problem.
 
-**And here is the answer the attorney got:**
+**And here is what the attorney got — against a control run of the identical
+question on the identical document with Qdrant back up** (trace
+`6bc215b2c1027b647a878f0aff4f5132`, the restore-verification turn below).
 
-> Yes, Section 4 creates a direct conflict by overriding the MSA's notice
-> period. Per Section 4, *"Either party may terminate this Statement of Work for
-> convenience on ten (10) days written notice, notwithstanding any longer notice
-> period in the MSA."* This deviation from the standard framework is a **Red
-> item under SOW-015** and requires Finance, Delivery, and CLCO approval before
-> signature.
+| | degraded | healthy control |
+|---|---|---|
+| prompt | 39,346 chars / **8,420** input tokens | 64,657 chars / **13,224** input tokens |
+| `GOVERNING MSA` block in prompt | **absent** | present |
+| `SOW-015` (playbook) in prompt | present | present |
+| turn time | **15.0 s** | 14.6 s |
+| `app.outcome` | `degraded` | `ok` |
+| anything in the pane | **nothing** | nothing |
 
-It cites a playbook rule id and an approval chain, and it asserts a conflict
-with the MSA's notice period **having never read the MSA**. Checked against the
-prompt on the `doc_chat` span (39,346 chars): `SOW-015` present (the playbook
-bundle did attach), `GOVERNING MSA` **absent** (the MSA block did not). The
-model inferred the conflict entirely from the SOW's own self-serving
-*"notwithstanding any longer notice period in the MSA"* language. There is no
-tell in the answer. There is no tell in the pane. The trace is the only place
-this turn differs from a good one.
+> **Degraded:** "Yes, Section 4 creates a direct conflict by **overriding the
+> MSA's notice period**. … This deviation from the standard framework is a Red
+> item under SOW-015 and requires Finance, Delivery, and CLCO approval before
+> signature."
+>
+> **Healthy:** "Yes, Section 4 of the SOW conflicts with the MSA. The SOW allows
+> termination for convenience with only ten (10) days' written notice, whereas
+> **the MSA does not specify a termination-for-convenience notice period in the
+> provided excerpt**. … Per the Approval Matrix, termination for convenience
+> shorter than 60 days requires Finance, Delivery, and CLCO approval." *(plus a
+> proposed redline to 60 days)*
+
+Read those two together. The ungrounded answer asserts the MSA **has** a notice
+period that Section 4 overrides. The grounded answer, having actually read the
+MSA, says it **does not specify one** — and then gives the attorney a redline.
+The degraded answer's central factual claim about the MSA is fabricated, and it
+is fabricated *fluently*, in the house style, citing a real playbook rule id and
+the correct approval chain. Nothing about its tone, its length, its citations or
+its confidence marks it as the worse answer.
+
+**4,804 tokens of governing MSA went missing and the turn was not even faster**
+(15.0 s vs 14.6 s). Timing is not a tell. The answer is not a tell either — it
+is wrong, but only demonstrably so against a control run that nobody has in
+production. The pane says nothing either way. `app.outcome` on the root is the
+only place in the entire system where these two turns are distinguishable.
 
 **A detail worth knowing before you read a `chat_grounding_failed` in the
 field:** `_build_chat_grounding` wraps *three* steps in one `try` — contract
 type detection, playbook load, and the MSA attach. The playbook had already
 loaded when the MSA lookup threw, so this turn lost the MSA and kept the
-playbook. The code says *partial or total*; read `degradation.detail` (here
-`ResponseHandlingException`, the qdrant-client wrapper around the refused
-connection) and the httpx child span to tell which.
+playbook; a failure one step earlier would lose both. The code means *partial or
+total* — read `degradation.detail` (here `ResponseHandlingException`, the
+qdrant-client wrapper around the refused connection) and the httpx child span to
+tell which.
 
-The 15-second turn time is itself a symptom: a properly grounded SOW turn on
-this machine is much slower, because it carries a whole MSA. Fast is not good
-news here.
+**This drill needs an MSA actually on file**, or it degrades into a tautology: a
+failed lookup and a successful lookup that finds nothing produce the same empty
+MSA block. Locally there is one — `Trinetix Model Msa 2025 (3)-1`, 73,152 chars
+under `client_id="internal"`, put there by `scripts/ingest_demo_msa.py`. Confirm
+before you start:
+
+```bash
+uv run python -c "from rag.related_docs import get_parent_msa; \
+r=get_parent_msa('internal'); print(r[0], len(r[1]))"
+```
 
 ### Restore
 
@@ -472,7 +501,10 @@ print(a.get("app.outcome"), a.get("app.degradations"))'
 Done on 2026-09-16: trace `6bc215b2c1027b647a878f0aff4f5132`, a grounded
 doc-chat turn on the restored config, **`app.outcome: ok`**, no
 `app.degradations`, 22 observations — in **Langfuse**, confirming the default
-local backend still receives everything.
+local backend still receives everything. Send the *same question on the same
+document* as drill 4 and this turn doubles as that drill's control: 13,224 input
+tokens against the degraded run's 8,420, `GOVERNING MSA` present, and an answer
+that contradicts the ungrounded one.
 
 ---
 
