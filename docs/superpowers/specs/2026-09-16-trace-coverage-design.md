@@ -333,7 +333,7 @@ These also settle the one expectation flagged but not verified: whether httpx in
 Each independently shippable, on `feat/trace-coverage`:
 
 1. **Seam** — `spans.py` additions, `degradations.py`, `ollama_timings`, conftest fixture move, tests.
-2. **Wire the 22 sites + outcome derivation.** ← the main win lands here.
+2. **Wire the 22 codes + outcome derivation.** ← the main win lands here. (*Codes*, not sites: they land at 26 call sites — see *Accounting*.)
 3. **New spans** — `compact` root, 8 store functions.
 4. **httpx auto-instrumentation** + `requirements.txt` + `otel_instrument_redis`.
 5. **Access fix** + docs + drills.
