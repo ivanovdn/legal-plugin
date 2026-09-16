@@ -515,15 +515,22 @@ routes to `human_review`, which raises `GraphInterrupt` to pause the graph. That
 exception *propagates out* of the node's span, so OTel's default handling marks
 it ERROR and attaches an `exception` event — with the entire interrupt payload,
 including the drafted answer, in the message. Nothing failed: the root still
-stamps `app.outcome: ok`. This is why the contract that matters is **`ERROR` on
-the root**, not `ERROR` anywhere in the trace. Filter on the root.
+stamps `app.outcome: ok`. Observed 2026-09-16 on trace
+`c429416c497f26bede194c837152b528` (a baseline *"what is an NDA?"* turn), where
+`human_review` is ERROR and `query:research` is `UNSET` / `app.outcome: ok`.
+This is why the contract that matters is **`ERROR` on the root**, not `ERROR`
+anywhere in the trace. Filter on the root.
 
 **`/api/compact`'s two early 4xx guards carry no `app.outcome`.** Compaction
 disabled (403) and missing `document_id` (400) raise `HTTPException` before any
-outcome is stamped. They still surface as ERROR spans through OTel's default
-exception handling, but an analyst filtering strictly on `app.outcome != "ok"`
-will not see them. Deliberate — there is no reason code for either, and
-stamping `ok` before a 4xx would be worse.
+outcome is stamped. Checked live 2026-09-16 — `POST /api/compact` with an empty
+`document_id` returned 400 and produced trace
+`f7ab9f7bbbe28c3dfc664422c765032c`, a `compact` span at **level ERROR** with
+`statusMessage: HTTPException: 400: document_id is required` and **no
+`app.outcome` attribute at all**. So the span is honest, but an analyst
+filtering strictly on `app.outcome != "ok"` will not see it and has to fall back
+to status. Deliberate — there is no reason code for either guard, and stamping
+`ok` before a 4xx would be worse.
 
 **An expired session on resume stamps `ok`.** `resume_query`'s
 empty-prior-state branch — where `get_state` *succeeds* and finds nothing — is
@@ -538,10 +545,13 @@ excluded from the vocabulary on principle. Observability reporting its own
 best-effort catches as application degradations is how a dashboard becomes
 decoration.
 
-**Every RAG turn emits ERROR `POST` spans to `http.url: "/"`.** Those are the
+**A RAG turn emits ERROR `POST` spans to `http.url: "/"`.** Those are the
 reranker — `RERANKER_ENABLED=true` with `RERANKER_URL=` empty means every call
 reaches `httpx.post("")` → `httpx.UnsupportedProtocol`, swallowed by the bare
-`except` at `rag/reranker.py:119`. The reranker has never run. It is a genuine
+`except` at `rag/reranker.py:119`. Seen on the same baseline trace, alongside
+matching backend log lines: `WARNING rag.reranker: Reranker error: Request URL
+is missing an 'http://' or 'https://' protocol. — using original ranking`. The
+reranker has never run. It is a genuine
 silent degradation, it is tracked as a follow-up in
 [docs/wiki.md](wiki.md#follow-ups--roadmap), and it is *not* in the vocabulary
 because the RAG pipeline was explicitly descoped from this work — so it shows up
