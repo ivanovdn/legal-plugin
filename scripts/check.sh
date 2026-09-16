@@ -13,6 +13,9 @@ cd "$REPO_ROOT"
 echo "==> backend tests"
 uv run pytest tests/ -q
 
+echo "==> degradation vocabulary"
+uv run python scripts/check_degradation_vocabulary.py
+
 echo "==> word add-in typecheck"
 cd clients/word
 npx tsc --noEmit
