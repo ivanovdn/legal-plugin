@@ -178,6 +178,14 @@ def test_submit_query_marks_failed_when_the_stateless_fallback_also_fails(monkey
 # @traced, then renamed to f"resume:{session_id}" by the same
 # set_trace_attributes(name=...) pattern as submit_query (see note above);
 # look each one up by its own session_id suffix, never by bare "resume".
+#
+# R11: get_state-empty is deliberately NOT the same shape as get_state-raises.
+# An exception means the load failed (RESUME_STATE_LOAD_FAILED, failed). An
+# empty result means the load succeeded and correctly found nothing — the
+# checkpoint TTL working as designed — so it is reason-code-free and lands on
+# ok, even though the attorney still sees status="error". Reusing the
+# exception's reason code there would smuggle the except block's "any
+# exception -> session expired" conflation into the telemetry too.
 
 
 def test_resume_query_marks_failed_when_get_state_raises(monkeypatch):
@@ -209,15 +217,20 @@ def test_resume_query_marks_failed_when_get_state_raises(monkeypatch):
     assert span.status.status_code == StatusCode.ERROR
 
 
-def test_resume_query_marks_failed_when_prior_state_is_empty(monkeypatch):
-    """A fifth path not named in the brief's worked list: get_state succeeds
-    but finds nothing to resume (unknown/expired thread_id). No exception is
-    raised, but the attorney still gets an error string as the answer — Class
-    1 by the design spec's own definition — so it must stamp an outcome too.
-    Reuses RESUME_STATE_LOAD_FAILED: either way, no usable prior state."""
+def test_resume_query_is_ok_when_prior_state_is_empty(monkeypatch):
+    """R11: a fifth path not named in the brief's worked list: get_state
+    succeeds but finds nothing to resume (unknown/expired thread_id) — the
+    checkpoint TTL working as designed, not a failure. The attorney still
+    gets an error string as the answer (status="error" + the message,
+    unchanged), but app.outcome must NOT be "failed" and no reason code may
+    be invented or reused: RESUME_STATE_LOAD_FAILED means the load FAILED,
+    and this load succeeded. Reusing it here would smuggle the sibling except
+    block's "any exception -> session expired" conflation into the telemetry
+    too — nothing broke, so nothing is recorded, so derive_outcome lands on
+    ok."""
     from api.routes import query as mod
     from api.models import ResumeRequest
-    from observability.degradations import OUTCOME_FAILED, RESUME_STATE_LOAD_FAILED
+    from observability.degradations import OUTCOME_OK
 
     class FakeState:
         values = {}
@@ -232,11 +245,13 @@ def test_resume_query_marks_failed_when_prior_state_is_empty(monkeypatch):
         "sess-missing", ResumeRequest(approved=True, notes="", revised_response=""),
     )
     assert resp.status == "error"
+    assert resp.errors == ["session expired or not found"]
 
     span = spans_by_name("resume:sess-missing")[0]
-    assert span.attributes["app.outcome"] == OUTCOME_FAILED
-    assert span.attributes["degradation.reason"] == RESUME_STATE_LOAD_FAILED
-    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["app.outcome"] == OUTCOME_OK
+    assert span.status.status_code != StatusCode.ERROR
+    assert "app.degradations" not in span.attributes
+    assert "degradation.reason" not in span.attributes
 
 
 def test_resume_query_marks_failed_when_invoke_raises(monkeypatch):

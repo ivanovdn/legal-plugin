@@ -280,13 +280,17 @@ def resume_query(session_id: str, body: ResumeRequest):
         set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=["session expired or not found"])
     if not prior or not prior.values:
-        # Not an exception — get_state succeeded and simply found nothing to
-        # resume (unknown/expired thread_id). Still Class 1 by D2's own
-        # definition ("no answer, or an error string as the answer"), so it
-        # gets the same reason code as the except above: either way, we could
-        # not load a usable prior state to resume from.
-        mark_failed(RESUME_STATE_LOAD_FAILED, detail="empty prior state")
-        set_outcome(OUTCOME_FAILED)
+        # R11: get_state succeeded and correctly found nothing — an
+        # unknown/expired thread_id, the checkpoint TTL working as designed,
+        # not something broken. Deliberately reason-code-free: do NOT invent
+        # or reuse a code here (RESUME_STATE_LOAD_FAILED means the load
+        # FAILED; it did not). Reusing it would smuggle the except block's
+        # "any exception -> session expired" conflation into the telemetry
+        # too — the one thing this task was told to leave alone. status=ERROR
+        # is reserved for "something broke"; the attorney-facing channel
+        # already says the session is gone via status="error" + the message,
+        # so derive_outcome sees no reasons and lands on ok.
+        set_outcome(derive_outcome(degradations()))
         return ApiResponse(status="error", errors=["session expired or not found"])
 
     try:
