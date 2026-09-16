@@ -15,10 +15,12 @@ import logging
 from datetime import datetime, timezone
 
 from memory.db import get_pool
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
 
+@traced("db.append_turn")
 def append_turn(document_id: str, attorney_id: str, user_text: str, assistant_text: str) -> None:
     """Append one turn: a 'user' row then an 'assistant' row. Raises on failure."""
     ts = datetime.now(timezone.utc).isoformat()
@@ -36,6 +38,7 @@ def append_turn(document_id: str, attorney_id: str, user_text: str, assistant_te
     logger.info("Conversation turn saved: document_id=%s attorney_id=%s", document_id, attorney_id)
 
 
+@traced("db.load_recent")
 def load_recent(
     document_id: str, attorney_id: str, max_messages: int, after_id: int = 0
 ) -> list[dict]:
@@ -83,6 +86,7 @@ def load_rows_after(
     return [{"id": r[0], "role": r[1], "content": r[2]} for r in rows]
 
 
+@traced("db.row_lengths_after")
 def row_lengths_after(document_id: str, attorney_id: str, after_id: int) -> list[int]:
     """Content lengths of the messages past the compaction floor, OLDEST FIRST.
 

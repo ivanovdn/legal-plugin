@@ -952,3 +952,35 @@ def test_compact_route_records_a_net_benefit_refusal_without_marking_it_failed(m
     assert metadata["compaction.refused_reason"] == refusal_reason
     # A refusal is not a degradation, so it must not touch the reason accumulator.
     assert "app.degradations" not in span.attributes
+
+
+@pytest.mark.parametrize("span_name", [
+    "db.write_audit_log", "db.save_review", "db.load_latest_review",
+    "db.append_turn", "db.load_recent", "db.row_lengths_after",
+    "db.load_segments", "db.latest_to_id",
+])
+def test_store_functions_are_named_spans(span_name):
+    """Named per operation. Wrapping get_pool().connection() instead would give
+    a pile of spans all called 'db'."""
+    import memory.audit, memory.conversation_store, memory.conversation_summary, memory.review_store
+
+    fn_name = span_name.removeprefix("db.")
+    module = {
+        "write_audit_log": memory.audit,
+        "save_review": memory.review_store,
+        "load_latest_review": memory.review_store,
+        "append_turn": memory.conversation_store,
+        "load_recent": memory.conversation_store,
+        "row_lengths_after": memory.conversation_store,
+        "load_segments": memory.conversation_summary,
+        "latest_to_id": memory.conversation_summary,
+    }[fn_name]
+    fn = getattr(module, fn_name)
+    assert getattr(fn, "__wrapped__", None) is not None, f"{fn_name} is not @traced"
+
+
+def test_store_span_is_emitted_on_a_real_call():
+    from memory.conversation_summary import latest_to_id
+
+    latest_to_id("doc-nonexistent", "u1")
+    assert len(spans_by_name("db.latest_to_id")) == 1
