@@ -417,3 +417,117 @@ def test_resume_query_is_ok_on_a_clean_resume(monkeypatch):
     span = spans_by_name("resume:sess-4")[0]
     assert span.attributes["app.outcome"] == OUTCOME_OK
     assert span.status.status_code != StatusCode.ERROR
+
+
+# --- skill spans: legal_research / contract_generation ----------------------
+# Neither skill runs through llm_caller: legal_research sets
+# state["llm_response"] itself and never reaches it, and contract_generation
+# calls the LLM / ReAct agent directly on both of its paths. Each skill's own
+# @traced span is therefore the only place a caught failure can be recorded.
+
+
+def test_legal_research_failure_marks_the_skill_span_error(monkeypatch):
+    """The Word chat path — the most-used route in the product. An error
+    string reaches the attorney; the span must say so.
+
+    Import via importlib, NOT `from skills.legal_research import legal_research
+    as lr` — the package's __init__.py does `from
+    skills.legal_research.legal_research import legal_research`, which
+    re-exports the FUNCTION over the submodule name. `lr` would then be the
+    function object, not the module, and `monkeypatch.setattr(lr,
+    "traced_invoke", boom)` cannot reach the module global that
+    `_run_doc_chat` actually calls through (confirmed empirically: that
+    import shape raises AttributeError here, since a function object has no
+    `traced_invoke` attribute for monkeypatch's raising=True to find)."""
+    import importlib
+
+    from observability.degradations import LEGAL_RESEARCH_FAILED
+
+    lr = importlib.import_module("skills.legal_research.legal_research")
+
+    def boom(*a, **k):
+        raise RuntimeError("model unreachable")
+
+    monkeypatch.setattr(lr, "traced_invoke", boom)
+
+    state = {
+        "request": "who signs?",
+        "uploaded_docs": [{"text": "AGREEMENT ..."}],
+        "task_type": "research",
+        "user_id": "u1",
+        "document_id": "doc-1",
+        "session_id": "s1",
+    }
+    lr.legal_research(state)
+
+    assert state["llm_response"].startswith("Error: Legal research failed")
+    span = spans_by_name("legal_research")[0]
+    assert span.status.status_code == StatusCode.ERROR
+    # The reason itself (R9), not just ERROR status. Asserting detail too:
+    # it doubles as proof the *patched* traced_invoke is what fired — a
+    # genuine unpatched network failure here would carry a different
+    # exception class name, not "RuntimeError".
+    assert span.attributes["degradation.reason"] == LEGAL_RESEARCH_FAILED
+    assert span.attributes["degradation.detail"] == "RuntimeError"
+
+
+def test_contract_generation_revision_failure_marks_the_skill_span_error(monkeypatch):
+    """Loop-back path: previous_draft + attorney_notes both set -> a direct
+    LLM revision call, bypassing the ReAct agent entirely. Shares
+    CONTRACT_GENERATION_FAILED with the agent path below (deliberately one
+    code, not two); detail="revision" is what tells them apart.
+
+    Same importlib requirement as the legal_research test above:
+    skills/contract_generation/__init__.py re-exports the FUNCTION over the
+    submodule name too."""
+    import importlib
+
+    from observability.degradations import CONTRACT_GENERATION_FAILED
+
+    mod = importlib.import_module("skills.contract_generation.contract_generation")
+
+    def boom(*a, **k):
+        raise RuntimeError("model unreachable")
+
+    monkeypatch.setattr(mod, "traced_invoke", boom)
+
+    state = {
+        "request": "revise the indemnity clause",
+        "attorney_notes": "tighten the liability cap",
+        "previous_draft": "This Agreement is entered into ...",
+        "filters": {},
+    }
+    mod.contract_generation(state)
+
+    assert state["llm_response"].startswith("Error: Contract revision failed")
+    span = spans_by_name("contract_generation")[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["degradation.reason"] == CONTRACT_GENERATION_FAILED
+    assert span.attributes["degradation.detail"] == "revision"
+
+
+def test_contract_generation_agent_failure_marks_the_skill_span_error(monkeypatch):
+    """No previous draft -> the ReAct agent path. Same reason code as the
+    revision path above; detail="agent" is what tells them apart."""
+    import importlib
+
+    from observability.degradations import CONTRACT_GENERATION_FAILED
+
+    mod = importlib.import_module("skills.contract_generation.contract_generation")
+
+    def boom(*a, **k):
+        raise RuntimeError("agent unreachable")
+
+    monkeypatch.setattr(mod, "traced_agent_invoke", boom)
+
+    state = {
+        "request": "draft an NDA for Acme Corp",
+        "filters": {"client_id": "acme"},
+    }
+    mod.contract_generation(state)
+
+    assert state["llm_response"].startswith("Error: Contract generation agent failed")
+    span = spans_by_name("contract_generation")[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["degradation.reason"] == CONTRACT_GENERATION_FAILED
+    assert span.attributes["degradation.detail"] == "agent"

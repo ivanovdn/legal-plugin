@@ -10,7 +10,8 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.spans import traced
+from observability.degradations import LEGAL_RESEARCH_FAILED
+from observability.spans import mark_failed, traced
 from observability.tracing import message_usage, traced_agent_invoke, traced_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
@@ -427,6 +428,7 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
 
     except Exception as e:
         logger.error("[legal_research] failed: %s", e)
+        mark_failed(LEGAL_RESEARCH_FAILED, exc=e, detail=e.__class__.__name__)
         state["llm_response"] = f"Error: Legal research failed — {e}"
         state["proposed_edits"] = []
 
