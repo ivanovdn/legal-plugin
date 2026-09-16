@@ -18,7 +18,7 @@ import json
 from typing import Any, Callable
 
 from opentelemetry import trace
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Status, StatusCode
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 
 _tracer = trace.get_tracer("legal-triage")
@@ -221,3 +221,23 @@ def record_degradation(reason: str, *, announced: bool, detail: str = "") -> Non
 def degradations() -> list[str]:
     """Reason codes accumulated on this request, for the rollup to read back."""
     return list(_root_degradations.get() or [])
+
+
+def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = "") -> None:
+    """Set the CURRENT span to ERROR and record `exc`. Never raises.
+
+    For failures this app CATCHES and converts into a degraded answer. OTel
+    marks a span ERROR only when an exception propagates out of the `with`
+    block; there are 40 `except Exception` sites here and almost none of them
+    propagate, so without this call every failed turn looks like a healthy one.
+    """
+    try:
+        _accumulate(reason)
+        span = trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        if exc is not None:
+            span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, detail or reason))
+    except Exception:
+        pass

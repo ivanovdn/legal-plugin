@@ -106,3 +106,35 @@ def test_record_degradation_deduplicates():
         return degradations()
 
     assert turn() == [MSA_LOOKUP_FAILED]
+
+
+def test_mark_failed_sets_error_status_on_the_current_span():
+    """OTel only records exceptions that PROPAGATE. This app catches them, so
+    the status has to be set by hand at the point of the catch."""
+    from observability.degradations import LLM_CALL_FAILED
+    from observability.spans import traced, mark_failed
+
+    @traced("llm_caller")
+    def node():
+        try:
+            raise RuntimeError("ollama refused the connection")
+        except RuntimeError as e:
+            mark_failed(LLM_CALL_FAILED, exc=e)
+        return "Error: LLM call failed"      # what the real node does
+
+    assert node() == "Error: LLM call failed"
+    span = spans_by_name("llm_caller")[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert any(e.name == "exception" for e in span.events)
+
+
+def test_mark_failed_accumulates_like_a_degradation():
+    from observability.degradations import LLM_CALL_FAILED
+    from observability.spans import traced, mark_failed, degradations
+
+    @traced("root")
+    def root():
+        mark_failed(LLM_CALL_FAILED)
+        return degradations()
+
+    assert root() == [LLM_CALL_FAILED]
