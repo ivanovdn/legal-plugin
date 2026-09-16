@@ -7,10 +7,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
 from observability.tracing import (
@@ -18,27 +14,7 @@ from observability.tracing import (
     message_usage,
     traced_invoke,
 )
-
-_exporter = InMemorySpanExporter()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _otel_test_provider():
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(_exporter))
-    trace.set_tracer_provider(provider)   # first real set wins (app tracing is off in tests)
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _clear_spans():
-    _exporter.clear()
-    yield
-    _exporter.clear()
-
-
-def _spans_by_name(name):
-    return [s for s in _exporter.get_finished_spans() if s.name == name]
+from tests.conftest import spans_by_name as _spans_by_name
 
 
 def test_traced_creates_span_and_returns_value():
