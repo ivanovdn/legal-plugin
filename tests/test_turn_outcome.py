@@ -1083,13 +1083,15 @@ def test_compact_route_marks_failed_when_the_store_read_raises(monkeypatch):
     assert span.attributes["degradation.reason"] == COMPACTION_FAILED
     assert span.attributes["degradation.detail"] == "PoolTimeout"
     assert COMPACTION_FAILED in json.loads(span.attributes["app.degradations"])
-    # TWO exception events, measured not assumed: mark_failed(exc=e) records
-    # one, and OTel's own set_status_on_exception records another when the
-    # re-raise leaves @traced. This is the only mark_failed site that re-raises
-    # (every other one catches and degrades), and exc= is kept for uniformity
-    # and so the exception still lands if the raise is ever swallowed. Pinned
-    # so the duplicate reads as known, not as an oversight.
-    assert [e.name for e in span.events] == ["exception", "exception"]
+    # Exactly ONE exception event, measured not assumed. This is the only
+    # mark_failed site that re-raises, so OTel's own set_status_on_exception
+    # records the exception as the raise leaves @traced; passing exc= as well
+    # produced a SECOND, duplicate event, and its status description was then
+    # overwritten by OTel's __exit__ anyway. exc= was therefore dropped: the
+    # reason and detail still reach the span as attributes, which mark_failed
+    # sets regardless of exc (asserted above). Pinned so a re-added exc= fails
+    # here rather than quietly double-reporting in the trace UI.
+    assert [e.name for e in span.events] == ["exception"]
 
 
 @pytest.mark.parametrize("disabled,document_id,status", [

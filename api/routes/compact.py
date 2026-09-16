@@ -58,15 +58,21 @@ def post_compact(
     # handler. Uncaught, that made compact the one request root of three that
     # could fail outside the taxonomy — ERROR via OTel's default exception
     # handling, but no app.outcome, no app.degradations, no COMPACTION_FAILED.
-    # Re-raised unchanged: failure here stays LOUD (FastAPI's 500). This is the
-    # only mark_failed site that re-raises, so the span ends up with the
-    # exception recorded twice — once here, once by OTel on the way out. exc=
-    # is kept anyway: it matches the other seven sites and keeps the exception
-    # on the span if this raise is ever turned into a swallow.
+    # Re-raised unchanged: failure here stays LOUD (FastAPI's 500).
+    #
+    # NO exc= here, unlike the other seven mark_failed sites, because this is
+    # the only one that RE-RAISES. @traced's __exit__ record_exception's the
+    # propagating exception itself and OVERWRITES the span status description,
+    # so exc= bought a second `exception` event on the span and a description
+    # that was then discarded — it could not reach the UI this work exists to
+    # make trustworthy. What survives is unaffected: mark_failed stamps
+    # degradation.reason and degradation.detail regardless of exc, and the
+    # status stays ERROR either way. Symmetric with the result["error"] exit
+    # below, this route's other terminal exit, which passes no exc either.
     try:
         result = compact_conversation(document_id, user_id, body.reclaim_chars)
     except Exception as e:
-        mark_failed(COMPACTION_FAILED, exc=e, detail=e.__class__.__name__)
+        mark_failed(COMPACTION_FAILED, detail=e.__class__.__name__)
         set_outcome(OUTCOME_FAILED)
         raise
 
