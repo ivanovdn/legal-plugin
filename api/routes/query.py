@@ -13,7 +13,15 @@ from api.auth import resolve_user_id, resolve_user_name
 from config import get_settings
 from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
-from observability.spans import traced, set_trace_attributes, current_trace_id
+from observability.degradations import (
+    CHECKPOINTER_UNAVAILABLE, GRAPH_INVOKE_FAILED, OUTCOME_FAILED,
+    RESUME_FAILED, RESUME_STATE_LOAD_FAILED, STATELESS_FALLBACK_FAILED,
+    derive_outcome,
+)
+from observability.spans import (
+    current_trace_id, degradations, mark_failed, record_degradation,
+    set_outcome, set_trace_attributes, traced,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +213,7 @@ def submit_query(
     try:
         result = graph.invoke(initial_state, config=config)
         refresh_ttl(session_id)
+        set_outcome(derive_outcome(degradations()))
         return ApiResponse(
             status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
         )
@@ -214,6 +223,9 @@ def submit_query(
                 "Checkpointer (Redis) failed mid-invoke (%s) — degrading to a stateless "
                 "run; chat_history is lost this turn (memory_degraded=True).", e,
             )
+            record_degradation(
+                CHECKPOINTER_UNAVAILABLE, announced=True, detail=e.__class__.__name__
+            )
             try:
                 initial_state["memory_degraded"] = True
                 result = _get_stateless_graph().invoke(initial_state)
@@ -221,16 +233,21 @@ def submit_query(
                 if isinstance(report, dict):
                     report["memory_degraded"] = True
                     result["report"] = report
+                set_outcome(derive_outcome(degradations()))
                 return ApiResponse(
                     status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
                 )
             except Exception as e2:
                 logger.exception("Stateless fallback failed after checkpointer outage")
+                mark_failed(STATELESS_FALLBACK_FAILED, exc=e2)
+                set_outcome(OUTCOME_FAILED)
                 return ApiResponse(
                     status="error",
                     errors=[f"Session memory unavailable and fallback failed: {e2}"],
                 )
         logger.exception("Graph execution failed")
+        mark_failed(GRAPH_INVOKE_FAILED, exc=e)
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=[str(e)])
 
 
@@ -259,8 +276,17 @@ def resume_query(session_id: str, body: ResumeRequest):
         prior = graph.get_state(config)
     except Exception as e:
         logger.warning("resume: get_state failed for %s: %s", session_id, e)
+        mark_failed(RESUME_STATE_LOAD_FAILED, exc=e, detail=e.__class__.__name__)
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=["session expired or not found"])
     if not prior or not prior.values:
+        # Not an exception — get_state succeeded and simply found nothing to
+        # resume (unknown/expired thread_id). Still Class 1 by D2's own
+        # definition ("no answer, or an error string as the answer"), so it
+        # gets the same reason code as the except above: either way, we could
+        # not load a usable prior state to resume from.
+        mark_failed(RESUME_STATE_LOAD_FAILED, detail="empty prior state")
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=["session expired or not found"])
 
     try:
@@ -273,11 +299,14 @@ def resume_query(session_id: str, body: ResumeRequest):
             config=config,
         )
         refresh_ttl(session_id)
+        set_outcome(derive_outcome(degradations()))
         return ApiResponse(
             status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
         )
     except Exception as e:
         logger.exception("resume: graph invoke failed for %s", session_id)
+        mark_failed(RESUME_FAILED, exc=e)
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=[str(e)])
 
 
