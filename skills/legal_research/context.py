@@ -34,6 +34,10 @@ from graph.state import LegalAgentState
 from memory.conversation_store import load_recent, row_lengths_after
 from memory.conversation_summary import latest_to_id, load_segments
 from memory.review_store import load_latest_review
+from observability.degradations import (
+    PRIOR_CONVERSATION_LOAD_FAILED, PRIOR_REVIEW_LOAD_FAILED, SUMMARY_LOAD_FAILED,
+)
+from observability.spans import record_degradation
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
@@ -65,6 +69,7 @@ def _load_prior_review_block(state: LegalAgentState, uploaded_text: str) -> str:
         latest = load_latest_review(document_id)
     except Exception as e:
         logger.error("[legal_research] prior-review load failed: %s", e)
+        record_degradation(PRIOR_REVIEW_LOAD_FAILED, announced=True, detail=e.__class__.__name__)
         state["memory_degraded"] = True
         return ""
     if not latest:
@@ -127,6 +132,7 @@ def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
             # duplicated (the summaries that would have covered them did not
             # load either).
             logger.error("[legal_research] summary load failed: %s", e)
+            record_degradation(SUMMARY_LOAD_FAILED, announced=True, detail=e.__class__.__name__)
             state["memory_degraded"] = True
             boundary, summaries = 0, []
     try:
@@ -135,6 +141,7 @@ def _load_prior_conversation(state: LegalAgentState) -> list[dict]:
         )
     except Exception as e:
         logger.error("[legal_research] prior-conversation load failed: %s", e)
+        record_degradation(PRIOR_CONVERSATION_LOAD_FAILED, announced=True, detail=e.__class__.__name__)
         state["memory_degraded"] = True
         return []
     return [*summaries, *verbatim]

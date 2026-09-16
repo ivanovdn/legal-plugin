@@ -9,7 +9,8 @@ from graph.state import LegalAgentState
 from memory.audit import write_audit_log
 from memory.conversation_store import append_turn
 from memory.review_store import save_review
-from observability.spans import traced
+from observability.degradations import AUDIT_WRITE_FAILED, REVIEW_PERSIST_FAILED
+from observability.spans import record_degradation, traced
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ def memory_writer(state: LegalAgentState) -> dict:
             "[memory_writer] AUDIT WRITE FAILED (%s) — entry not persisted to the "
             "audit_log table; recorded here instead: %s", e, entry,
         )
+        record_degradation(AUDIT_WRITE_FAILED, announced=True, detail=e.__class__.__name__)
         report_updates["memory_degraded"] = True
 
     # Persist the full markdown review, keyed to the document. Loud on failure:
@@ -71,6 +73,7 @@ def memory_writer(state: LegalAgentState) -> dict:
             )
         except Exception as e:
             logger.error("[memory_writer] FAILED to persist review: %s", e)
+            record_degradation(REVIEW_PERSIST_FAILED, announced=True, detail=e.__class__.__name__)
             report_updates["review_persist_error"] = str(e)
 
     # Persist the doc-chat conversation, keyed to (document, attorney). Best-effort:

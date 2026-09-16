@@ -531,3 +531,145 @@ def test_contract_generation_agent_failure_marks_the_skill_span_error(monkeypatc
     assert span.status.status_code == StatusCode.ERROR
     assert span.attributes["degradation.reason"] == CONTRACT_GENERATION_FAILED
     assert span.attributes["degradation.detail"] == "agent"
+
+
+def test_audit_write_failure_records_an_announced_degradation(monkeypatch):
+    from graph.nodes import memory_writer as mod
+    from observability.degradations import AUDIT_WRITE_FAILED
+
+    def boom(**kwargs):
+        raise RuntimeError("pool timeout")
+
+    monkeypatch.setattr(mod, "write_audit_log", boom)
+
+    out = mod.memory_writer({
+        "session_id": "s1", "user_id": "u1", "task_type": "research",
+        "request": "q", "llm_response": "a", "report": {},
+    })
+    # The existing contract is unchanged: the flag travels on the RETURNED report.
+    assert out["report"]["memory_degraded"] is True
+
+    events = [e for e in spans_by_name("memory_writer")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [AUDIT_WRITE_FAILED]
+    assert events[0].attributes["degradation.announced"] is True
+    assert spans_by_name("memory_writer")[0].status.status_code != StatusCode.ERROR
+
+
+# --- Task 10 continued: the remaining announced (class 2) sites -------------
+# The brief's own worked example above (audit write) anchors the TDD cycle;
+# these pin the other four announced sites the same batch wires, each
+# asserting both `degradation.reason` and `degradation.announced` — the
+# boolean is the entire class-2/class-3 boundary, so a test that never reads
+# it back cannot catch a flipped one.
+
+
+def test_review_persist_failure_records_an_announced_degradation(monkeypatch):
+    from graph.nodes import memory_writer as mod
+    from observability.degradations import REVIEW_PERSIST_FAILED
+
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kwargs: None)
+
+    def boom(**kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(mod, "save_review", boom)
+
+    out = mod.memory_writer({
+        "session_id": "s1", "user_id": "u1", "task_type": "contract_review",
+        "request": "review this", "llm_response": "# Review\nFinding",
+        "document_id": "doc-1", "contract_type_detected": "nda", "report": {},
+    })
+    assert "disk full" in out["report"]["review_persist_error"]
+
+    events = [e for e in spans_by_name("memory_writer")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [REVIEW_PERSIST_FAILED]
+    assert events[0].attributes["degradation.announced"] is True
+    assert spans_by_name("memory_writer")[0].status.status_code != StatusCode.ERROR
+
+
+def test_prior_review_load_failure_records_an_announced_degradation(monkeypatch):
+    """Calls `_load_prior_review_block` directly, so per context.py's own
+    testing note this patches the CONTEXT module (load_latest_review is not
+    re-imported into legal_research.py)."""
+    import importlib
+    from observability.degradations import PRIOR_REVIEW_LOAD_FAILED
+    from observability.spans import traced
+
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    def boom(document_id):
+        raise RuntimeError("pool timeout")
+
+    monkeypatch.setattr(ctx, "load_latest_review", boom)
+    state = {"document_id": "doc-pr"}
+
+    @traced("turn")
+    def turn():
+        return ctx._load_prior_review_block(state, "")
+
+    result = turn()
+    assert result == ""
+    assert state["memory_degraded"] is True  # existing contract unchanged
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [PRIOR_REVIEW_LOAD_FAILED]
+    assert events[0].attributes["degradation.announced"] is True
+
+
+def test_summary_load_failure_records_an_announced_degradation(monkeypatch):
+    """`latest_to_id` failing inside `_load_prior_conversation`'s summary-read
+    block. The verbatim `load_recent` call right after is left unpatched — it
+    runs for real against the empty test store and succeeds, isolating this
+    site from the sibling PRIOR_CONVERSATION_LOAD_FAILED one below."""
+    import importlib
+    from observability.degradations import SUMMARY_LOAD_FAILED
+    from observability.spans import traced
+
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    def boom(*a, **k):
+        raise RuntimeError("pool timeout")
+
+    monkeypatch.setattr(ctx, "latest_to_id", boom)
+    state = {"document_id": "doc-sl", "user_id": "atty-sl"}
+
+    @traced("turn")
+    def turn():
+        return ctx._load_prior_conversation(state)
+
+    result = turn()
+    assert result == []
+    assert state["memory_degraded"] is True
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [SUMMARY_LOAD_FAILED]
+    assert events[0].attributes["degradation.announced"] is True
+
+
+def test_prior_conversation_load_failure_records_an_announced_degradation(monkeypatch):
+    """`load_recent` failing AFTER the summary-read block succeeded for real
+    (fresh document/attorney ids, nothing stored) — isolates this from the
+    SUMMARY_LOAD_FAILED site above."""
+    import importlib
+    from observability.degradations import PRIOR_CONVERSATION_LOAD_FAILED
+    from observability.spans import traced
+
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    def boom(*a, **k):
+        raise RuntimeError("pool timeout")
+
+    monkeypatch.setattr(ctx, "load_recent", boom)
+    state = {"document_id": "doc-pc", "user_id": "atty-pc"}
+
+    @traced("turn")
+    def turn():
+        return ctx._load_prior_conversation(state)
+
+    result = turn()
+    assert result == []
+    assert state["memory_degraded"] is True
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [PRIOR_CONVERSATION_LOAD_FAILED]
+    assert events[0].attributes["degradation.announced"] is True
