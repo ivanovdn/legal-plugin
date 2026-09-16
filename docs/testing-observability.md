@@ -19,9 +19,9 @@ the same kind of document for the other feature with no automatable gate.
 ## Why the drills matter more here than usual
 
 OpenTelemetry marks a span `ERROR` only when an exception **propagates out of**
-the `with start_as_current_span(...)` block. This application has 40
-`except Exception` sites and almost nothing propagates — that is deliberate and
-correct (*tracing must never break a turn*, *retrieval must never break a
+the `with start_as_current_span(...)` block. This application catches nearly
+everything on the turn path, so almost nothing propagates — that is deliberate
+and correct (*tracing must never break a turn*, *retrieval must never break a
 review*, *Redis down → stateless run*). The consequence, until 2026-09-16, was
 that a turn where Ollama timed out and the attorney read an error string was
 **byte-identical in the trace UI to a healthy turn**.
@@ -78,30 +78,50 @@ Read a trace back without the UI — this is what every drill below uses:
 
 ```bash
 # All spans of one trace, outcome first. $TID is the trace_id the API returned.
-curl -s "http://localhost:6006/v1/projects/default/spans?limit=400" \
-| python3 -c '
-import json,sys
-tid=sys.argv[1]
-for s in sorted([x for x in json.load(sys.stdin)["data"]
-                 if x["context"]["trace_id"]==tid], key=lambda x:x["start_time"]):
-    a=s["attributes"]
-    keep={k:v for k,v in a.items()
-          if k.startswith(("app.","degradation","llm.ollama")) or k=="http.url"}
-    print(f"{s[\"name\"]:<22} {s[\"status_code\"]:<6} {keep}")
-    if s["status_message"]: print("    msg:", s["status_message"][:160])
+TID=53ff85d0549ab733b482695b5b0c05da        # yours, from the response payload
+python3 - "$TID" <<'PY'
+import json, sys, urllib.request
+tid = sys.argv[1]
+url = "http://localhost:6006/v1/projects/default/spans?limit=400"
+with urllib.request.urlopen(url, timeout=20) as r:
+    rows = json.load(r)["data"]
+spans = [s for s in rows if s["context"]["trace_id"] == tid]
+if not spans:
+    sys.exit("NO SPANS for " + tid)
+for s in sorted(spans, key=lambda s: s["start_time"]):
+    keep = {k: v for k, v in s["attributes"].items()
+            if k.startswith(("app.", "degradation", "llm.ollama")) or k == "http.url"}
+    print("%-22s %-6s %s" % (s["name"], s["status_code"], keep))
+    if s["status_message"]:
+        print("    msg:", s["status_message"][:160])
     for e in s["events"]:
-        if e["name"]=="degradation": print("    EVENT", json.dumps(e["attributes"]))
-' "$TID"
+        if e["name"] == "degradation":
+            print("    EVENT", json.dumps(e["attributes"]))
+PY
 ```
+
+It fetches the URL itself rather than reading a pipe, deliberately: a heredoc
+already owns stdin, so `curl … | python3 - <<'PY'` would feed Python its own
+source instead of the JSON. (An earlier draft of this document used
+`python3 -c '…'` with escaped quotes inside an f-string; the backslashes reach
+Python literally and it is a `SyntaxError`. **Every command in this file has
+since been pasted and run exactly as published — 2026-09-17.** The drill
+*results* below are from the 2026-09-16 run and are unchanged.)
 
 `POST /api/query` returns the `trace_id` in its payload, so `$TID` never has to
 be hunted for in a UI.
 
-**The pane's three degradation signals** — the only things an attorney ever
-sees — are `memory_degraded` (top level, **chat tab only**),
+**Only three fields in the payload can ever become a visible warning:**
+`memory_degraded` (top level, rendered by **`ChatTab.tsx` only**),
 `report.context_truncated` (both tabs) and `report.review_persist_error`
-(findings tab). Checking those three in the JSON response *is* checking the
-pane; nothing else in the payload renders as a warning.
+(findings tab). Nothing else in the payload paints anything.
+
+That makes the payload a sound proof in **one direction only**. All three
+absent ⇒ the pane certainly said nothing, which is what drill 4 turns on. The
+converse does **not** hold: a field being set does not mean a banner appeared,
+because which tab the attorney is looking at decides. `memory_degraded: true`
+on a `contract_review` turn paints nothing at all. Drills 2 and 3 both hit
+this — read their results rather than inferring from the payload.
 
 ---
 
@@ -209,7 +229,12 @@ Verified back at `200` with all five models 24 s after the drill started.
 ## Drill 2 — `app-db` down
 
 **Expect:** `app.outcome=degraded`, `audit_write_failed` with `announced=true`,
-the turn still answers, amber banner in the pane.
+both `db.*` spans ERROR, and the turn still answers.
+
+**Do not expect a banner.** `announced=true` records what the system *intends*
+to tell the attorney; it does not promise that a given tab paints it. This is a
+`contract_review` turn and `memory_degraded` renders only in the chat tab — see
+the result.
 
 ```bash
 docker compose stop app-db
@@ -237,8 +262,25 @@ db.save_review         ERROR
 ```
 
 Pane payload: `memory_degraded: true`,
-`review_persist_error: "terminating connection due to administrator command"` —
-the class-2 promise kept, on the findings tab.
+`review_persist_error: "terminating connection due to administrator command"`.
+
+**Here the drill contradicts its own first draft, which is worth keeping.** This
+write-up originally expected *"an amber banner in the pane"* and concluded *"the
+class-2 promise kept."* Neither is true. `memory_degraded` renders **only** in
+`ChatTab.tsx`; the findings tab paints `context_truncated` and
+`review_persist_error` and nothing else. So the attorney saw the
+`review_persist_error` line — and would have seen **nothing at all** had the
+review write not also failed. `audit_write_failed`, the code this drill exists
+to demonstrate, announced nothing.
+
+The drill still **passes**, on what it actually demonstrates: `app.outcome`
+`degraded`, both codes recorded with `announced=true`, both `db.*` spans ERROR
+carrying Postgres's own message, and the turn answering in 102.8 s. What it
+*additionally* demonstrates is the second follow-up in
+[docs/wiki.md](wiki.md#follow-ups--roadmap) — the "announced" promise is kept on
+one surface only. That gap was found during the same review and, it turns out,
+reached into this document and produced a drill whose stated expectation was the
+opposite of what it proved.
 
 **Expect two codes, not one.** A review turn writes the audit row *and* the
 review, so a dead `app-db` fails both. `review_persist_failed` is LOUD by design
@@ -271,8 +313,9 @@ Healthy 4 s after start.
 
 ## Drill 3 — Redis down
 
-**Expect:** `app.outcome=degraded`, `checkpointer_unavailable`, the turn still
-answers, amber banner.
+**Expect:** `app.outcome=degraded`, `checkpointer_unavailable` with
+`announced=true`, and the turn still answers. **No banner** — same reason as
+drill 2, and this is a `contract_review` turn too.
 
 > **Run this against Phoenix. Not Langfuse.** `docker compose stop redis` also
 > takes **Langfuse ingestion** down — they share the Redis container. You would
@@ -310,7 +353,10 @@ ERROR api.routes.query: Checkpointer (Redis) failed mid-invoke
   — degrading to a stateless run; chat_history is lost this turn (memory_degraded=True).
 ```
 
-Pane payload: `memory_degraded: true`.
+Pane payload: `memory_degraded: true` — **which paints nothing on this turn**,
+for drill 2's reason: it is a `contract_review` turn and `memory_degraded` is a
+chat-tab-only banner. The flag is set, the trace records it, the attorney sees
+nothing. Follow-up row 2 again.
 
 **Note where the event lands:** on the **root**, not on a node — because
 `record_degradation` was called from `submit_query`'s own `except` branch, which
@@ -371,7 +417,7 @@ Three conditions, all required, and each silently no-ops the drill if missed:
 - `task_type: "research"` **with** `uploaded_text` — that is the doc-chat path.
 - The document must **detect as a SOW**, because the Qdrant call is the
   governing-MSA lookup. Check with
-  `python -c "from skills.grounding import detect_contract_type; print(detect_contract_type(open('sow.txt').read()))"`
+  `uv run python -c "from skills.grounding import detect_contract_type; print(detect_contract_type(open('sow.txt').read()))"`
   → `('sow', False)`.
 - The question must be **grounded**. Chat grounding is conditional
   (`chat_conditional_grounding`, default True); a lean question like *"who signs
@@ -491,6 +537,7 @@ works on the default configuration rather than assuming it:
 
 ```bash
 # expect app.outcome "ok" and no app.degradations
+TID=<the trace_id of the turn you just sent>      # NOT the Phoenix one from setup
 AUTH=$(echo -n 'pk-lf-local:sk-lf-local' | base64)
 curl -s -H "Authorization: Basic $AUTH" \
   "http://localhost:3000/api/public/traces/$TID" \
@@ -532,9 +579,13 @@ filtering strictly on `app.outcome != "ok"` will not see it and has to fall back
 to status. Deliberate — there is no reason code for either guard, and stamping
 `ok` before a 4xx would be worse.
 
-**An expired session on resume stamps `ok`.** `resume_query`'s
+**An expired session on resume records no reason code of its own** (so it stamps
+`ok` unless something else already degraded that request). `resume_query`'s
 empty-prior-state branch — where `get_state` *succeeds* and finds nothing — is
-deliberately reason-code-free. A checkpoint that has aged out is TTL working as
+deliberately reason-code-free, and stamps `derive_outcome(degradations())`
+rather than a hardcoded `ok`, precisely because a startup-absent checkpointer
+can already have recorded `checkpointer_unavailable` on the same request, which
+must win. A checkpoint that has aged out is TTL working as
 designed, not a failure, and marking it ERROR would fill the one filter this
 work exists to make meaningful with routine expiry. The attorney is still told,
 via `status="error"` in the HTTP payload.
