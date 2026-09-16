@@ -241,8 +241,9 @@ def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = 
 
     For failures this app CATCHES and converts into a degraded answer. OTel
     marks a span ERROR only when an exception propagates out of the `with`
-    block; there are 40 `except Exception` sites here and almost none of them
-    propagate, so without this call every failed turn looks like a healthy one.
+    block; this codebase degrades rather than raises, so across its many
+    `except Exception` sites almost nothing propagates and without this call
+    every failed turn looks like a healthy one.
 
     `reason` (and `detail`, when given) are also stamped as attributes —
     `degradation.reason` / `degradation.detail`, the same keys record_degradation

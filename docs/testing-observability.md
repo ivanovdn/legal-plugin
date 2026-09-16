@@ -40,7 +40,7 @@ fine — which is exactly the state the feature was built to leave.
 | span `status_code = ERROR` on a **node** | `llm_caller`, `db.*`, … | where it broke |
 | `degradation.reason` / `.detail` | attributes of the **failed** span | which of the 8 failure codes, and the exception class |
 | `degradation` **event** | on whichever span recorded it | a degradation — carries `.reason`, `.announced`, `.detail` |
-| `announced=true` | degradation event | the attorney was told (a pane banner) |
+| `announced=true` | degradation event | the attorney was *meant* to be told — a banner only if that tab renders it (see below) |
 | `announced=false` | degradation event | **class 3** — silently worse, nobody told |
 
 Two spans going ERROR on a failed turn is intended, not duplication: the node

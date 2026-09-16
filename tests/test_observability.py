@@ -123,10 +123,24 @@ def test_set_gen_attributes_sets_llm_attrs_on_current_span():
 
 
 def test_helpers_no_op_and_never_raise_without_active_span():
-    from observability.spans import set_trace_attributes, set_gen_attributes
+    from observability.degradations import (
+        CHAT_GROUNDING_FAILED, LLM_CALL_FAILED, OUTCOME_FAILED,
+    )
+    from observability.spans import (
+        mark_failed, record_degradation, set_gen_attributes, set_outcome,
+        set_trace_attributes,
+    )
     # called outside any @traced span → current span is invalid/non-recording
     set_trace_attributes(user_id="u", metadata={"k": "v"})
     set_gen_attributes(model="m", usage={"input": 1, "output": 2, "total": 3, "unit": "TOKENS"})
+    # The three degradation helpers matter most here: they are the ones called
+    # from INSIDE an `except`, where a raise would replace the application's
+    # real failure with a tracing one — the single thing this seam must never
+    # do. Outside a root there is also no accumulator, so they must tolerate a
+    # None contextvar as well as a non-recording span.
+    record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail="d")
+    mark_failed(LLM_CALL_FAILED, exc=RuntimeError("boom"), detail="RuntimeError")
+    set_outcome(OUTCOME_FAILED)
     # no exception == pass
 
 
