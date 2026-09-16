@@ -78,6 +78,11 @@ def traced(name: str, kind: str | None = None) -> Callable:
                         _root_metadata.reset(meta_token)
                     if deg_token is not None:
                         _root_degradations.reset(deg_token)
+        # Exposed for tests to assert WHICH name a function was decorated with —
+        # functools.wraps alone only proves "wrapped by something", not "wrapped
+        # with this span name". Nothing in production reads this; don't delete it
+        # as unused.
+        wrapper.span_name = name
         return wrapper
     return decorator
 

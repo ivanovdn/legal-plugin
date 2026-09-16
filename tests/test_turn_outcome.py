@@ -976,7 +976,11 @@ def test_store_functions_are_named_spans(span_name):
         "latest_to_id": memory.conversation_summary,
     }[fn_name]
     fn = getattr(module, fn_name)
-    assert getattr(fn, "__wrapped__", None) is not None, f"{fn_name} is not @traced"
+    # span_name (not __wrapped__) so this proves WHICH name the function was
+    # decorated with — functools.wraps sets __wrapped__ unconditionally, so a
+    # mere "is this @traced at all" check can't catch two span names swapped
+    # between two functions; this can.
+    assert getattr(fn, "span_name", None) == span_name, f"{fn_name} is not @traced({span_name!r})"
 
 
 def test_store_span_is_emitted_on_a_real_call():
