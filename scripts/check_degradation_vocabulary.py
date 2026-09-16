@@ -35,6 +35,27 @@ def _called_name(node: ast.Call) -> str | None:
     return None
 
 
+def _reason_arg(node: ast.Call) -> ast.expr | None:
+    """The AST node for the `reason` argument, positional OR keyword.
+
+    `reason` is positional-or-keyword in both seam functions (no `/` marker),
+    so a call site can legally write either `record_degradation(X, ...)` or
+    `record_degradation(reason=X, ...)`. Checking only node.args[0] makes the
+    keyword form invisible to every check at once: not counted as used, not
+    flagged as a literal, not flagged as undeclared — the exact hole this
+    checker exists to close, in the checker itself. Only one form can legally
+    appear on a given call (Python raises "multiple values for argument"
+    otherwise), so positional-if-present-else-keyword is an unambiguous
+    precedence, not a guess.
+    """
+    if node.args:
+        return node.args[0]
+    for kw in node.keywords:
+        if kw.arg == "reason":
+            return kw.value
+    return None
+
+
 def main() -> int:
     used: set[str] = set()
     undeclared: list[str] = []
@@ -48,9 +69,9 @@ def main() -> int:
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or _called_name(node) not in SEAM_CALLS:
                     continue
-                if not node.args:
+                arg = _reason_arg(node)
+                if arg is None:
                     continue
-                arg = node.args[0]
                 where = f"{path.relative_to(REPO)}:{arg.lineno}"
                 if isinstance(arg, ast.Constant):
                     literals.append(f"{where}: string literal {arg.value!r}")
