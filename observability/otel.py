@@ -11,6 +11,7 @@ import logging
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -82,14 +83,14 @@ def _instrument_libraries() -> None:
     redis is config-gated (otel_instrument_redis, default False): the LangGraph
     checkpointer issues many RediSearch ops per turn and that chatter would
     bury everything else — flip the flag on only to investigate the
-    checkpointer. Its import is deliberately LAZY (inside the `if`), the one
-    permitted exception to this project's top-of-file import rule:
-    opentelemetry-instrumentation-redis arrives only as an undeclared
-    transitive dependency of chainlit (via literalai / traceloop-sdk), not
-    something this project depends on directly. A top-level import would make
-    backend startup hard-fail if chainlit's dependency tree ever drops it, and
-    declaring a second dependency for a default-off diagnostic is worse. Do
-    not "fix" this by hoisting it to the top of the file.
+    checkpointer. Default-off is about SIGNAL, not about the dependency:
+    opentelemetry-instrumentation-redis is declared in requirements.txt like
+    httpx, so the import sits at the top of this file with every other one. It
+    was briefly lazy, on the argument that the package arrived only as a
+    chainlit transitive and a top-level import would hard-fail startup if that
+    tree changed — but declaring it buys the same protection for one
+    requirements line, and depending on an undeclared transitive is the exact
+    fragility that ruled out Traceloop's instrumentors in the first place.
     """
     try:
         HTTPXClientInstrumentor().instrument()
@@ -99,7 +100,6 @@ def _instrument_libraries() -> None:
 
     if get_settings().otel_instrument_redis:
         try:
-            from opentelemetry.instrumentation.redis import RedisInstrumentor  # lazy on purpose — see docstring
             RedisInstrumentor().instrument()
             logger.info("redis instrumentation enabled")
         except Exception as e:

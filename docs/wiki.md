@@ -354,7 +354,7 @@ Auto-instrumentation is deliberately narrow (`_instrument_libraries()`, inside t
 | Library | Status | Why |
 |---|---|---|
 | **httpx** | **on** | Real network timing on every Ollama call, and qdrant-client's REST calls for free. Confirmed live to cover `llm_caller`'s *module-level* `httpx.post` — the instrumentor patches `Client.send` and `httpx.post` builds its client internally, so this was an expectation until a real turn showed the `POST` CLIENT span as the direct child of `llm_caller` |
-| **redis** | config-gated, default **off** (`otel_instrument_redis`) | The checkpointer issues many RediSearch ops per turn; that chatter buries everything else. One flag for a checkpointer investigation. Its import is lazy — the single documented exception to the top-of-file import rule, because the package arrives only as an undeclared transitive of chainlit |
+| **redis** | config-gated, default **off** (`otel_instrument_redis`) | The checkpointer issues many RediSearch ops per turn; that chatter buries everything else. One flag for a checkpointer investigation. Default-off is about SIGNAL, not the dependency: `opentelemetry-instrumentation-redis` is **declared** in `requirements.txt` alongside httpx and imported at the top of `otel.py` like everything else — a brief lazy-import exception to the top-of-file rule was retired (R18), since declaring it buys the same protection for one line |
 | **fastapi** | off | Would become the trace root and push `app.outcome` onto a child |
 | **langchain / ollama** | off | Would emit a second LLM span and a second token count per call, against `traced_invoke` / `ollama_usage` |
 

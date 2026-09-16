@@ -37,6 +37,10 @@ opentelemetry-sdk>=1.27
 opentelemetry-exporter-otlp-proto-http>=1.27
 openinference-semantic-conventions>=0.1.9
 opentelemetry-instrumentation-httpx>=0.50b0
+# Default-off diagnostic (otel_instrument_redis) — declared anyway: it arrives
+# as a transitive of chainlit today, and depending on that is the fragility
+# that sank the Traceloop option. One line buys a top-of-file import.
+opentelemetry-instrumentation-redis>=0.50b0
 
 # Frontend
 chainlit>=2.0,<3.0
