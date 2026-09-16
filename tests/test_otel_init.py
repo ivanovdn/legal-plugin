@@ -38,15 +38,18 @@ def test_init_enabled_sets_provider(monkeypatch):
     called = {}
     monkeypatch.setattr(otel.trace, "set_tracer_provider", lambda p: called.setdefault("set", p))
 
-    otel.init_observability()
-
-    assert "set" in called
-    assert otel.is_enabled() is True
-    get_settings.cache_clear()
-    # init_observability() really calls _instrument_libraries() here (nothing
+    # init_observability() really calls _instrument_libraries() below (nothing
     # above mocks it) — HTTPXClientInstrumentor().instrument() is global,
-    # per-process state, so undo it or it leaks into every later test.
-    otel.HTTPXClientInstrumentor().uninstrument()
+    # per-process state, so it must be undone even if an assertion below
+    # fails, or it leaks into every later test in the process.
+    try:
+        otel.init_observability()
+
+        assert "set" in called
+        assert otel.is_enabled() is True
+    finally:
+        get_settings.cache_clear()
+        otel.HTTPXClientInstrumentor().uninstrument()
 
 
 def test_init_is_best_effort_on_failure(monkeypatch):
