@@ -10,8 +10,8 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.degradations import LEGAL_RESEARCH_FAILED
-from observability.spans import mark_failed, traced
+from observability.degradations import CONTEXT_TRUNCATED, LEGAL_RESEARCH_FAILED
+from observability.spans import mark_failed, record_degradation, traced
 from observability.tracing import message_usage, traced_agent_invoke, traced_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
@@ -188,6 +188,18 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # — the hazard recorded in CLAUDE.md.
     truncation = _cap_chat_context(messages, uploaded_text, request)
     state["context_truncated"] = truncation
+    if truncation:
+        # The SECOND producer of context_truncated, and the one that actually
+        # CUTS: llm_caller records the same code but only DETECTS overflow. The
+        # two paths are disjoint — legal_research never reaches llm_caller — so
+        # without this every doc-chat truncation landed outside the rollup and
+        # the turn derived "ok". announced=True because the identical report
+        # flag paints a red notice in the pane.
+        record_degradation(
+            CONTEXT_TRUNCATED,
+            announced=True,
+            detail=f"kept {truncation['kept_pct']}% of the document",
+        )
     compressible_count, compressible_chars = compressible_history(state)
     # Report what was SENT, not what was asked for: when the document was cut,
     # the counter's document line must show the kept size or it contradicts the

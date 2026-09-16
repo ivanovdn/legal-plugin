@@ -99,10 +99,16 @@ def derive_outcome(reasons: list[str]) -> str:
     """ok | degraded | failed, from the reason codes recorded this request.
 
     ONE source, read back — not recomputed. The reason accumulator is complete
-    by construction: every site that sets a report flag (memory_degraded,
+    by construction: every PRODUCER of a report flag (memory_degraded,
     context_truncated, review_persist_error) also records a reason code, so it
     already sees everything the pane sees. OR-ing the report flags in as well
     would create two sources that can disagree.
+
+    "Producer", not "site", deliberately: context_truncated has two — the
+    detect-only one in llm_caller and the one in _cap_chat_context that
+    actually cuts — and only the first was wired at first. The vocabulary gate
+    counts CODES, not producers, so it cannot see a second producer of an
+    already-used code. Check this premise per flag-setting line, not per code.
     """
     if FAILED_REASONS & set(reasons):
         return OUTCOME_FAILED

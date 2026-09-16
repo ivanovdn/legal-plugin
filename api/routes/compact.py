@@ -52,12 +52,30 @@ def post_compact(
         metadata={"document_id": document_id, "reclaim_chars": body.reclaim_chars},
     )
 
-    result = compact_conversation(document_id, user_id, body.reclaim_chars)
+    # compact_conversation guards generation and the write, but NOT its own
+    # reads: select_compactable_rows -> latest_to_id / load_rows_after sit
+    # outside any try, so an app-db outage raises straight through this
+    # handler. Uncaught, that made compact the one request root of three that
+    # could fail outside the taxonomy — ERROR via OTel's default exception
+    # handling, but no app.outcome, no app.degradations, no COMPACTION_FAILED.
+    # Re-raised unchanged: failure here stays LOUD (FastAPI's 500). This is the
+    # only mark_failed site that re-raises, so the span ends up with the
+    # exception recorded twice — once here, once by OTel on the way out. exc=
+    # is kept anyway: it matches the other seven sites and keeps the exception
+    # on the span if this raise is ever turned into a swallow.
+    try:
+        result = compact_conversation(document_id, user_id, body.reclaim_chars)
+    except Exception as e:
+        mark_failed(COMPACTION_FAILED, exc=e, detail=e.__class__.__name__)
+        set_outcome(OUTCOME_FAILED)
+        raise
 
     # COMPACTION_FAILED is recorded HERE, not at compaction.py's own excepts:
     # generation is retried twice inside a loop, so recording per-attempt would
-    # mark a run failed that then succeeded. Every terminal failure surfaces as
-    # result["error"], so this is the one place that cannot double-count.
+    # mark a run failed that then succeeded. The route has exactly two terminal
+    # exits — the raise above (the unguarded store reads) and result["error"]
+    # below (generation, the gate, the write) — and a run takes one or the
+    # other, so neither can double-count.
     if result["error"]:
         mark_failed(COMPACTION_FAILED, detail=result["error"])
         set_outcome(OUTCOME_FAILED)

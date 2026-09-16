@@ -6,7 +6,10 @@ suite here means nothing unless you have watched them fail first.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import httpx
+import psycopg_pool
 import pytest
 from opentelemetry.trace import StatusCode
 
@@ -676,6 +679,82 @@ def test_prior_conversation_load_failure_records_an_announced_degradation(monkey
     assert events[0].attributes["degradation.announced"] is True
 
 
+def test_doc_chat_truncation_records_an_announced_degradation(monkeypatch):
+    """`context_truncated` has TWO producers and only one was wired.
+
+    llm_caller:133 records CONTEXT_TRUNCATED but only DETECTS overflow — it
+    deliberately does not cut. `_cap_chat_context`, reached from
+    `_run_doc_chat`, is the one that actually REMOVES contract text (a tail
+    cut: liability, indemnity, termination, governing law, signatures), sets
+    the identical `context_truncated` report flag that paints the red pane
+    notice — and recorded nothing. The two paths are disjoint (`legal_research`
+    never reaches `llm_caller`), so every doc-chat truncation landed outside
+    the rollup with app.outcome still "ok".
+
+    The vocabulary gate cannot catch this: CONTEXT_TRUNCATED *is* used at the
+    other site, so "declared but never used" never fires. The gate counts
+    codes, not producers.
+    """
+    import importlib
+    from config import get_settings
+    from observability.degradations import (
+        CONTEXT_TRUNCATED, OUTCOME_DEGRADED, derive_outcome,
+    )
+    from observability.spans import degradations, traced
+
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    monkeypatch.setenv("CHAT_CONTEXT_MAX_CHARS", "2000")
+    monkeypatch.setenv("CHAT_CONDITIONAL_GROUNDING", "false")
+    get_settings.cache_clear()
+
+    class FakeResp:
+        content = "answer"
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "attach_parent_msa",
+                        lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
+
+    big_doc = "STATEMENT OF WORK\n\n" + ("clause text " * 1000)   # ~12k chars vs a 2k budget
+    state = {
+        "request": "summarize", "task_type": "research", "user_id": "atty-ct",
+        "uploaded_docs": [{"text": big_doc}], "filters": {"client_id": "internal"},
+        "document_id": "doc-ct", "chat_history": [], "messages": [],
+        "attorney_notes": "", "report": {},
+    }
+
+    # legal_research is a NODE, not a request root — in production the rollup is
+    # derived at the query root above it. Reading degradations() after the call
+    # would read an already-reset accumulator, so derive inside the root.
+    @traced("turn")
+    def turn():
+        lr.legal_research(state)
+        return degradations(), derive_outcome(degradations())
+
+    reasons, outcome = turn()
+    get_settings.cache_clear()
+
+    # The cut really happened — without this the assertions below go vacuous.
+    assert state["context_truncated"] is not None
+    assert state["context_truncated"]["kept_pct"] < 100
+
+    events = [e for e in spans_by_name("legal_research")[0].events if e.name == "degradation"]
+    assert [e.attributes["degradation.reason"] for e in events] == [CONTEXT_TRUNCATED]
+    # announced=True: the pane DOES paint a red truncation notice for this flag.
+    assert events[0].attributes["degradation.announced"] is True
+    kept_pct = state["context_truncated"]["kept_pct"]
+    assert events[0].attributes["degradation.detail"] == f"kept {kept_pct}% of the document"
+
+    # The rollup, not just the event: this is what was broken — a truncated
+    # turn derived "ok" and so could not be found.
+    assert CONTEXT_TRUNCATED in reasons
+    assert outcome == OUTCOME_DEGRADED
+
 # --- Task 11: the silent (class 3) sites -------------------------------
 # The class this work exists for: the answer lands, quality is quietly
 # worse, and nobody is told. announced=False on every site below.
@@ -885,20 +964,36 @@ def test_planning_failure_records_a_silent_degradation(monkeypatch):
 
 
 def test_compact_route_gives_the_llm_span_a_parent(monkeypatch):
-    """RED TEST #3. Today the compaction LLM span is an orphan root with no
-    user, session or document attached to it."""
+    """RED TEST #3. Before @traced("compact"), compact_conversation's internal
+    traced_invoke("llm") span had no active root to nest under, so the
+    most-debugged subsystem in the repo emitted its own parentless trace with
+    no user, no session and no document.
+
+    The fake OPENS A SPAN rather than just returning a dict: the property under
+    test is that work done inside the handler nests under the compact root, and
+    a fake that opens nothing cannot show that. Asserting only
+    `compact.parent is None` pins the *precondition* for nesting, not nesting.
+    """
     from api.routes import compact as mod
     from api.models import CompactRequest
+    from observability.spans import traced
 
-    monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: {
-        "error": "", "reason": "", "segment_id": 1, "freed_chars": 500,
-    })
+    @traced("llm")
+    def fake_generation():
+        return {"error": "", "reason": "", "segment_id": 1, "freed_chars": 500}
+
+    monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: fake_generation())
 
     mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
 
-    span = spans_by_name("compact")[0]
-    assert span.parent is None, "compact is a request root"
-    assert span.attributes["app.outcome"] == "ok"
+    child = spans_by_name("llm")[0]
+    assert child.parent is not None, "the compaction LLM span must not be an orphan root"
+
+    root = spans_by_name("compact")[0]
+    assert root.parent is None, "compact is itself the request root"
+    assert child.parent.span_id == root.context.span_id
+    assert child.context.trace_id == root.context.trace_id
+    assert root.attributes["app.outcome"] == "ok"
 
 
 def test_compact_route_marks_failed_when_compaction_errors(monkeypatch):
@@ -953,6 +1048,85 @@ def test_compact_route_records_a_net_benefit_refusal_without_marking_it_failed(m
     # A refusal is not a degradation, so it must not touch the reason accumulator.
     assert "app.degradations" not in span.attributes
 
+
+def test_compact_route_marks_failed_when_the_store_read_raises(monkeypatch):
+    """A store outage escaping the taxonomy.
+
+    `compact_conversation` calls select_compactable_rows -> latest_to_id /
+    load_rows_after OUTSIDE any try, so an app-db outage raises straight out of
+    the handler. The route's own comment claimed "every terminal failure
+    surfaces as result['error']" — true of generation and of append_segment,
+    false of the read. Uncaught, the compact root went ERROR via OTel's default
+    exception handling with NO app.outcome, NO app.degradations and NO
+    COMPACTION_FAILED: the one request root of three that could fail outside
+    the vocabulary. Drill 2 already proved the outage realistic, and a failed
+    AUTOMATIC compaction disarms the pane's auto latch for the session.
+
+    The 500 stays LOUD — the attorney clicked and was told it happened.
+    """
+    import json
+    from api.routes import compact as mod
+    from api.models import CompactRequest
+    from observability.degradations import COMPACTION_FAILED
+
+    def boom(*a, **k):
+        raise psycopg_pool.PoolTimeout("couldn't get a connection")
+
+    monkeypatch.setattr(mod, "compact_conversation", boom)
+
+    with pytest.raises(psycopg_pool.PoolTimeout):
+        mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+
+    span = spans_by_name("compact")[0]
+    assert span.attributes["app.outcome"] == "failed"
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["degradation.reason"] == COMPACTION_FAILED
+    assert span.attributes["degradation.detail"] == "PoolTimeout"
+    assert COMPACTION_FAILED in json.loads(span.attributes["app.degradations"])
+    # TWO exception events, measured not assumed: mark_failed(exc=e) records
+    # one, and OTel's own set_status_on_exception records another when the
+    # re-raise leaves @traced. This is the only mark_failed site that re-raises
+    # (every other one catches and degrades), and exc= is kept for uniformity
+    # and so the exception still lands if the raise is ever swallowed. Pinned
+    # so the duplicate reads as known, not as an oversight.
+    assert [e.name for e in span.events] == ["exception", "exception"]
+
+
+@pytest.mark.parametrize("disabled,document_id,status", [
+    (True, "doc-1", 403),      # compaction switched off
+    (False, "   ", 400),       # no document_id
+])
+def test_compact_route_early_guards_are_error_spans_with_no_outcome(
+    monkeypatch, disabled, document_id, status
+):
+    """The two 4xx guards run BEFORE set_trace_attributes and before any
+    outcome is derived. Both must leave an ERROR span (HTTPException
+    propagates out of @traced, so OTel sets it) and, deliberately, NO
+    app.outcome: the outcome vocabulary describes how a turn went, and a
+    rejected request never became a turn. Verified here rather than by hand —
+    this behaviour was previously only ever checked in an uncommitted manual
+    run.
+    """
+    from fastapi import HTTPException
+    from api.routes import compact as mod
+    from api.models import CompactRequest
+
+    monkeypatch.setattr(
+        mod, "get_settings", lambda: SimpleNamespace(compaction_enabled=not disabled)
+    )
+    # Nothing may reach the store on either path.
+    monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: pytest.fail(
+        "an early guard must reject before compact_conversation is called"
+    ))
+
+    with pytest.raises(HTTPException) as excinfo:
+        mod.post_compact(CompactRequest(document_id=document_id, reclaim_chars=0), user_id="u1")
+    assert excinfo.value.status_code == status
+
+    span = spans_by_name("compact")[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert "app.outcome" not in span.attributes
+    assert "app.degradations" not in span.attributes
 
 @pytest.mark.parametrize("span_name", [
     "db.write_audit_log", "db.save_review", "db.load_latest_review",
