@@ -13,10 +13,12 @@ import logging
 from datetime import datetime, timezone
 
 from memory.db import get_pool
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
 
+@traced("db.save_review")
 def save_review(document_id: str, session_id: str, markdown: str, contract_type: str) -> None:
     """Append one review row. Raises on any failure — never a silent no-op."""
     with get_pool().connection() as conn:
@@ -39,6 +41,7 @@ def _row_to_dict(row: tuple) -> dict:
     }
 
 
+@traced("db.load_latest_review")
 def load_latest_review(document_id: str) -> dict | None:
     """Most recent review for this document, or None."""
     if not document_id:

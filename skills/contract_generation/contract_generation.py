@@ -11,7 +11,8 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.spans import traced
+from observability.degradations import CONTRACT_GENERATION_FAILED
+from observability.spans import mark_failed, traced
 from observability.tracing import traced_invoke, traced_agent_invoke
 from rag.tools.search_legal import search_legal
 from rag.tools.get_document import get_document
@@ -76,6 +77,7 @@ def _revise_existing_draft(
         )
     except Exception as e:
         logger.error("[contract_generation] revision failed: %s", e)
+        mark_failed(CONTRACT_GENERATION_FAILED, exc=e, detail="revision")
         state["llm_response"] = f"Error: Contract revision failed — {e}"
     return state
 
@@ -172,6 +174,7 @@ def contract_generation(state: LegalAgentState) -> LegalAgentState:
 
     except Exception as e:
         logger.error("[contract_generation] agent failed: %s", e)
+        mark_failed(CONTRACT_GENERATION_FAILED, exc=e, detail="agent")
         state["llm_response"] = f"Error: Contract generation agent failed — {e}"
 
     return state

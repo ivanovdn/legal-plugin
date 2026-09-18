@@ -7,10 +7,6 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
 from observability.tracing import (
@@ -18,27 +14,7 @@ from observability.tracing import (
     message_usage,
     traced_invoke,
 )
-
-_exporter = InMemorySpanExporter()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _otel_test_provider():
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(_exporter))
-    trace.set_tracer_provider(provider)   # first real set wins (app tracing is off in tests)
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _clear_spans():
-    _exporter.clear()
-    yield
-    _exporter.clear()
-
-
-def _spans_by_name(name):
-    return [s for s in _exporter.get_finished_spans() if s.name == name]
+from tests.conftest import spans_by_name as _spans_by_name
 
 
 def test_traced_creates_span_and_returns_value():
@@ -147,10 +123,24 @@ def test_set_gen_attributes_sets_llm_attrs_on_current_span():
 
 
 def test_helpers_no_op_and_never_raise_without_active_span():
-    from observability.spans import set_trace_attributes, set_gen_attributes
+    from observability.degradations import (
+        CHAT_GROUNDING_FAILED, LLM_CALL_FAILED, OUTCOME_FAILED,
+    )
+    from observability.spans import (
+        mark_failed, record_degradation, set_gen_attributes, set_outcome,
+        set_trace_attributes,
+    )
     # called outside any @traced span → current span is invalid/non-recording
     set_trace_attributes(user_id="u", metadata={"k": "v"})
     set_gen_attributes(model="m", usage={"input": 1, "output": 2, "total": 3, "unit": "TOKENS"})
+    # The three degradation helpers matter most here: they are the ones called
+    # from INSIDE an `except`, where a raise would replace the application's
+    # real failure with a tracing one — the single thing this seam must never
+    # do. Outside a root there is also no accumulator, so they must tolerate a
+    # None contextvar as well as a non-recording span.
+    record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail="d")
+    mark_failed(LLM_CALL_FAILED, exc=RuntimeError("boom"), detail="RuntimeError")
+    set_outcome(OUTCOME_FAILED)
     # no exception == pass
 
 
@@ -486,3 +476,166 @@ def test_llm_caller_early_return_leaves_chat_path_flag_untouched(monkeypatch):
     result = mod.llm_caller(state)
     assert result["context_truncated"] == {"doc_chars": 999, "kept_chars": 1, "kept_pct": 0}
     assert result["token_usage"] == {"input": 1, "output": 2}
+
+
+def test_ollama_timings_converts_nanoseconds_to_milliseconds():
+    from observability.tracing import ollama_timings
+
+    timings = ollama_timings({
+        "total_duration": 34_659_000_000,
+        "load_duration": 4_713_000_000,
+        "prompt_eval_duration": 8_902_000_000,
+        "eval_duration": 21_044_000_000,
+    })
+    assert timings == {
+        "total_ms": 34_659, "load_ms": 4_713,
+        "prompt_eval_ms": 8_902, "eval_ms": 21_044,
+    }
+
+
+def test_ollama_timings_none_when_absent():
+    from observability.tracing import ollama_timings
+    assert ollama_timings({"message": {"content": "hi"}}) is None
+
+
+def test_ollama_timings_partial_payload():
+    from observability.tracing import ollama_timings
+    assert ollama_timings({"load_duration": 4_713_000_000}) == {"load_ms": 4_713}
+
+
+def test_set_gen_attributes_records_timings_on_the_span():
+    from observability.spans import traced, set_gen_attributes
+
+    @traced("gen", kind="LLM")
+    def gen():
+        set_gen_attributes(model="m", timings={"load_ms": 4713, "eval_ms": 21044})
+
+    gen()
+    attrs = _spans_by_name("gen")[0].attributes
+    assert attrs["llm.ollama.load_ms"] == 4713
+    assert attrs["llm.ollama.eval_ms"] == 21044
+
+
+# --- Ollama timings on the LangChain path -----------------------------------
+# Task 6 wired ollama_timings into llm_caller only — the raw-httpx path. The
+# doc-chat route (the Word chat tab, the most-used surface) goes through
+# traced_invoke -> ChatOllama and carried token counts but no timing split, so
+# a 17.8s generation could not be separated into reload / prefill / decode.
+# Found on a real trace, 2634f99a…, 2026-09-18.
+
+
+def test_message_timings_reads_langchain_response_metadata():
+    """langchain_ollama puts Ollama's four duration fields into
+    response_metadata under the same names the raw API uses."""
+    from observability.tracing import message_timings
+
+    msg = _FakeMessage(response_metadata={
+        "model": "qwen3.6:latest",
+        "total_duration": 19_236_000_000,
+        "load_duration": 4_713_000_000,
+        "prompt_eval_duration": 8_902_000_000,
+        "eval_duration": 5_621_000_000,
+    })
+    assert message_timings(msg) == {
+        "total_ms": 19_236, "load_ms": 4_713,
+        "prompt_eval_ms": 8_902, "eval_ms": 5_621,
+    }
+
+
+def test_message_timings_none_when_absent():
+    from observability.tracing import message_timings
+
+    assert message_timings(_FakeMessage(response_metadata={"model": "m"})) is None
+    assert message_timings(_FakeMessage()) is None
+
+
+def test_traced_invoke_records_ollama_timings():
+    from observability.tracing import traced_invoke
+
+    resp = _FakeMessage(
+        content="answer",
+        response_metadata={"model": "qwen3.6:latest", "load_duration": 4_713_000_000,
+                           "eval_duration": 5_621_000_000},
+    )
+
+    class FakeLLM:
+        def invoke(self, messages):
+            return resp
+
+    traced_invoke(FakeLLM(), [{"role": "user", "content": "q"}], name="doc_chat_timed")
+    attrs = _spans_by_name("doc_chat_timed")[0].attributes
+    assert attrs["llm.ollama.load_ms"] == 4_713
+    assert attrs["llm.ollama.eval_ms"] == 5_621
+
+
+def test_traced_agent_invoke_sums_timings_across_calls():
+    """An agent run makes several LLM calls; the span summarises the whole run,
+    so its durations sum the same way its token counts already do."""
+    from observability.tracing import traced_agent_invoke
+
+    msgs = [
+        _FakeMessage(response_metadata={"load_duration": 4_000_000_000,
+                                        "eval_duration": 1_000_000_000}),
+        _FakeMessage(content="done",
+                     response_metadata={"model": "m", "load_duration": 0,
+                                        "eval_duration": 2_500_000_000}),
+    ]
+
+    class FakeAgent:
+        def invoke(self, payload):
+            return {"messages": msgs}
+
+    traced_agent_invoke(FakeAgent(), {"messages": []}, name="agent_timed")
+    attrs = _spans_by_name("agent_timed")[0].attributes
+    assert attrs["llm.ollama.load_ms"] == 4_000        # 4000 + 0
+    assert attrs["llm.ollama.eval_ms"] == 3_500        # 1000 + 2500
+
+
+def _fake_ollama_post(payload):
+    """Stand in for httpx.post against Ollama's non-streaming /api/chat."""
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    return lambda *a, **k: _Resp()
+
+
+def test_intent_router_records_ollama_timings(monkeypatch):
+    """The other two raw-httpx Ollama sites. Neither sends num_ctx while
+    llm_caller pins one, so load_ms here is the only way to see a model reload
+    on the Chainlit auto-routing path."""
+    import json as _json
+    from graph.nodes import intent_router as mod
+
+    monkeypatch.setattr(mod.httpx, "post", _fake_ollama_post({
+        "message": {"content": _json.dumps({"task_type": "research"})},
+        "prompt_eval_count": 40, "eval_count": 6,
+        "load_duration": 4_713_000_000, "eval_duration": 900_000_000,
+    }))
+
+    mod.intent_router({"request": "who signs this?", "task_type": "", "skill_plan": []})
+    attrs = _spans_by_name("intent_router")[0].attributes
+    assert attrs["llm.ollama.load_ms"] == 4_713
+    assert attrs["llm.ollama.eval_ms"] == 900
+    assert attrs["llm.token_count.prompt"] == 40
+
+
+def test_planner_records_ollama_timings(monkeypatch):
+    import json as _json
+    from graph.nodes import planner as mod
+
+    monkeypatch.setattr(mod.httpx, "post", _fake_ollama_post({
+        "message": {"content": _json.dumps(
+            {"task_type": "contract_review", "skill_plan": ["contract_review", "drafting"]})},
+        "prompt_eval_count": 55, "eval_count": 9,
+        "load_duration": 0, "total_duration": 1_200_000_000,
+    }))
+
+    mod.planner({"request": "review then draft",
+                 "skill_plan": ["contract_review", "drafting"], "task_type": ""})
+    attrs = _spans_by_name("planner")[0].attributes
+    assert attrs["llm.ollama.load_ms"] == 0          # present, and zero — no reload
+    assert attrs["llm.ollama.total_ms"] == 1_200

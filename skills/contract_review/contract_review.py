@@ -17,7 +17,8 @@ import logging
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.spans import traced, set_trace_attributes
+from observability.degradations import MSA_LOOKUP_FAILED
+from observability.spans import record_degradation, set_trace_attributes, traced
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
@@ -170,6 +171,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
             parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
         except Exception:
             logger.exception("[contract_review] parent-MSA lookup failed — reviewing SOW standalone")
+            record_degradation(MSA_LOOKUP_FAILED, announced=False, detail="sow")
             parent = None
         if parent:
             msa_doc_title, msa_text = parent

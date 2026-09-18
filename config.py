@@ -215,6 +215,7 @@ class Settings(BaseSettings):
     otel_exporter_otlp_headers: str = ""   # "key=value,key2=value2"; local Langfuse needs Authorization=Basic <b64 public:secret>
     otel_service_name: str = "legal-triage"
     tracing_enabled: bool = True
+    otel_instrument_redis: bool = False   # the LangGraph checkpointer issues many RediSearch ops per turn; that chatter buries everything else. Flip on only to investigate the checkpointer.
 
     # App
     api_port: int = 8000

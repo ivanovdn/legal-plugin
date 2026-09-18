@@ -10,6 +10,8 @@ import logging
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -60,10 +62,55 @@ def init_observability() -> None:
             BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers or None))
         )
         trace.set_tracer_provider(provider)
+        _instrument_libraries()
         _initialized = True
         logger.info("OTel tracing initialized → %s", endpoint)
     except Exception as e:  # best-effort: tracing must never break startup
         logger.warning("OTel init failed: %s — tracing disabled", e)
+
+
+def _instrument_libraries() -> None:
+    """Enable the auto-instrumentors we want, each guarded independently.
+
+    httpx is ON: it gives real network timing on every Ollama call (and covers
+    qdrant-client's REST calls for free).
+
+    NOT enabled, deliberately:
+      - fastapi  — would become the trace root and push app.outcome onto a child
+      - langchain/ollama — would emit a second LLM span and a second token count
+        per call, against traced_invoke / ollama_usage
+
+    redis is config-gated (otel_instrument_redis, default False): the LangGraph
+    checkpointer issues many RediSearch ops per turn and that chatter would
+    bury everything else — flip the flag on only to investigate the
+    checkpointer. Default-off is about SIGNAL, not about the dependency.
+
+    Both instrumentors are imported at the TOP of this file, and both are
+    declared in requirements.txt AND requirements-runtime.txt — both files, not
+    one. The Dockerfile installs requirements-runtime.txt only, so a
+    requirements.txt line proves nothing about the deployed image. R18 hoisted
+    the redis import out of a lazy call arguing that "declaring it buys the
+    same protection for one requirements line": true of the dev venv, false of
+    the container, which died at api/main.py's import of this module with
+    ModuleNotFoundError (httpx tripping first) until requirements-runtime.txt
+    declared them too. It survived 27 commits and a green gate because nothing
+    built the image; scripts/check.sh now does, as its last step. Any
+    top-level import added here is startup-critical for `uvicorn api.main:app`
+    and must be declared in BOTH requirement files — and is only ever verified
+    by building, never by importing in .venv.
+    """
+    try:
+        HTTPXClientInstrumentor().instrument()
+        logger.info("httpx instrumentation enabled")
+    except Exception as e:
+        logger.warning("httpx instrumentation failed: %s", e)
+
+    if get_settings().otel_instrument_redis:
+        try:
+            RedisInstrumentor().instrument()
+            logger.info("redis instrumentation enabled")
+        except Exception as e:
+            logger.warning("redis instrumentation failed: %s", e)
 
 
 def is_enabled() -> bool:

@@ -8,8 +8,9 @@ import httpx
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.spans import traced, set_gen_attributes
-from observability.tracing import ollama_usage
+from observability.degradations import CONTEXT_TRUNCATED, LLM_CALL_FAILED
+from observability.spans import mark_failed, record_degradation, set_gen_attributes, traced
+from observability.tracing import ollama_timings, ollama_usage
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,11 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
             "kept_chars": headroom_chars,
             "kept_pct": (headroom_chars * 100 // chars) if chars else 0,
         }
+        record_degradation(
+            CONTEXT_TRUNCATED,
+            announced=True,
+            detail=f"kept {state['context_truncated']['kept_pct']}% of the document",
+        )
 
     logger.info(
         "[llm_caller] -> ollama model=%s task=%s messages=%d chars=%d url=%s",
@@ -168,6 +174,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
             output=content,
             model=settings.llm_model,
             usage=ollama_usage(data),
+            timings=ollama_timings(data),
             metadata={
                 "task_type": state.get("task_type", ""),
                 "chunks_count": len(chunks),
@@ -181,6 +188,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         logger.error(
             "[llm_caller] LLM call FAILED after %.1fs: %s", time.monotonic() - started, e
         )
+        mark_failed(LLM_CALL_FAILED, exc=e, detail=e.__class__.__name__)
         state["llm_response"] = f"Error: LLM call failed — {e}"
 
     return state

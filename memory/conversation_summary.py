@@ -21,6 +21,7 @@ import logging
 from datetime import datetime, timezone
 
 from memory.db import get_pool
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ def append_segment(
     return int(row_id)
 
 
+@traced("db.load_segments")
 def load_segments(document_id: str, attorney_id: str, max_segments: int) -> list[dict]:
     """The most recent max_segments segments, returned oldest-first.
 
@@ -68,6 +70,7 @@ def load_segments(document_id: str, attorney_id: str, max_segments: int) -> list
     ]
 
 
+@traced("db.latest_to_id")
 def latest_to_id(document_id: str, attorney_id: str) -> int:
     """Highest condensed row id across ALL segments, or 0 when none exist.
 

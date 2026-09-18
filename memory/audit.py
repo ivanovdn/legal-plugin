@@ -5,10 +5,12 @@ import logging
 from datetime import datetime, timezone
 
 from memory.db import get_pool
+from observability.spans import traced
 
 logger = logging.getLogger(__name__)
 
 
+@traced("db.write_audit_log")
 def write_audit_log(
     session_id: str,
     user_id: str,

@@ -13,7 +13,15 @@ from api.auth import resolve_user_id, resolve_user_name
 from config import get_settings
 from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
-from observability.spans import traced, set_trace_attributes, current_trace_id
+from observability.degradations import (
+    CHECKPOINTER_UNAVAILABLE, GRAPH_INVOKE_FAILED, OUTCOME_FAILED,
+    RESUME_FAILED, RESUME_STATE_LOAD_FAILED, STATELESS_FALLBACK_FAILED,
+    derive_outcome,
+)
+from observability.spans import (
+    current_trace_id, degradations, mark_failed, record_degradation,
+    set_outcome, set_trace_attributes, traced,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +71,45 @@ def _get_graph():
     return _graph
 
 
+def _checkpointer_startup_absent() -> bool:
+    """True when the checkpointer is enabled but has been unavailable for the
+    life of this process. `_get_graph()` caches `_graph`, so `build_checkpointer()`
+    runs exactly once, inside whichever request happens to be first — if Redis
+    was down at boot, `_checkpointer_active` stays False forever afterward, not
+    just for that first request. ONE function so the payload flag
+    (`_memory_degraded`) and the span reason code
+    (`_record_startup_checkpointer_degradation`) read the identical condition
+    and cannot drift apart."""
+    return get_settings().checkpointer_enabled and not _checkpointer_active
+
+
 def _memory_degraded(report: dict) -> bool:
     """True when this turn's memory was degraded — either the report flagged it
     (in-graph read failure) or the checkpointer is enabled but unavailable."""
     if report.get("memory_degraded"):
         return True
-    return get_settings().checkpointer_enabled and not _checkpointer_active
+    return _checkpointer_startup_absent()
+
+
+def _record_startup_checkpointer_degradation() -> None:
+    """Record CHECKPOINTER_UNAVAILABLE once per turn when the checkpointer was
+    never available for this process — same condition `_memory_degraded()`
+    uses for the payload flag. Call once per handler, after `_get_graph()` has
+    run (so `_checkpointer_active` reflects reality rather than its
+    not-yet-determined module default) and before any return, so every exit
+    picks it up.
+
+    Without this, a startup-absent checkpointer put memory_degraded=True on
+    every turn's payload while the root span stayed app.outcome=ok with no
+    reason recorded anywhere — the pane and the span disagreed, and
+    derive_outcome's "every report flag has a matching reason code" premise
+    was false for exactly this producer. A mid-invoke Redis failure
+    (submit_query's except branch) may record this same constant again later
+    in the same turn; `_accumulate` de-duplicates the reason list, and both
+    degradation events remain visible on their spans.
+    """
+    if _checkpointer_startup_absent():
+        record_degradation(CHECKPOINTER_UNAVAILABLE, announced=True, detail="startup_absent")
 
 
 def _payload_from_result(
@@ -200,11 +241,13 @@ def submit_query(
     }
 
     graph = _get_graph()
+    _record_startup_checkpointer_degradation()
     config = {"configurable": {"thread_id": session_id}}
 
     try:
         result = graph.invoke(initial_state, config=config)
         refresh_ttl(session_id)
+        set_outcome(derive_outcome(degradations()))
         return ApiResponse(
             status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
         )
@@ -214,6 +257,9 @@ def submit_query(
                 "Checkpointer (Redis) failed mid-invoke (%s) — degrading to a stateless "
                 "run; chat_history is lost this turn (memory_degraded=True).", e,
             )
+            record_degradation(
+                CHECKPOINTER_UNAVAILABLE, announced=True, detail=e.__class__.__name__
+            )
             try:
                 initial_state["memory_degraded"] = True
                 result = _get_stateless_graph().invoke(initial_state)
@@ -221,16 +267,21 @@ def submit_query(
                 if isinstance(report, dict):
                     report["memory_degraded"] = True
                     result["report"] = report
+                set_outcome(derive_outcome(degradations()))
                 return ApiResponse(
                     status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
                 )
             except Exception as e2:
                 logger.exception("Stateless fallback failed after checkpointer outage")
+                mark_failed(STATELESS_FALLBACK_FAILED, exc=e2)
+                set_outcome(OUTCOME_FAILED)
                 return ApiResponse(
                     status="error",
                     errors=[f"Session memory unavailable and fallback failed: {e2}"],
                 )
         logger.exception("Graph execution failed")
+        mark_failed(GRAPH_INVOKE_FAILED, exc=e)
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=[str(e)])
 
 
@@ -253,14 +304,30 @@ def resume_query(session_id: str, body: ResumeRequest):
     )
 
     graph = _get_graph()
+    _record_startup_checkpointer_degradation()
     config = {"configurable": {"thread_id": session_id}}
 
     try:
         prior = graph.get_state(config)
     except Exception as e:
         logger.warning("resume: get_state failed for %s: %s", session_id, e)
+        mark_failed(RESUME_STATE_LOAD_FAILED, exc=e, detail=e.__class__.__name__)
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=["session expired or not found"])
     if not prior or not prior.values:
+        # An expired/unknown session is the checkpoint TTL working as
+        # designed, not something broken — get_state succeeded and correctly
+        # found nothing. Deliberately reason-code-free: do NOT invent or
+        # reuse a code here (RESUME_STATE_LOAD_FAILED means the load FAILED;
+        # it did not). Reusing it would smuggle the except block's "any
+        # exception -> session expired" conflation into the telemetry too —
+        # the one thing this task was told to leave alone. status=ERROR is
+        # reserved for "something broke"; the attorney-facing channel already
+        # says the session is gone via status="error" + the message. Still
+        # derived, not hardcoded to OUTCOME_OK: a startup-absent checkpointer
+        # (see _record_startup_checkpointer_degradation above) can have
+        # already recorded a reason on this same request, which must win.
+        set_outcome(derive_outcome(degradations()))
         return ApiResponse(status="error", errors=["session expired or not found"])
 
     try:
@@ -273,11 +340,14 @@ def resume_query(session_id: str, body: ResumeRequest):
             config=config,
         )
         refresh_ttl(session_id)
+        set_outcome(derive_outcome(degradations()))
         return ApiResponse(
             status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
         )
     except Exception as e:
         logger.exception("resume: graph invoke failed for %s", session_id)
+        mark_failed(RESUME_FAILED, exc=e)
+        set_outcome(OUTCOME_FAILED)
         return ApiResponse(status="error", errors=[str(e)])
 
 

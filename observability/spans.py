@@ -18,8 +18,10 @@ import json
 from typing import Any, Callable
 
 from opentelemetry import trace
-from opentelemetry.trace import Span
+from opentelemetry.trace import Span, Status, StatusCode
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+
+from observability.degradations import OUTCOME_FAILED
 
 _tracer = trace.get_tracer("legal-triage")
 
@@ -32,6 +34,9 @@ _root_span: contextvars.ContextVar[Span | None] = contextvars.ContextVar(
 )
 _root_metadata: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "otel_root_metadata", default=None
+)
+_root_degradations: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "otel_root_degradations", default=None
 )
 
 
@@ -54,9 +59,11 @@ def traced(name: str, kind: str | None = None) -> Callable:
             with _tracer.start_as_current_span(name) as span:
                 root_token = None
                 meta_token = None
+                deg_token = None
                 if _root_span.get() is None:
                     root_token = _root_span.set(span)
                     meta_token = _root_metadata.set({})
+                    deg_token = _root_degradations.set([])
                 if kind == "LLM":
                     span.set_attribute(
                         SpanAttributes.OPENINFERENCE_SPAN_KIND,
@@ -69,6 +76,13 @@ def traced(name: str, kind: str | None = None) -> Callable:
                         _root_span.reset(root_token)
                     if meta_token is not None:
                         _root_metadata.reset(meta_token)
+                    if deg_token is not None:
+                        _root_degradations.reset(deg_token)
+        # Exposed for tests to assert WHICH name a function was decorated with —
+        # functools.wraps alone only proves "wrapped by something", not "wrapped
+        # with this span name". Nothing in production reads this; don't delete it
+        # as unused.
+        wrapper.span_name = name
         return wrapper
     return decorator
 
@@ -121,11 +135,14 @@ def set_gen_attributes(
     output: Any = None,
     model: str | None = None,
     usage: dict | None = None,
+    timings: dict | None = None,
     metadata: dict | None = None,
 ) -> None:
     """Record GENERATION attributes on the CURRENT span. Best-effort; never raises.
 
     `usage` is the {input, output, total, unit} dict from observability.tracing.
+    `timings` is the {total_ms, load_ms, prompt_eval_ms, eval_ms} dict from
+    observability.tracing.ollama_timings.
     """
     try:
         span = trace.get_current_span()
@@ -146,6 +163,9 @@ def set_gen_attributes(
                 span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_COMPLETION, int(usage["output"]))
             if usage.get("total") is not None:
                 span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, int(usage["total"]))
+        if timings:
+            for key, value in timings.items():
+                span.set_attribute(f"llm.ollama.{key}", int(value))
         if metadata:
             span.set_attribute(
                 SpanAttributes.METADATA, json.dumps(metadata, default=str, ensure_ascii=False)
@@ -168,3 +188,108 @@ def current_trace_id() -> str:
         return format(ctx.trace_id, "032x")
     except Exception:
         return ""
+
+
+def _accumulate(reason: str) -> None:
+    """Append to the root's reason list, de-duplicated.
+
+    Runs BEFORE any is_recording() guard on purpose: the accumulator is set by
+    `traced` whether or not a provider exists, so outcome derivation behaves
+    identically with tracing on and off. A turn's verdict must not depend on
+    whether anyone was watching."""
+    acc = _root_degradations.get()
+    if acc is not None and reason not in acc:
+        acc.append(reason)
+
+
+def record_degradation(reason: str, *, announced: bool, detail: str = "") -> None:
+    """Record a degradation as an EVENT on the current span. Never raises.
+
+    Does NOT touch span status — a fallback that worked is not an error.
+
+    `announced` has no default on purpose: whether the attorney was told is
+    exactly the thing you must not get wrong by accident. True mirrors the
+    existing `memory_degraded` convention (a banner reaches the pane); False is
+    the silent class this instrumentation exists to expose.
+
+    An EVENT rather than an attribute because one span can degrade twice —
+    attributes overwrite, events keep both, in order, with timestamps.
+    """
+    try:
+        _accumulate(reason)
+        span = trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        attributes: dict[str, Any] = {
+            "degradation.reason": reason,
+            "degradation.announced": announced,
+        }
+        if detail:
+            attributes["degradation.detail"] = detail
+        span.add_event("degradation", attributes=attributes)
+    except Exception:
+        pass
+
+
+def degradations() -> list[str]:
+    """Reason codes accumulated on this request, for the rollup to read back."""
+    return list(_root_degradations.get() or [])
+
+
+def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = "") -> None:
+    """Set the CURRENT span to ERROR and record `exc`. Never raises.
+
+    For failures this app CATCHES and converts into a degraded answer. OTel
+    marks a span ERROR only when an exception propagates out of the `with`
+    block; this codebase degrades rather than raises, so across its many
+    `except Exception` sites almost nothing propagates and without this call
+    every failed turn looks like a healthy one.
+
+    `reason` (and `detail`, when given) are also stamped as attributes —
+    `degradation.reason` / `degradation.detail`, the same keys record_degradation
+    puts on its event — so a failed span names WHICH of the eight failure
+    reasons it was, not just that it failed. Without this a failed span carried
+    only the exception class, and reason was unreadable from the span itself.
+    """
+    try:
+        _accumulate(reason)
+        span = trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        span.set_attribute("degradation.reason", reason)
+        if detail:
+            span.set_attribute("degradation.detail", detail)
+        if exc is not None:
+            span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, detail or reason))
+    except Exception:
+        pass
+
+
+def set_outcome(outcome: str) -> None:
+    """Stamp app.outcome on the ROOT span. Never raises.
+
+    Called once per request root — submit_query, resume_query, post_compact.
+    One derived field so "show me the bad turns" is `app.outcome != "ok"`
+    rather than an OR-chain across attributes you have to remember.
+
+    Must be called INSIDE the root traced function — outside it, the
+    accumulator is already reset, so this silently stamps a fresh, empty
+    reason list rather than the request's real one.
+
+    When outcome == "failed" the root status is set to ERROR as well, which is
+    the point of the whole exercise: afterwards, ERROR means exactly "the
+    attorney did not get their answer".
+    """
+    try:
+        span = _root_span.get() or trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        span.set_attribute("app.outcome", outcome)
+        reasons = degradations()
+        if reasons:
+            span.set_attribute("app.degradations", json.dumps(reasons, ensure_ascii=False))
+        if outcome == OUTCOME_FAILED:
+            span.set_status(Status(StatusCode.ERROR, ", ".join(reasons) or OUTCOME_FAILED))
+    except Exception:
+        pass
