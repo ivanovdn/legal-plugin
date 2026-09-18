@@ -93,6 +93,20 @@ def message_usage(message: Any) -> TokenUsage | None:
     }
 
 
+def message_timings(message: Any) -> OllamaTimings | None:
+    """Ollama durations from a LangChain AIMessage's response_metadata.
+
+    langchain_ollama passes Ollama's generation info straight through, so the
+    four duration fields arrive under the same names the raw /api/chat response
+    uses and ollama_timings maps them unchanged. Without this the doc-chat path
+    — the Word chat tab, the most-used surface — carried token counts but no
+    timing split, so a long generation could not be separated into reload,
+    prefill and decode. Found on a real trace, not by review.
+    """
+    rm = getattr(message, "response_metadata", None)
+    return ollama_timings(rm) if isinstance(rm, dict) else None
+
+
 def _message_model(message: Any) -> str | None:
     rm = getattr(message, "response_metadata", None)
     return rm.get("model") if isinstance(rm, dict) else None
@@ -108,6 +122,7 @@ def traced_invoke(llm: Any, messages: Any, *, name: str = "llm") -> Any:
         output=getattr(response, "content", None) or str(response),
         model=_message_model(response),
         usage=message_usage(response),
+        timings=message_timings(response),
     )
     return response
 
@@ -133,11 +148,22 @@ def traced_agent_invoke(agent: Any, payload: Any, *, name: str = "agent") -> Any
         else None
     )
 
+    # Durations sum across the run for the same reason the token counts do:
+    # this one span summarises every LLM call the agent made, so a reload paid
+    # on call 3 is part of what the run cost.
+    acc: dict[str, int] = {}
+    for m in messages:
+        t = message_timings(m)
+        if t:
+            for key, value in t.items():
+                acc[key] = acc.get(key, 0) + value
+
     set_gen_attributes(
         name=name,
         input=payload,
         output=(getattr(final, "content", None) or str(final)) if final else None,
         model=_message_model(final) if final is not None else None,
         usage=usage,
+        timings=acc or None,
     )
     return result

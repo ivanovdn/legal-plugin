@@ -12,7 +12,7 @@ from observability.degradations import INTENT_CLASSIFICATION_FAILED
 from observability.spans import (
     record_degradation, set_gen_attributes, set_trace_attributes, traced,
 )
-from observability.tracing import ollama_usage
+from observability.tracing import ollama_timings, ollama_usage
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
             output=content,
             model=settings.llm_model,
             usage=ollama_usage(data),
+            timings=ollama_timings(data),
             metadata={"classified_as": task_type},
         )
         logger.info("[intent_router] LLM classified: %s", task_type)
