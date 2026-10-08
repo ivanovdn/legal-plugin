@@ -1,6 +1,7 @@
-# Runtime deps for the backend Docker image. `Dockerfile` installs THIS file
-# and never requirements.txt, so this is the dependency set the deployed
-# artifact actually has.
+# Runtime deps for the backend Docker image — the INPUT to requirements-runtime.lock,
+# which is what `Dockerfile` installs (never requirements.txt). After editing this
+# file, re-lock: the command is in the lock's header, and scripts/check_locks.py
+# fails the gate until you do.
 #
 # It is a SEPARATE, self-contained set — NOT "requirements.txt minus some
 # lines". It used to describe itself that way and the description was false in

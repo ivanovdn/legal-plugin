@@ -116,7 +116,13 @@ cp .env.example .env
 ### 2 · Start infrastructure
 
 ```bash
-docker compose up -d      # Qdrant, Redis, Langfuse (+ Postgres, ClickHouse, MinIO)
+docker compose up -d qdrant redis app-db     # what the backend needs
+# Optional local tracing UI — Langfuse (+ its Postgres, ClickHouse, MinIO):
+#   docker compose up -d langfuse-web langfuse-worker
+# minio/minio can no longer be pulled anonymously from Docker Hub, so the
+# Langfuse stack only starts where that image is already present. Images are
+# pinned (tag@sha256): a first run on a machine pulls them — on the Trinetix VPN
+# Docker pulls can fail, so pull with it disconnected.
 ```
 
 ### 3 · Install Python deps

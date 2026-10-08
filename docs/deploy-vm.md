@@ -104,14 +104,14 @@ Until you do, the default `tls internal` serves a self-signed cert — fine for 
 
 ## Step 3 — Build the pane (Bucket A) — **now automatic, nothing to run**
 
-The pane is built **inside the `caddy` image** ([clients/word/Dockerfile](../clients/word/Dockerfile)): a `node:20-alpine` stage runs `npm ci && npm run build`, and the result is copied into the Caddy stage at `/srv`. Step 4's `up -d --build` therefore produces the backend and the pane from the same commit, and **the deploy host needs no Node at all**.
+The pane is built **inside the `caddy` image** ([clients/word/Dockerfile](../clients/word/Dockerfile)): a pinned `node:20.20.2-alpine@sha256:…` stage runs `npm ci && npm run build`, and the result is copied into the Caddy stage at `/srv`. Step 4's `up -d --build` therefore produces the backend and the pane from the same commit, and **the deploy host needs no Node at all**.
 
 > **Why this changed.** The pane used to be built by hand here and bind-mounted (`./clients/word/dist:/srv:ro`). That could not stay current: `dist/` is gitignored so `git pull` never updated it, `up --build` rebuilds only the backend image, and `SRV-AGENT-01` has no `npm`. On 2026-08-13 the VM was found serving a bundle built **2026-08-11** while its backend had been redeployed twice since — apply-path guards that were on `main` were absent in production, with nothing reporting the mismatch. Bundle age is checkable: `stat -c '%y' clients/word/dist/taskpane.html` under the old scheme; now it is the image's build date.
 
-**Prerequisite:** the deploy host must be able to pull `node:20-alpine`. Check before deploying, since it is the one new base image this introduces:
+**Prerequisite:** the deploy host must be able to pull the pinned base images — the `FROM` lines of `Dockerfile` and `clients/word/Dockerfile` (`tag@sha256`). A build pulls them itself; to check ahead of a deploy, `docker pull` each exact reference, e.g. the Node one:
 
 ```bash
-docker pull node:20-alpine
+docker pull "$(grep -oE 'node:[^ ]+' clients/word/Dockerfile)"
 ```
 
 A stale host `clients/word/dist/` is now ignored — it is no longer mounted, and `.dockerignore` keeps it out of the build context. Deleting it is optional tidying.

@@ -1,6 +1,7 @@
 # Every image is pinned — tag for people, digest for the bytes — to what was
-# running on 2026-10-08 (the VM's for app-db/redis, this machine's for the
-# local-only services). A floating tag let a routine rebuild change software
+# running on 2026-10-08: the VM's for app-db/redis, and the dev machine's for
+# the local-only services — except the Langfuse `postgres`, which shares
+# app-db's 17.10 rather than keep a second Postgres version around. A floating tag let a routine rebuild change software
 # under an unchanged commit; bump a pin on purpose, in a commit of its own.
 services:
   # === Legal Plugin services ===
