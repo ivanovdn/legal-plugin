@@ -41,8 +41,8 @@ opentelemetry-instrumentation-httpx>=0.50b0
 # as a transitive of chainlit today, and depending on that is the fragility
 # that sank the Traceloop option. This line alone does NOT license the
 # top-of-file import in observability/otel.py: the Docker image installs
-# requirements-runtime.txt, not this file, so both instrumentors must be
-# declared THERE too (and are). Declaring an import in one of the two files is
+# requirements-runtime.lock (compiled from requirements-runtime.txt), not this
+# file, so both instrumentors must be declared THERE too (and are). Declaring an import in one of the two files is
 # how a container that could not start shipped past a green check.sh.
 opentelemetry-instrumentation-redis>=0.50b0
 
@@ -61,6 +61,8 @@ PyJWT[crypto]>=2.9,<3.0
 # Dependency-lock gate (scripts/check_locks.py) — a direct import, so declared
 # rather than borrowed from pytest's dependencies.
 packaging>=24,<27
+# tests/conftest.py reads the pinned app-db image from docker-compose.yml.
+pyyaml>=6,<7
 
 # Testing
 pytest>=8.0,<9.0
