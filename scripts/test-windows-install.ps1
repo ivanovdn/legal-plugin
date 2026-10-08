@@ -39,6 +39,34 @@ Check "trailing-newline: our entry on its own line" ($c2 -match "(?m)^172\.20\.1
 Check "trailing-newline: costs only one blank line" (($c2 -split "`r?`n" | Where-Object { $_ -eq '' }).Count -le 2) $true
 Check "backticks never survive literally" ($c1.Contains('`n') -or $c2.Contains('`n')) $false
 
+"--- B2 note: tidying after the add was run three times ---"
+# The add is NOT idempotent (each run appends a copy) — a tester hit this. The
+# guide's note offers a repair line; it is read from the guide so they can't drift.
+$entry  = "172.20.1.10`tlegal-triage.internal.trinetix.net"
+$guide  = Get-Content (Join-Path $PSScriptRoot '../docs/tester-setup.md')
+$repair = @($guide | Where-Object { $_ -like '*$rest = @(Get-Content $h*' })
+Check "guide carries exactly one repair line" $repair.Count 1
+$repair = $repair[0] -replace '^>\s*', ''
+$oldRoot = $env:SystemRoot
+$env:SystemRoot = Join-Path $tmp "winroot"
+$etc = Join-Path $env:SystemRoot 'System32/drivers/etc'
+New-Item -ItemType Directory -Path $etc -Force | Out-Null
+$h3 = Join-Path $etc 'hosts'
+# Exact bytes Windows PowerShell's Add-Content leaves after three runs (value + CRLF each).
+[System.IO.File]::WriteAllText($h3, "127.0.0.1`tlocalhost" + ("`n$entry`r`n" * 3))
+Check "three runs leave three copies" @(Get-Content $h3 | Select-String legal-triage).Count 3
+. ([scriptblock]::Create($repair))
+Check "repair leaves exactly one copy" @(Get-Content $h3 | Select-String legal-triage).Count 1
+Check "repair keeps the other lines, unwelded" ((Get-Content $h3 | Where-Object { $_ -ne '' }) -join '|') "127.0.0.1`tlocalhost|$entry"
+$once = [System.IO.File]::ReadAllText($h3)
+. ([scriptblock]::Create($repair))
+Check "repair run again changes nothing" ([System.IO.File]::ReadAllText($h3) -eq $once) $true
+# The @() is load-bearing: on a one-line file, Where-Object returns a scalar and + concatenates strings.
+[System.IO.File]::WriteAllText($h3, "127.0.0.1`tlocalhost`r`n")
+. ([scriptblock]::Create($repair))
+Check "one-line hosts file: no welding" ((Get-Content $h3 -Raw) -match 'localhost172') $false
+Remove-Item $env:SystemRoot -Recurse -Force; $env:SystemRoot = $oldRoot
+
 "--- B5: interpolation ---"
 Check "UNC path"    "\\$env:COMPUTERNAME\LegalTriage" '\\TESTPC\LegalTriage'
 Check "share grant" "$env:USERDOMAIN\$env:USERNAME"   'TESTPC\dmytro'

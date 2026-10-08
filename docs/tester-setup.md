@@ -216,6 +216,17 @@ You should get one line back containing `172.20.1.10` and
 `legal-triage.internal.trinetix.net`. Nothing at all means it didn't take — check
 the window title really says *Administrator*, and try again.
 
+> **Got the same line back two or more times?** That's harmless. Each run of the
+> command above adds another copy, and identical copies all point Windows to the
+> same place, so you can go straight on to B3. If you'd like it tidy, paste this
+> in the same administrator window. It removes every copy and writes one back:
+>
+> ```powershell
+> $h = "$env:SystemRoot\System32\drivers\etc\hosts"; $rest = @(Get-Content $h | Where-Object { $_ -notmatch 'legal-triage\.internal\.trinetix\.net' }); Set-Content -Path $h -Value ($rest + "172.20.1.10`tlegal-triage.internal.trinetix.net")
+> ```
+>
+> Run the check again and you'll get one line. It's safe to run more than once.
+
 If it says **access denied**, you're not running as administrator. Close the
 window and reopen it with **Run as administrator**.
 
