@@ -1,7 +1,18 @@
+# journald, not Docker's default json-file. A json-file log belongs to its
+# container and is deleted with it, so every redeploy erased the app log — the
+# 2026-10-08 pilot audit found nothing older than the last recreate. journald
+# keeps it: `$DC logs` still reads the current container, and
+# `sudo journalctl CONTAINER_NAME=legal-plugin-backend-1` reaches earlier ones.
+# Docker Desktop has no journald, so a local dry run sets LOG_DRIVER=json-file
+# in the SHELL — never in .env, whose unknown keys config.py rejects.
+x-logging: &logging
+  driver: ${LOG_DRIVER:-journald}
+
 services:
   backend:
     build: .
     image: legal-plugin-backend:latest
+    logging: *logging
     env_file:
       - .env
     environment:
@@ -30,8 +41,15 @@ services:
     restart: unless-stopped
 
   phoenix:
-    image: arizephoenix/phoenix:latest
+    # Pinned: the database in phoenix_data was written by this version, and
+    # `latest` would migrate it on whatever day the image next got pulled.
+    image: arizephoenix/phoenix:15.2.0
     restart: unless-stopped
+    environment:
+      # Without this Phoenix writes to ~/.phoenix INSIDE the container and the
+      # volume below stays empty, so every recreate wiped every trace — found
+      # 2026-10-08, when nothing older than the 2026-09-18 redeploy survived.
+      - PHOENIX_WORKING_DIR=/mnt/data
     volumes:
       - phoenix_data:/mnt/data
     # Container port 6006 = Phoenix UI + OTLP/HTTP ingest (/v1/traces); the backend
@@ -57,6 +75,7 @@ services:
     # backend kept moving. Now `up --build` produces both from one commit.
     build: ./clients/word
     image: legal-plugin-pane:latest
+    logging: *logging
     ports:
       - "80:80"
       - "443:443"

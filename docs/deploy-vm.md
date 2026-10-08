@@ -122,6 +122,8 @@ A stale host `clients/word/dist/` is now ignored — it is no longer mounted, an
 
 **Bucket A** as a local dry run (`ADDIN_ORIGIN_HOST` unset → `localhost` + Caddy's internal cert); **Bucket B** for the real deploy on `SRV-AGENT-01` (needs VPN reachability there first).
 
+> **Local dry run on a Mac: prefix the command with `LOG_DRIVER=json-file`.** `backend` and `caddy` log to journald (see *Logs* below), and Docker Desktop has none — without the override they fail to start with `journald is not enabled on this host`. Set it in the shell, never in `.env`: `config.py` rejects unknown `.env` keys.
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   up -d --build redis app-db backend caddy
@@ -130,6 +132,14 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
 > **Always name the services.** A bare `up -d` (no list) starts *everything* defined in the base `docker-compose.yml` — including the heavy local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio`), which will thrash a constrained VM. The lean list above (+ `phoenix`, pulled in by `backend`'s `depends_on`) is the whole VM footprint.
 
 **Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.
+
+Either way, **create the collections once** — the script is idempotent and skips any that exist:
+
+```bash
+$DC run --rm --no-deps backend python scripts/create_collections.py
+```
+
+Without them, every SOW turn's governing-MSA lookup 404s and is recorded as a degradation, so `app.outcome=degraded` fires on every SOW turn and stops meaning anything. Found on the VM 2026-10-08: Spark's Qdrant had none of `legal_docs` / `case_history` / `memory`. An empty `legal_docs` is the honest state — no MSA on file — and a real Qdrant outage still records `msa_lookup_failed`. **Before seeding it**, know that `get_parent_msa` takes the one MSA on file for the client (`internal` for every Word turn), so seeding the demo MSA would compare every SOW against Trinetix's model MSA, not the counterparty's agreement.
 
 **Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
 
@@ -157,7 +167,26 @@ Then open **`http://localhost:6007`** on your own machine. Expect the trace tree
 
 > Host `6006` on the VM belongs to compliance-bot's *separate* Phoenix; ours is published on `6007` and the backend still reaches it in-network at `phoenix:6006`, unaffected by the loopback bind. If a browsable URL is ever genuinely needed, front it with a Caddy route **plus auth** — do not republish the port on `0.0.0.0`.
 
-If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and note that recreating `phoenix` clears its data — re-run the query to repopulate.
+If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and that `PHOENIX_WORKING_DIR=/mnt/data` is set (`docker inspect legal-plugin-phoenix-1 --format '{{json .Config.Env}}'`).
+
+**Traces persist across recreates** in the `phoenix_data` volume. Until 2026-10-08 they did not: without `PHOENIX_WORKING_DIR` Phoenix wrote `phoenix.db` to `/root/.phoenix` inside the container and the volume stayed empty, so every recreate wiped every trace. On a host still running the old config, carry the data over **before** recreating — while the old container is up, snapshot into the volume it already mounts (SQLite's online backup, so a live WAL database copies consistently; the image has no shell, only Python):
+
+```bash
+docker exec legal-plugin-phoenix-1 python3 -c "import sqlite3; s=sqlite3.connect('file:/root/.phoenix/phoenix.db?mode=ro', uri=True); d=sqlite3.connect('/mnt/data/phoenix.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"
+$DC up -d phoenix   # recreated with the new env; opens /mnt/data/phoenix.db
+```
+
+The image is pinned (`15.2.0`) because the database in the volume carries that version's schema — upgrade deliberately, not by whatever `latest` resolves to on the day of a pull.
+
+### Logs
+
+`backend` and `caddy` log to **journald**, not Docker's default `json-file`. A `json-file` log belongs to its container and is deleted with it, so every redeploy erased the app log — the 2026-10-08 pilot audit found nothing older than the last recreate. `$DC logs` still reads the current container; earlier containers are in the journal under the same container name:
+
+```bash
+sudo journalctl CONTAINER_NAME=legal-plugin-backend-1 --since 2026-10-01 --no-pager
+```
+
+`sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default cap 10% of the filesystem).
 
 ---
 
