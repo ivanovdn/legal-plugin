@@ -157,15 +157,9 @@ curl -sk https://<hostname>/api/query \
   -d '{"request": "what is an NDA?", "task_type": "research"}'
 ```
 
-**Phoenix is bound to loopback — reach the UI over an SSH tunnel.** Since 2026-09-16 `docker-compose.remote.yml` publishes it as `127.0.0.1:6007:6006`, so `http://<vm-ip>:6007` no longer answers from anywhere on the VPN. It has **no auth**, and its spans carry the full uploaded contract, the governing MSA and the firm's playbook bundle — `data/contract_review_skills/` is gitignored precisely because it is canonical legal-team IP. Forward the port instead:
+**Browse Phoenix directly at `http://172.20.1.10:6007`** (`http://<vm-ip>:6007`) from any machine on the VPN — `docker-compose.remote.yml` publishes it on all interfaces. Expect the trace tree to show `query:<task_type> → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The root span carries `app.outcome` (`ok`/`degraded`/`failed`) — `status = ERROR` means the attorney did not get their answer; see [docs/testing-observability.md](testing-observability.md). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
 
-```bash
-ssh -N -L 6007:localhost:6007 <user>@<vm>
-```
-
-Then open **`http://localhost:6007`** on your own machine. Expect the trace tree to show `query:<task_type> → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The root span carries `app.outcome` (`ok`/`degraded`/`failed`) — `status = ERROR` means the attorney did not get their answer; see [docs/testing-observability.md](testing-observability.md). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
-
-> Host `6006` on the VM belongs to compliance-bot's *separate* Phoenix; ours is published on `6007` and the backend still reaches it in-network at `phoenix:6006`, unaffected by the loopback bind. If a browsable URL is ever genuinely needed, front it with a Caddy route **plus auth** — do not republish the port on `0.0.0.0`.
+> Phoenix has **no auth**, and its spans carry the full uploaded contract, the governing MSA and the firm's playbook bundle (`data/contract_review_skills/` is gitignored because it is canonical legal-team IP) — anyone on the VPN who knows the address can read them. It is published this way deliberately, for direct browsing. Host `6006` on the VM belongs to compliance-bot's *separate* Phoenix; ours is on `6007`, and the backend reaches it in-network at `phoenix:6006`.
 
 If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and that `PHOENIX_WORKING_DIR=/mnt/data` is set (`docker inspect legal-plugin-phoenix-1 --format '{{json .Config.Env}}'`).
 
