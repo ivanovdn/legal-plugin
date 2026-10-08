@@ -43,7 +43,7 @@ services:
   phoenix:
     # Pinned: the database in phoenix_data was written by this version, and
     # `latest` would migrate it on whatever day the image next got pulled.
-    image: arizephoenix/phoenix:15.2.0
+    image: arizephoenix/phoenix:15.2.0@sha256:3ff9ee3bc108852c15c3eccc89bef4270d3a1c6aed89eb2b1a5d99240d1632fd
     restart: unless-stopped
     environment:
       # Without this Phoenix writes to ~/.phoenix INSIDE the container and the

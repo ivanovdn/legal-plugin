@@ -1,8 +1,12 @@
+# Every image is pinned — tag for people, digest for the bytes — to what was
+# running on 2026-10-08 (the VM's for app-db/redis, this machine's for the
+# local-only services). A floating tag let a routine rebuild change software
+# under an unchanged commit; bump a pin on purpose, in a commit of its own.
 services:
   # === Legal Plugin services ===
 
   qdrant:
-    image: qdrant/qdrant
+    image: qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb   # local only; Spark runs 1.17.1
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -16,7 +20,8 @@ services:
   # auto-loads RediSearch + RedisJSON; REDIS_ARGS appends to the default
   # redis-server invocation so we keep modules AND apply auth/policy.
   redis:
-    image: redis/redis-stack-server:latest
+    # Redis 7.4.7. This was `:latest`; the tag it pointed to was never recorded, so the digest is the pin.
+    image: redis/redis-stack-server@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
     restart: unless-stopped
     environment:
       REDIS_ARGS: "--requirepass myredissecret --maxmemory-policy noeviction"
@@ -33,7 +38,7 @@ services:
   # === Langfuse v3 services ===
 
   langfuse-web:
-    image: langfuse/langfuse:3
+    image: langfuse/langfuse:3.172.1@sha256:d644add47c0e03d0b695cc71c986f26fbbf9ee430452db511747af1239da26e8
     restart: unless-stopped
     depends_on:
       postgres:
@@ -91,7 +96,7 @@ services:
       LANGFUSE_INIT_USER_PASSWORD: "admin1234"
 
   langfuse-worker:
-    image: langfuse/langfuse-worker:3
+    image: langfuse/langfuse-worker:3.172.1@sha256:257d82344d6f75bb742001324e4d721594dd53a66806e63264a30490457814d0
     restart: unless-stopped
     depends_on:
       postgres:
@@ -108,7 +113,7 @@ services:
       <<: *langfuse-env
 
   postgres:
-    image: postgres:17
+    image: postgres:17.10@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317
     restart: unless-stopped
     environment:
       POSTGRES_USER: "postgres"
@@ -127,7 +132,7 @@ services:
       retries: 10
 
   app-db:
-    image: postgres:17
+    image: postgres:17.10@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317
     restart: unless-stopped
     environment:
       POSTGRES_DB: "legal"
@@ -146,7 +151,7 @@ services:
       retries: 10
 
   clickhouse:
-    image: clickhouse/clickhouse-server
+    image: clickhouse/clickhouse-server:26.4.2.10@sha256:6d8f358747b59f7db044749eaf951e828e75cc16f9c487f855b114272c44b82c
     restart: unless-stopped
     user: "101:101"
     environment:
@@ -167,7 +172,10 @@ services:
       start_period: 1s
 
   minio:
-    image: minio/minio
+    # Docker Hub refuses anonymous pulls of minio/minio (401, checked 2026-10-08):
+    # this runs only where the image is already present. A fresh machine needs
+    # another S3-compatible store for local Langfuse.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
