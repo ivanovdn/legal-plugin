@@ -63,3 +63,4 @@ class LegalAgentState(TypedDict):
     context_truncated: dict | None         # NEW — set when the document was cut to fit the budget; None on a healthy turn
     token_usage: dict | None               # NEW — real prompt/completion counts from the LLM response (observability.tracing shape)
     context_breakdown: dict | None          # NEW — what this turn's context actually spent, for the pane's counter
+    turn_started_at: float                 # NEW — epoch secs the request began (submit or resume); audit duration_ms derives from it

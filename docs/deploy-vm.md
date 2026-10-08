@@ -122,6 +122,17 @@ A stale host `clients/word/dist/` is now ignored — it is no longer mounted, an
 
 **Bucket A** as a local dry run (`ADDIN_ORIGIN_HOST` unset → `localhost` + Caddy's internal cert); **Bucket B** for the real deploy on `SRV-AGENT-01` (needs VPN reachability there first).
 
+> **Local dry run on a Mac: prefix the command with `LOG_DRIVER=json-file`.** `backend` and `caddy` log to journald (see *Logs* below), and Docker Desktop has none — without the override they fail to start with `journald is not enabled on this host`. Set it in the shell, never in `.env`: `config.py` rejects unknown `.env` keys.
+
+**⚠ Upgrading a host that predates 2026-10-08? Carry Phoenix's traces into its volume FIRST — before any `up`.** The old config kept Phoenix's database in the container's own layer, not in the `phoenix_data` volume. Any `up` that names `backend` also recreates `phoenix` whenever its config changed — and this change alters both its image tag and its env — which deletes that layer and every trace in it, permanently. While the old container is still running, confirm it runs the pinned version, then snapshot into the volume it already mounts (SQLite's online backup, so a live WAL database copies consistently; the image has no shell, only Python):
+
+```bash
+docker exec legal-plugin-phoenix-1 python3 -c "import phoenix; print(phoenix.__version__)"   # must print 15.2.0
+docker exec legal-plugin-phoenix-1 python3 -c "import sqlite3; s=sqlite3.connect('file:/root/.phoenix/phoenix.db?mode=ro', uri=True); d=sqlite3.connect('/mnt/data/phoenix.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"   # must print ok
+```
+
+If the version is not `15.2.0`, stop and pin the image to what is running instead — an older Phoenix may refuse a newer schema. Traces written between the snapshot and the recreate are lost, so do it when no one is mid-session. Then bring the stack up:
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   up -d --build redis app-db backend caddy
@@ -131,7 +142,21 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
 
 **Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.
 
-**Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
+Either way, **create `legal_docs` once.** On a Qdrant of your own, the idempotent script creates all three of this app's collections:
+
+```bash
+$DC run --rm --no-deps backend python scripts/create_collections.py
+```
+
+On a **shared** Qdrant (Spark), create only `legal_docs` — the one collection a Word turn reads. `memory` has no reader and `case_history` serves only contract generation, which the pane cannot reach; both are generic names to claim on another team's instance. This reads the URL and vector size from the app's own settings, so the dimension always matches the embedding model:
+
+```bash
+$DC run --rm --no-deps backend python -c "from qdrant_client import QdrantClient; from qdrant_client.models import Distance, VectorParams; from config import get_settings; s = get_settings(); c = QdrantClient(url=s.qdrant_url); c.collection_exists('legal_docs') or c.create_collection('legal_docs', vectors_config=VectorParams(size=s.qdrant_vector_dim, distance=Distance.COSINE)); print(sorted(x.name for x in c.get_collections().collections))"
+```
+
+Every grounded SOW chat turn and every SOW review looks up the governing MSA; without `legal_docs` that lookup 404s and is recorded as a degradation, so `app.outcome=degraded` fires on all of them and stops meaning anything. Found on the VM 2026-10-08: Spark's Qdrant had none of `legal_docs` / `case_history` / `memory`; only `legal_docs` was created there. An empty `legal_docs` is the honest state — no MSA on file — and a real Qdrant outage still records `msa_lookup_failed`. **Before seeding it**, know that `get_parent_msa` takes the one MSA on file for the client (`internal` for every Word turn), so seeding the demo MSA would compare every SOW against Trinetix's model MSA, not the counterparty's agreement.
+
+**Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and is **recreated** by any `up` that names `backend` whenever its own config changed (hence the ⚠ callout above), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
 
 > **`app-db` is a hard dependency.** The backend needs it up and **healthy** (audit log, review store, and per-attorney conversations all live there) — bring it up first if you're staging services incrementally, and don't tear it down while the backend is running. Its data is a **named volume** (`app_db_data`) — reviews are attorney work product, so back it up (`pg_dump` on a schedule, or snapshot the volume) same as any production database.
 
@@ -147,17 +172,25 @@ curl -sk https://<hostname>/api/query \
   -d '{"request": "what is an NDA?", "task_type": "research"}'
 ```
 
-**Phoenix is bound to loopback — reach the UI over an SSH tunnel.** Since 2026-09-16 `docker-compose.remote.yml` publishes it as `127.0.0.1:6007:6006`, so `http://<vm-ip>:6007` no longer answers from anywhere on the VPN. It has **no auth**, and its spans carry the full uploaded contract, the governing MSA and the firm's playbook bundle — `data/contract_review_skills/` is gitignored precisely because it is canonical legal-team IP. Forward the port instead:
+**Browse Phoenix directly at `http://172.20.1.10:6007`** (`http://<vm-ip>:6007`) from any machine on the VPN — `docker-compose.remote.yml` publishes it on all interfaces. Expect the trace tree to show `query:<task_type> → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The root span carries `app.outcome` (`ok`/`degraded`/`failed`) — `status = ERROR` means the attorney did not get their answer; see [docs/testing-observability.md](testing-observability.md). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
+
+> Phoenix has **no auth**, and its spans carry the full uploaded contract, the governing MSA and the firm's playbook bundle (`data/contract_review_skills/` is gitignored because it is canonical legal-team IP) — anyone on the VPN who knows the address can read them. It is published this way deliberately, for direct browsing. Host `6006` on the VM belongs to compliance-bot's *separate* Phoenix; ours is on `6007`, and the backend reaches it in-network at `phoenix:6006`.
+
+If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and that `PHOENIX_WORKING_DIR=/mnt/data` is set (`docker inspect legal-plugin-phoenix-1 --format '{{json .Config.Env}}'`).
+
+**Traces persist across recreates** in the `phoenix_data` volume. Until 2026-10-08 they did not: without `PHOENIX_WORKING_DIR` Phoenix wrote `phoenix.db` to `/root/.phoenix` inside the container and the volume stayed empty, so every recreate wiped every trace. A host still on the old config must carry its data over before its first `up` — the ⚠ callout at the top of this step.
+
+The image is pinned (`15.2.0`) because the database in the volume carries that version's schema — upgrade deliberately, not by whatever `latest` resolves to on the day of a pull.
+
+### Logs
+
+`backend` and `caddy` log to **journald**, not Docker's default `json-file`. A `json-file` log belongs to its container and is deleted with it, so every redeploy erased the app log — the 2026-10-08 pilot audit found nothing older than the last recreate. `$DC logs` still reads the current container; earlier containers are in the journal under the same container name:
 
 ```bash
-ssh -N -L 6007:localhost:6007 <user>@<vm>
+sudo journalctl CONTAINER_NAME=legal-plugin-backend-1 --since 2026-10-01 --no-pager
 ```
 
-Then open **`http://localhost:6007`** on your own machine. Expect the trace tree to show `query:<task_type> → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The root span carries `app.outcome` (`ok`/`degraded`/`failed`) — `status = ERROR` means the attorney did not get their answer; see [docs/testing-observability.md](testing-observability.md). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
-
-> Host `6006` on the VM belongs to compliance-bot's *separate* Phoenix; ours is published on `6007` and the backend still reaches it in-network at `phoenix:6006`, unaffected by the loopback bind. If a browsable URL is ever genuinely needed, front it with a Caddy route **plus auth** — do not republish the port on `0.0.0.0`.
-
-If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and note that recreating `phoenix` clears its data — re-run the query to repopulate.
+`sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default `SystemMaxUse` is 10% of the filesystem, capped at 4 GiB). The journal survives a reboot only on persistent storage — the default here, because `/var/log/journal` exists (checked on SRV-AGENT-01 2026-10-08).
 
 ---
 

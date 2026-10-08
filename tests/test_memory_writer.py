@@ -1,4 +1,6 @@
 """memory_writer persists contract reviews; failures are surfaced, not silent."""
+import time
+
 import graph.nodes.memory_writer as mod
 
 
@@ -186,3 +188,25 @@ def test_conversation_append_still_runs_after_an_audit_failure(monkeypatch):
     out = mod.memory_writer(_state(task_type="research", user_id="atty-1"))
     assert called["n"] == 1
     assert out["report"]["memory_degraded"] is True
+
+
+def test_audit_duration_is_measured_from_the_turn_start(monkeypatch):
+    """duration_ms was hard-coded 0, so every audit row claimed its turn took no
+    time and latency survived only in traces, which a redeploy wipes. Found by
+    the 2026-10-08 pilot audit."""
+    captured = {}
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(mod, "save_review", lambda **kw: None)
+    mod.memory_writer(_state(turn_started_at=time.time() - 2.0))
+    # Two seconds of wall clock, plus however long the node itself took.
+    assert 2000 <= captured["duration_ms"] < 10_000
+
+
+def test_audit_duration_is_never_negative(monkeypatch):
+    """The wall clock can step backwards (an NTP correction mid-turn); a
+    negative latency would be as false as the 0 it replaced."""
+    captured = {}
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(mod, "save_review", lambda **kw: None)
+    mod.memory_writer(_state(turn_started_at=time.time() + 60.0))
+    assert captured["duration_ms"] == 0

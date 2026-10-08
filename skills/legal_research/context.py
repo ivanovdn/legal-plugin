@@ -35,7 +35,7 @@ from memory.conversation_store import load_recent, row_lengths_after
 from memory.conversation_summary import latest_to_id, load_segments
 from memory.review_store import load_latest_review
 from observability.degradations import (
-    CHAT_GROUNDING_FAILED, COMPRESSIBLE_HISTORY_READ_FAILED,
+    CHAT_GROUNDING_FAILED, COMPRESSIBLE_HISTORY_READ_FAILED, MSA_LOOKUP_FAILED,
     PRIOR_CONVERSATION_LOAD_FAILED, PRIOR_REVIEW_LOAD_FAILED,
     REVIEW_RECONCILIATION_FAILED, SUMMARY_LOAD_FAILED,
 )
@@ -187,25 +187,37 @@ def _needs_grounding(question: str) -> bool:
 
 def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[str, str]:
     """(playbook_bundle, msa_block) for the chat path. Empty strings on failure —
-    grounding must never break the chat turn. MSA only for SOWs."""
-    playbook = ""
-    msa_block = ""
+    grounding must never break the chat turn. MSA only for SOWs.
+
+    The two lookups fail separately. When one try covered both, a failed MSA
+    lookup was logged "answering ungrounded" and coded chat_grounding_failed
+    while the playbook sat in the prompt (pilot trace 9f239597, 2026-10-08).
+    """
     try:
         contract_type, _ = detect_contract_type(uploaded_text)
         playbook = load_playbook_bundle(contract_type)
-        if contract_type == "sow":
-            client_id = (state.get("filters") or {}).get("client_id", "")
-            parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
-            if parent:
-                title, msa_text = parent
-                msa_block = (
-                    f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
-                    f"{msa_text}\n--- END GOVERNING MSA ---"
-                )
     except Exception as e:
         logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
         record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail=e.__class__.__name__)
-    return playbook, msa_block
+        return "", ""
+    if contract_type != "sow":
+        return playbook, ""
+    client_id = (state.get("filters") or {}).get("client_id", "")
+    try:
+        parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
+    except Exception as e:
+        logger.warning(
+            "[legal_research] governing-MSA lookup failed: %s — answering from the playbook alone", e
+        )
+        record_degradation(MSA_LOOKUP_FAILED, announced=False, detail=e.__class__.__name__)
+        return playbook, ""
+    if not parent:
+        return playbook, ""
+    title, msa_text = parent
+    return playbook, (
+        f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
+        f"{msa_text}\n--- END GOVERNING MSA ---"
+    )
 
 
 def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> dict | None:

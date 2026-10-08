@@ -1,4 +1,5 @@
 # tests/test_graph.py
+import time
 from unittest.mock import patch, MagicMock
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -311,6 +312,82 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     with get_pool().connection() as conn:
         rows = conn.execute("SELECT * FROM audit_log").fetchall()
     assert len(rows) >= 1
+
+
+def test_graph_carries_the_turn_start_to_the_audit_row(tmp_path, monkeypatch):
+    """LangGraph drops input keys the state schema does not declare. A
+    turn_started_at missing from LegalAgentState never reaches memory_writer,
+    and the audit row silently reads 0 ms — invisible to a memory_writer unit
+    test, which hands the node a plain dict."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        build_graph().invoke(_make_state(
+            request="What are indemnification standards?",
+            session_id="duration-test",
+            turn_started_at=time.time() - 1.0,
+        ))
+
+    with get_pool().connection() as conn:
+        (duration_ms,) = conn.execute(
+            "SELECT duration_ms FROM audit_log WHERE session_id = %s", ("duration-test",)
+        ).fetchone()
+    assert duration_ms >= 1000
+
+
+def test_graph_resume_measures_from_the_resume_stamp(tmp_path, monkeypatch):
+    """query.py restamps a resume via Command(resume=, update=). That rests on
+    LangGraph applying `update` while resuming an interrupt — pinned here on the
+    real graph and checkpointer, since requirements allow any langgraph < 1.0."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=[]):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "resume-duration"}}
+        state = _make_state(
+            request="Review this contract.",
+            task_type="contract_review",
+            skill_plan=["contract_review"],
+            uploaded_docs=[{"text": "MASTER SERVICES AGREEMENT between Acme and Trinetix."}],
+            session_id="resume-duration",
+            turn_started_at=time.time() - 3600.0,      # submitted an hour ago
+        )
+        state["interactive_review"] = True
+        assert "__interrupt__" in compiled.invoke(state, config=config)
+
+        compiled.invoke(
+            Command(
+                resume={"approved": True, "notes": "", "revised_response": ""},
+                update={"turn_started_at": time.time() - 1.0},
+            ),
+            config=config,
+        )
+
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT duration_ms FROM audit_log WHERE session_id = %s", ("resume-duration",)
+        ).fetchall()
+    # One row — the interrupted submit writes none — measured from the resume:
+    # about a second, nowhere near the hour the review took.
+    assert len(rows) == 1
+    assert 1000 <= rows[0][0] < 600_000
 
 
 def test_graph_includes_history_appender_node():

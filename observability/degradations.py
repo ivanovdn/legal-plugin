@@ -9,7 +9,7 @@ asserts the declared set and the used set agree in BOTH directions:
   - used but not declared    -> a typo silently creating a new category
 
 A unit test cannot catch either: a green test_record_degradation_emits_event
-passes with 21 of 22 codes unwired, because the call sites simply do not exist.
+passes with 22 of 23 codes unwired, because the call sites simply do not exist.
 
 Class 4 (telemetry self-catch) deliberately has NO codes. Tracing reporting its
 own best-effort catches as application degradations is how a dashboard becomes
@@ -50,6 +50,7 @@ PRIOR_REVIEW_LOAD_FAILED = "prior_review_load_failed"
 SUMMARY_LOAD_FAILED = "summary_load_failed"
 PRIOR_CONVERSATION_LOAD_FAILED = "prior_conversation_load_failed"
 CONTEXT_TRUNCATED = "context_truncated"
+EDIT_RETRY_FAILED = "edit_retry_failed"
 
 ANNOUNCED_REASONS = frozenset({
     CHECKPOINTER_UNAVAILABLE,
@@ -59,6 +60,7 @@ ANNOUNCED_REASONS = frozenset({
     SUMMARY_LOAD_FAILED,
     PRIOR_CONVERSATION_LOAD_FAILED,
     CONTEXT_TRUNCATED,
+    EDIT_RETRY_FAILED,
 })
 
 # --- Class 3: SILENT -------------------------------------------------------

@@ -2,6 +2,7 @@
 """Memory writer — persists audit log + review to Postgres; conversation turns to Postgres (best-effort)."""
 
 import logging
+import time
 
 from config import get_settings
 
@@ -29,6 +30,14 @@ def memory_writer(state: LegalAgentState) -> dict:
     review_status = "pending" if state.get("awaiting_review") else "not_required"
     report_updates: dict = {}
 
+    # Wall clock since api/routes/query.py stamped the request — what the
+    # attorney waited, give or take this node. 0 when nothing stamped it, and
+    # floored at 0 for a clock stepped back mid-turn. On a human-reviewed run it
+    # is the request that COMPLETED the run (the resume restamps; the
+    # interrupted submit writes no row), not the run end to end.
+    started = state.get("turn_started_at")
+    duration_ms = max(0, round((time.time() - started) * 1000)) if started else 0
+
     entry = dict(
         session_id=state.get("session_id", ""),
         user_id=state.get("user_id", ""),
@@ -38,7 +47,7 @@ def memory_writer(state: LegalAgentState) -> dict:
         risk_level=state.get("risk_level", "low"),
         review_status=review_status,
         review_notes=state.get("attorney_notes", ""),
-        duration_ms=0,
+        duration_ms=duration_ms,
         user_name=state.get("user_name", ""),
     )
 
