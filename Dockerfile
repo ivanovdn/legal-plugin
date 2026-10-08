@@ -5,11 +5,13 @@ FROM python:3.12.15-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7
 
 WORKDIR /app
 
-# System deps for building any wheels lacking manylinux builds (mirrors ../compliance-bot).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# No apt layer, on purpose. It used to install build-essential + git "for wheels
+# lacking manylinux builds", but every pinned package ships a wheel for both
+# x86_64 and aarch64, nothing at runtime calls git, and `apt-get install` on a
+# cold cache re-resolved OS packages on every build — a review on 2026-10-08
+# watched it upgrade liblzma5 inside the pinned base, the same drift the locks
+# exist to stop. If a dependency ever needs a compiler, the build fails loudly
+# here instead; add a builder stage then, not this layer back.
 
 # Install Python deps first for better layer caching. The image installs the
 # runtime LOCK — every package, transitive ones included, at the version the

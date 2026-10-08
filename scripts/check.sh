@@ -65,14 +65,17 @@ bash scripts/eval.sh
 # requirements-runtime.lock alone. It is only slow when a lock file
 # changed — which is precisely when this must run. Docker is already required
 # above (testcontainers), so this adds no new dependency.
-echo "==> backend image builds + app imports inside it"
+# linux/amd64 because that is what the VM builds: on Apple silicon the host
+# arch is arm64, and a wheel missing for one architecture would pass here and
+# fail there. Runs under emulation on a Mac — slower, but the right artifact.
+echo "==> backend image builds + app imports inside it (linux/amd64)"
 image_log="$(mktemp)"
-if ! docker build -t legal-plugin-backend:checkgate . >"$image_log" 2>&1; then
+if ! docker build --platform linux/amd64 -t legal-plugin-backend:checkgate . >"$image_log" 2>&1; then
   cat "$image_log" >&2; rm -f "$image_log"
   echo "FAIL: the backend Docker image does not build." >&2
   exit 1
 fi
-if ! docker run --rm legal-plugin-backend:checkgate python -c "import api.main" >"$image_log" 2>&1; then
+if ! docker run --rm --platform linux/amd64 legal-plugin-backend:checkgate python -c "import api.main" >"$image_log" 2>&1; then
   cat "$image_log" >&2; rm -f "$image_log"
   echo "FAIL: the image builds, but 'import api.main' DIES INSIDE IT." >&2
   echo "      docker-compose.remote.yml builds this image for the VM, so this" >&2
