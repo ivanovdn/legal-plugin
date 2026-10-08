@@ -114,10 +114,16 @@ be hunted for in a UI.
 **Only three fields in the payload can ever become a visible warning:**
 `memory_degraded` (top level, rendered by **`ChatTab.tsx` only**),
 `report.context_truncated` (both tabs) and `report.review_persist_error`
-(findings tab). Nothing else in the payload paints anything.
+(findings tab). Nothing else in the payload paints anything — but the Chat tab
+also derives **one warning from the reply text itself**: `promisedEditMissing`
+("…nothing was changed in the document. Try rephrasing…"), shown when a reply
+promises an edit and no edit card arrived. That is how `edit_retry_failed` is
+announced: the JSON-mode retry fires on the same regex, so a failed retry always
+leaves exactly such a reply.
 
 That makes the payload a sound proof in **one direction only**. All three
-absent ⇒ the pane certainly said nothing, which is what drill 4 turns on. The
+absent, and a reply that promises no edit ⇒ the pane certainly said nothing,
+which is what drill 4 turns on. The
 converse does **not** hold: a field being set does not mean a banner appeared,
 because which tab the attorney is looking at decides. `memory_degraded: true`
 on a `contract_review` turn paints nothing at all. Drills 2 and 3 both hit
@@ -388,8 +394,10 @@ back; the worker's error flood stops.
 
 ## Drill 4 — Grounding failure (the thesis)
 
-**Expect:** `app.outcome=degraded`, `chat_grounding_failed` with
-`announced=false`, and **nothing whatsoever in the pane**.
+**Expect:** `app.outcome=degraded`, `msa_lookup_failed` with
+`announced=false`, and **nothing whatsoever in the pane**. (The 2026-09-16
+result below shows `chat_grounding_failed`: it predates the 2026-10-08 split —
+see the note after it.)
 
 This is the drill the whole feature exists for. A doc-chat turn that loses its
 grounding answers *fluently and confidently*, with no banner, no error, and —
@@ -499,14 +507,20 @@ is wrong, but only demonstrably so against a control run that nobody has in
 production. The pane says nothing either way. `app.outcome` on the root is the
 only place in the entire system where these two turns are distinguishable.
 
-**A detail worth knowing before you read a `chat_grounding_failed` in the
-field:** `_build_chat_grounding` wraps *three* steps in one `try` — contract
-type detection, playbook load, and the MSA attach. The playbook had already
-loaded when the MSA lookup threw, so this turn lost the MSA and kept the
-playbook; a failure one step earlier would lose both. The code means *partial or
-total* — read `degradation.detail` (here `ResponseHandlingException`, the
-qdrant-client wrapper around the refused connection) and the httpx child span to
-tell which.
+**Read the 2026-09-16 result with this in mind:** it ran when
+`_build_chat_grounding` wrapped *three* steps in one `try` — contract type
+detection, playbook load, and the MSA attach — so this turn kept the playbook,
+lost the MSA, and was still coded `chat_grounding_failed`: the code meant
+*partial or total*, told apart only by `degradation.detail` and the httpx child
+span. Since 2026-10-08 the lookups fail separately and the code says which.
+**`msa_lookup_failed`** — the MSA was lost and the playbook kept; what this
+drill produces now, and the code SOW reviews already recorded.
+**`chat_grounding_failed`** — the playbook itself failed to load (type detection
+or the bundle read), so the turn answered with neither. That one has no live
+drill — it needs a broken bundle on disk — and is pinned by
+`test_grounding_failure_records_a_SILENT_degradation`. The split came from the
+first pilot turn (trace `9f239597`): a missing `legal_docs` collection was
+logged "answering ungrounded" over a prompt that held the full SOW playbook.
 
 **This drill needs an MSA actually on file**, or it degrades into a tautology: a
 failed lookup and a successful lookup that finds nothing produce the same empty

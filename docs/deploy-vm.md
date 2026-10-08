@@ -124,6 +124,15 @@ A stale host `clients/word/dist/` is now ignored — it is no longer mounted, an
 
 > **Local dry run on a Mac: prefix the command with `LOG_DRIVER=json-file`.** `backend` and `caddy` log to journald (see *Logs* below), and Docker Desktop has none — without the override they fail to start with `journald is not enabled on this host`. Set it in the shell, never in `.env`: `config.py` rejects unknown `.env` keys.
 
+**⚠ Upgrading a host that predates 2026-10-08? Carry Phoenix's traces into its volume FIRST — before any `up`.** The old config kept Phoenix's database in the container's own layer, not in the `phoenix_data` volume. Any `up` that names `backend` also recreates `phoenix` whenever its config changed — and this change alters both its image tag and its env — which deletes that layer and every trace in it, permanently. While the old container is still running, confirm it runs the pinned version, then snapshot into the volume it already mounts (SQLite's online backup, so a live WAL database copies consistently; the image has no shell, only Python):
+
+```bash
+docker exec legal-plugin-phoenix-1 python3 -c "import phoenix; print(phoenix.__version__)"   # must print 15.2.0
+docker exec legal-plugin-phoenix-1 python3 -c "import sqlite3; s=sqlite3.connect('file:/root/.phoenix/phoenix.db?mode=ro', uri=True); d=sqlite3.connect('/mnt/data/phoenix.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"   # must print ok
+```
+
+If the version is not `15.2.0`, stop and pin the image to what is running instead — an older Phoenix may refuse a newer schema. Traces written between the snapshot and the recreate are lost, so do it when no one is mid-session. Then bring the stack up:
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   up -d --build redis app-db backend caddy
@@ -139,9 +148,9 @@ Either way, **create the collections once** — the script is idempotent and ski
 $DC run --rm --no-deps backend python scripts/create_collections.py
 ```
 
-Without them, every SOW turn's governing-MSA lookup 404s and is recorded as a degradation, so `app.outcome=degraded` fires on every SOW turn and stops meaning anything. Found on the VM 2026-10-08: Spark's Qdrant had none of `legal_docs` / `case_history` / `memory`. An empty `legal_docs` is the honest state — no MSA on file — and a real Qdrant outage still records `msa_lookup_failed`. **Before seeding it**, know that `get_parent_msa` takes the one MSA on file for the client (`internal` for every Word turn), so seeding the demo MSA would compare every SOW against Trinetix's model MSA, not the counterparty's agreement.
+Every grounded SOW chat turn and every SOW review looks up the governing MSA; without `legal_docs` that lookup 404s and is recorded as a degradation, so `app.outcome=degraded` fires on all of them and stops meaning anything. Found on the VM 2026-10-08: Spark's Qdrant had none of `legal_docs` / `case_history` / `memory`. An empty `legal_docs` is the honest state — no MSA on file — and a real Qdrant outage still records `msa_lookup_failed`. **Before seeding it**, know that `get_parent_msa` takes the one MSA on file for the client (`internal` for every Word turn), so seeding the demo MSA would compare every SOW against Trinetix's model MSA, not the counterparty's agreement.
 
-**Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
+**Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and is **recreated** by any `up` that names `backend` whenever its own config changed (hence the ⚠ callout above), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
 
 > **`app-db` is a hard dependency.** The backend needs it up and **healthy** (audit log, review store, and per-attorney conversations all live there) — bring it up first if you're staging services incrementally, and don't tear it down while the backend is running. Its data is a **named volume** (`app_db_data`) — reviews are attorney work product, so back it up (`pg_dump` on a schedule, or snapshot the volume) same as any production database.
 
@@ -163,12 +172,7 @@ curl -sk https://<hostname>/api/query \
 
 If no trace shows up, confirm `phoenix` is healthy (`docker compose -f docker-compose.yml -f docker-compose.remote.yml logs phoenix`), that the backend picked up `OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:6006` (`docker compose ... exec backend env | grep OTEL`), and that `PHOENIX_WORKING_DIR=/mnt/data` is set (`docker inspect legal-plugin-phoenix-1 --format '{{json .Config.Env}}'`).
 
-**Traces persist across recreates** in the `phoenix_data` volume. Until 2026-10-08 they did not: without `PHOENIX_WORKING_DIR` Phoenix wrote `phoenix.db` to `/root/.phoenix` inside the container and the volume stayed empty, so every recreate wiped every trace. On a host still running the old config, carry the data over **before** recreating — while the old container is up, snapshot into the volume it already mounts (SQLite's online backup, so a live WAL database copies consistently; the image has no shell, only Python):
-
-```bash
-docker exec legal-plugin-phoenix-1 python3 -c "import sqlite3; s=sqlite3.connect('file:/root/.phoenix/phoenix.db?mode=ro', uri=True); d=sqlite3.connect('/mnt/data/phoenix.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"
-$DC up -d phoenix   # recreated with the new env; opens /mnt/data/phoenix.db
-```
+**Traces persist across recreates** in the `phoenix_data` volume. Until 2026-10-08 they did not: without `PHOENIX_WORKING_DIR` Phoenix wrote `phoenix.db` to `/root/.phoenix` inside the container and the volume stayed empty, so every recreate wiped every trace. A host still on the old config must carry its data over before its first `up` — the ⚠ callout at the top of this step.
 
 The image is pinned (`15.2.0`) because the database in the volume carries that version's schema — upgrade deliberately, not by whatever `latest` resolves to on the day of a pull.
 
@@ -180,7 +184,7 @@ The image is pinned (`15.2.0`) because the database in the volume carries that v
 sudo journalctl CONTAINER_NAME=legal-plugin-backend-1 --since 2026-10-01 --no-pager
 ```
 
-`sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default cap 10% of the filesystem).
+`sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default `SystemMaxUse` is 10% of the filesystem, capped at 4 GiB). The journal survives a reboot only on persistent storage — the default here, because `/var/log/journal` exists (checked on SRV-AGENT-01 2026-10-08).
 
 ---
 

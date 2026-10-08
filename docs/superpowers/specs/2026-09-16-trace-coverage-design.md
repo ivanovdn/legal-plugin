@@ -174,7 +174,7 @@ Free-text reasons fragment into things you cannot filter on. Constants live in a
 | | `summary_load_failed` | `context.py:122` |
 | | `prior_conversation_load_failed` | `context.py:136` |
 | | `context_truncated` | `llm_caller` (detects overflow, does not cut) **and** `_cap_chat_context`'s caller in `legal_research.py` (actually cuts) — a condition, not an `except`. **Both** producers must be wired; only the first was, until the final fix wave. See *Accounting* |
-| | `edit_retry_failed` | `legal_research.py` — the doc-chat JSON-mode edit retry. Added by the 2026-10-08 pilot audit: that call meets every client-side condition of the Ollama CUDA crash on Spark (ollama#17434), and unwrapped it replaced the good prose answer with `Error: Legal research failed`. Now the answer stays and a line tells the attorney no edit was prepared |
+| | `edit_retry_failed` | `legal_research.py` — the doc-chat JSON-mode edit retry. Added by the 2026-10-08 pilot audit: that call meets every client-side condition of the Ollama CUDA crash on Spark (ollama#17434), and unwrapped it replaced the good prose answer with `Error: Legal research failed`. Now the answer stays untouched; the Chat tab's `promisedEditMissing` warning (same regex as the retry trigger) is the announcement |
 | **Silent** (7) | `chat_grounding_failed` | `context.py:195` — answers with no playbook and no MSA (the playbook load only, since the 2026-10-08 split below) |
 | | `review_reconciliation_failed` | `context.py:76` |
 | | `compressible_history_read_failed` | `context.py:264` — silently disarms compaction |
