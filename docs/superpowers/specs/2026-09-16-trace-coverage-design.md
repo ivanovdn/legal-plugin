@@ -167,18 +167,19 @@ Free-text reasons fragment into things you cannot filter on. Constants live in a
 | | `stateless_fallback_failed` | `query.py:227` |
 | | `resume_state_load_failed` | `query.py:260` — `get_state` failed |
 | | `resume_failed` | `query.py:279` — graph invoke failed on resume |
-| **Announced** (7) | `checkpointer_unavailable` | `api/routes/query.py` — the mid-invoke Redis branch **and** a per-turn startup-absent check, twice (submit + resume). **Moved here by ruling R12**, NOT `checkpointer.py:34`: `_get_graph()` caches the compiled graph, so `build_checkpointer()` runs exactly once and a record there would fire on turn #1 and never again. `graph/checkpointer.py` is deliberately unwired |
+| **Announced** (8) | `checkpointer_unavailable` | `api/routes/query.py` — the mid-invoke Redis branch **and** a per-turn startup-absent check, twice (submit + resume). **Moved here by ruling R12**, NOT `checkpointer.py:34`: `_get_graph()` caches the compiled graph, so `build_checkpointer()` runs exactly once and a record there would fire on turn #1 and never again. `graph/checkpointer.py` is deliberately unwired |
 | | `audit_write_failed` | `memory_writer:55` |
 | | `review_persist_failed` | `memory_writer:72` |
 | | `prior_review_load_failed` | `context.py:66` |
 | | `summary_load_failed` | `context.py:122` |
 | | `prior_conversation_load_failed` | `context.py:136` |
 | | `context_truncated` | `llm_caller` (detects overflow, does not cut) **and** `_cap_chat_context`'s caller in `legal_research.py` (actually cuts) — a condition, not an `except`. **Both** producers must be wired; only the first was, until the final fix wave. See *Accounting* |
-| **Silent** (7) | `chat_grounding_failed` | `context.py:195` — answers with no playbook and no MSA |
+| | `edit_retry_failed` | `legal_research.py` — the doc-chat JSON-mode edit retry. Added by the 2026-10-08 pilot audit: that call meets every client-side condition of the Ollama CUDA crash on Spark (ollama#17434), and unwrapped it replaced the good prose answer with `Error: Legal research failed`. Now the answer stays and a line tells the attorney no edit was prepared |
+| **Silent** (7) | `chat_grounding_failed` | `context.py:195` — answers with no playbook and no MSA (the playbook load only, since the 2026-10-08 split below) |
 | | `review_reconciliation_failed` | `context.py:76` |
 | | `compressible_history_read_failed` | `context.py:264` — silently disarms compaction |
 | | `preferences_load_failed` | `grounding.py:104` |
-| | `msa_lookup_failed` | `contract_review.py:171` — SOW reviewed without its MSA |
+| | `msa_lookup_failed` | `contract_review.py:171` — SOW reviewed without its MSA **and** `context.py` `_build_chat_grounding` — SOW chat answered from the playbook alone. The second producer was added by the 2026-10-08 pilot audit: one `try` covered both lookups, so a missing MSA was coded `chat_grounding_failed` and logged "answering ungrounded" while the playbook was in the prompt |
 | | `intent_classification_failed` | `intent_router.py:81` — silently defaults to research |
 | | `planning_failed` | `planner.py:77` — silently falls back to the first skill in the plan |
 
@@ -199,7 +200,7 @@ The original "40" was 36 application-directory sites plus the four `observabilit
 
 | Disposition | Count | Sites |
 |---|---|---|
-| **Wired** | 21 | the sites above, minus the four that are conditions rather than `except` blocks. `query.py`'s outer `except` hosts two of them (`checkpointer_unavailable` on the Redis branch, `graph_invoke_failed` on the fall-through) |
+| **Wired** | 23 | the sites above, minus the four that are conditions rather than `except` blocks. `query.py`'s outer `except` hosts two of them (`checkpointer_unavailable` on the Redis branch, `graph_invoke_failed` on the fall-through) |
 | **Wired — a condition, not an `except`** | +4 *(outside the total; these are not `except` sites)* | `query.py` startup-absent checkpointer, `compact.py`'s `result["error"]`, `llm_caller`'s headroom check, `legal_research`'s post-truncation check |
 | **Class 4 — telemetry self-catch, excluded on principle** | 5 (+10 in `observability/`) | `risk_assessor:164`, `contract_review:144/207`, `memory_writer:92` (best-effort `append_turn`), `feedback_store:164` (quiet `interaction_event`) |
 | **RAG — descoped 2026-09-16** | 3 | `documents.py:62`, `reranker.py:119`, `bm25_index.py:179` |
@@ -209,9 +210,9 @@ The original "40" was 36 application-directory sites plus the four `observabilit
 | **Deliberately excluded — real but low-stakes** | 1 | `checkpointer.py:55` — a failed `refresh_ttl` shortens session life silently. Dropped from the vocabulary on review (2026-09-16) to keep it tight; recorded here so the accounting still closes and a future reader knows it was considered, not overlooked |
 | **Deliberately unwired — ruling R12** | 1 | `checkpointer.py:34` — recorded per turn in `query.py` instead; see the `checkpointer_unavailable` row above |
 | **Recording moved to the route — Task 13** | 2 | `compaction.py:546/611` — generation retries twice internally; `api/routes/compact.py` owns the code |
-| **Total (application directories)** | **37** | |
+| **Total (application directories)** | **39** | 37 as merged; the 2026-10-08 pilot audit added the two `edit_retry_failed` / chat `msa_lookup_failed` sites |
 
-**So: 22 codes, 26 call sites** — four codes have two producers each (`checkpointer_unavailable`, `contract_generation_failed`, `compaction_failed`, `context_truncated`). The earlier "22 codes across 23 sites" was wrong in both halves; the codes-to-sites ratio is not 1:1 and never was.
+**So: 23 codes, 28 call sites** — five codes have two producers each (`checkpointer_unavailable`, `contract_generation_failed`, `compaction_failed`, `context_truncated`, `msa_lookup_failed`). As merged it was 22 codes and 26 sites; the 2026-10-08 pilot audit added one code and two sites. The earlier "22 codes across 23 sites" was wrong in both halves; the codes-to-sites ratio is not 1:1 and never was.
 
 > **Line numbers in the tables above are from design time and drift.** The live index is the `grep` in this section plus `scripts/check_degradation_vocabulary.py`. **Three rows were moved by rulings taken during execution — R12 (`checkpointer_unavailable`), Task 13 (`compaction_failed`) and the final fix wave (`context_truncated`'s second producer).** Every ruling, with its reasoning, is in the execution ledger: [`.superpowers/sdd/2026-09-16-trace-coverage/progress.md`](../../../.superpowers/sdd/2026-09-16-trace-coverage/progress.md). Where this spec and the merged code disagree, the code and the ledger win.
 

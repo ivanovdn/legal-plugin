@@ -2,7 +2,7 @@
 
 ## What this document is for
 
-`scripts/check.sh` proves the seam is *wired*: every one of the 22 reason codes
+`scripts/check.sh` proves the seam is *wired*: every one of the 23 reason codes
 is declared and used, `mark_failed` sets a span ERROR, `record_degradation`
 emits an event, `app.outcome` derives correctly from a reason list. What it
 cannot prove is that a **real outage** reaches a trace — that the exception
