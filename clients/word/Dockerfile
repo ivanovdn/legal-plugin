@@ -12,7 +12,9 @@
 # Building here makes the backend and the pane come from the same commit by
 # construction, and removes the host's Node dependency entirely.
 
-FROM node:20-alpine AS build
+# Pinned (tag for people, digest for the bytes) to what the VM built with on
+# 2026-10-08 — Node v20.20.2, Caddy v2.11.4. Bump on purpose.
+FROM node:20.20.2-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS build
 WORKDIR /app
 
 # Manifests first: this layer caches until dependencies actually change, so an
@@ -32,5 +34,5 @@ RUN npm run build
 # Caddy serves the built bundle from /srv (see Caddyfile: `root * /srv`).
 # The Caddyfile itself stays a bind mount so cert/hostname changes don't
 # require an image rebuild.
-FROM caddy:2
+FROM caddy:2.11.4@sha256:844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9
 COPY --from=build /app/dist /srv

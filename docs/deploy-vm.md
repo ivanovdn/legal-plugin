@@ -104,14 +104,14 @@ Until you do, the default `tls internal` serves a self-signed cert — fine for 
 
 ## Step 3 — Build the pane (Bucket A) — **now automatic, nothing to run**
 
-The pane is built **inside the `caddy` image** ([clients/word/Dockerfile](../clients/word/Dockerfile)): a `node:20-alpine` stage runs `npm ci && npm run build`, and the result is copied into the Caddy stage at `/srv`. Step 4's `up -d --build` therefore produces the backend and the pane from the same commit, and **the deploy host needs no Node at all**.
+The pane is built **inside the `caddy` image** ([clients/word/Dockerfile](../clients/word/Dockerfile)): a pinned `node:20.20.2-alpine@sha256:…` stage runs `npm ci && npm run build`, and the result is copied into the Caddy stage at `/srv`. Step 4's `up -d --build` therefore produces the backend and the pane from the same commit, and **the deploy host needs no Node at all**.
 
 > **Why this changed.** The pane used to be built by hand here and bind-mounted (`./clients/word/dist:/srv:ro`). That could not stay current: `dist/` is gitignored so `git pull` never updated it, `up --build` rebuilds only the backend image, and `SRV-AGENT-01` has no `npm`. On 2026-08-13 the VM was found serving a bundle built **2026-08-11** while its backend had been redeployed twice since — apply-path guards that were on `main` were absent in production, with nothing reporting the mismatch. Bundle age is checkable: `stat -c '%y' clients/word/dist/taskpane.html` under the old scheme; now it is the image's build date.
 
-**Prerequisite:** the deploy host must be able to pull `node:20-alpine`. Check before deploying, since it is the one new base image this introduces:
+**Prerequisite:** the deploy host must be able to pull the pinned base images — the `FROM` lines of `Dockerfile` and `clients/word/Dockerfile` (`tag@sha256`). A build pulls them itself; to check ahead of a deploy, `docker pull` each exact reference, e.g. the Node one:
 
 ```bash
-docker pull node:20-alpine
+docker pull "$(grep -oE 'node:[^ ]+' clients/word/Dockerfile)"
 ```
 
 A stale host `clients/word/dist/` is now ignored — it is no longer mounted, and `.dockerignore` keeps it out of the build context. Deleting it is optional tidying.
@@ -137,6 +137,8 @@ If the version is not `15.2.0`, stop and pin the image to what is running instea
 docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   up -d --build redis app-db backend caddy
 ```
+
+> **Everything the stack runs is pinned** — images as `tag@sha256` in both compose files and both Dockerfiles, Python packages through `requirements-runtime.lock` — so a rebuild changes nothing a commit didn't. Until 2026-10-08 a rebuild re-resolved version ranges whenever the VM's build cache had been evicted, and silently moved production to fastapi 0.143.0, whose built-in tracing took over every trace root. Bump a pin on purpose (CLAUDE.md, *Stack*).
 
 > **Always name the services.** A bare `up -d` (no list) starts *everything* defined in the base `docker-compose.yml` — including the heavy local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio`), which will thrash a constrained VM. The lean list above (+ `phoenix`, pulled in by `backend`'s `depends_on`) is the whole VM footprint.
 

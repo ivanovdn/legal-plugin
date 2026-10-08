@@ -5,10 +5,12 @@ A single container is started for the whole test session; every test runs
 against clean tables (truncated before each test). Docker must be running.
 """
 import os
+from pathlib import Path
 
 os.environ.setdefault("TRACING_ENABLED", "false")
 
 import pytest
+import yaml
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -19,9 +21,17 @@ import memory.db as db
 from config import get_settings
 
 
+# The test database is the image production runs, read from the compose file
+# that pins it so the two cannot drift: a floating "postgres:17" had the suite
+# on 17.9 while app-db ran 17.10 (found 2026-10-08).
+_APP_DB_IMAGE = yaml.safe_load(
+    (Path(__file__).resolve().parent.parent / "docker-compose.yml").read_text()
+)["services"]["app-db"]["image"]
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _pg_container():
-    with PostgresContainer("postgres:17") as pg:
+    with PostgresContainer(_APP_DB_IMAGE) as pg:
         # testcontainers defaults to the psycopg2 driver in the URL; psycopg 3
         # wants a plain postgresql:// DSN.
         dsn = pg.get_connection_url().replace("+psycopg2", "")

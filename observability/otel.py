@@ -87,8 +87,9 @@ def _instrument_libraries() -> None:
 
     Both instrumentors are imported at the TOP of this file, and both are
     declared in requirements.txt AND requirements-runtime.txt — both files, not
-    one. The Dockerfile installs requirements-runtime.txt only, so a
-    requirements.txt line proves nothing about the deployed image. R18 hoisted
+    one. The Dockerfile installs requirements-runtime.lock only (compiled from
+    requirements-runtime.txt), so a requirements.txt line proves nothing about
+    the deployed image. R18 hoisted
     the redis import out of a lazy call arguing that "declaring it buys the
     same protection for one requirements line": true of the dev venv, false of
     the container, which died at api/main.py's import of this module with
