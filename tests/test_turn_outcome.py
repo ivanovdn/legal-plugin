@@ -1164,3 +1164,125 @@ def test_store_span_is_emitted_on_a_real_call():
 
     latest_to_id("doc-nonexistent", "u1")
     assert len(spans_by_name("db.latest_to_id")) == 1
+
+
+# --- 2026-10-08 pilot audit ---------------------------------------------------
+# Two sites the first real attorney turn exposed: one mislabelled, one that
+# could turn a good answer into an error.
+
+_SOW_TEXT = (
+    "STATEMENT OF WORK\n\n"
+    "This Statement of Work is issued under the Master Services Agreement dated...\n"
+    "Project scope: design a new web portal.\n"
+)
+
+
+def test_chat_msa_lookup_failure_keeps_the_playbook_and_is_named_as_such(monkeypatch):
+    """Pilot trace 9f239597: Spark's Qdrant had no legal_docs collection, the
+    MSA lookup 404'd, and the turn was logged 'answering ungrounded' and coded
+    chat_grounding_failed — while the 30k-char SOW playbook WAS in the prompt.
+    A lost MSA is msa_lookup_failed, the code the review path already records
+    for the same failure; chat_grounding_failed is for a lost playbook."""
+    import importlib
+    import skills.grounding as grounding
+    from observability.degradations import MSA_LOOKUP_FAILED
+    from observability.spans import degradations, traced
+
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    def boom(client_id, **kw):
+        raise RuntimeError("Not found: Collection `legal_docs` doesn't exist!")
+
+    monkeypatch.setattr(grounding, "get_parent_msa", boom)
+
+    @traced("turn")
+    def turn():
+        playbook, msa = ctx._build_chat_grounding(
+            {"filters": {"client_id": "internal"}}, _SOW_TEXT
+        )
+        return playbook, msa, degradations()
+
+    playbook, msa, reasons = turn()
+    assert playbook != ""                 # the SOW playbook still grounds the answer
+    assert msa == ""
+    assert reasons == [MSA_LOOKUP_FAILED]
+
+    events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
+    assert events[0].attributes["degradation.announced"] is False
+
+
+_PROSE = "I have replaced the governing law with the laws of England and Wales."
+
+
+def _turn_whose_json_retry_crashes(monkeypatch):
+    """A doc-chat turn whose answer promises an edit without a block, so the
+    JSON-mode retry fires — and fails the way Spark fails it (ollama#17434:
+    MoE + format=json + think off + num_ctx >= 4352 + flash attention)."""
+    import importlib
+    import ollama
+    from config import get_settings
+    from observability.spans import degradations, traced
+
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    def fake_invoke(llm, messages, name="doc_chat"):
+        if name == "doc_chat_json_retry":
+            raise ollama.ResponseError(
+                "an error was encountered while running the model: "
+                "CUDA error: an illegal memory access was encountered", 500,
+            )
+        return SimpleNamespace(content=_PROSE)
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "_build_json_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke", fake_invoke)
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("nda", False))
+    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    get_settings.cache_clear()
+
+    state = {
+        "request": "change the governing law to England and Wales",
+        "task_type": "research", "user_id": "atty-jr",
+        "uploaded_docs": [{"text": "This Agreement is governed by the laws of Delaware."}],
+        "filters": {"client_id": "internal"}, "document_id": "doc-jr",
+        "chat_history": [], "messages": [], "attorney_notes": "", "report": {},
+    }
+
+    @traced("turn")
+    def turn():
+        lr.legal_research(state)
+        return degradations()
+
+    return state, turn()
+
+
+def test_json_retry_failure_keeps_the_answer_and_tells_the_attorney(monkeypatch):
+    """Unwrapped, the retry's exception reached legal_research's catch-all: the
+    attorney got 'Error: Legal research failed — CUDA error…' and lost the
+    answer the first call had already produced."""
+    from observability.degradations import EDIT_RETRY_FAILED
+
+    state, reasons = _turn_whose_json_retry_crashes(monkeypatch)
+
+    assert state["llm_response"].startswith(_PROSE)
+    assert len(state["llm_response"]) > len(_PROSE)      # a line telling them so
+    assert state["proposed_edits"] == []
+    assert reasons == [EDIT_RETRY_FAILED]
+
+    span = spans_by_name("legal_research")[0]
+    events = [e for e in span.events if e.name == "degradation"]
+    assert events[0].attributes["degradation.announced"] is True
+    assert span.status.status_code != StatusCode.ERROR
+
+
+def test_the_retry_failure_line_never_replays_into_a_later_prompt(monkeypatch):
+    """The line is for the attorney. Replayed, it is an in-context example of a
+    reply that ends in an apology instead of an edit — the same contamination
+    _strip_structured_blocks exists to stop for fenced blocks."""
+    from skills.legal_research.edit_parsing import _sanitize_history
+
+    state, _ = _turn_whose_json_retry_crashes(monkeypatch)
+    replayed = _sanitize_history([{"role": "assistant", "content": state["llm_response"]}])
+    assert replayed == [{"role": "assistant", "content": _PROSE}]

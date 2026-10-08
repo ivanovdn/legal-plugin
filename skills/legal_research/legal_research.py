@@ -10,7 +10,9 @@ from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
 from graph.state import LegalAgentState
-from observability.degradations import CONTEXT_TRUNCATED, LEGAL_RESEARCH_FAILED
+from observability.degradations import (
+    CONTEXT_TRUNCATED, EDIT_RETRY_FAILED, LEGAL_RESEARCH_FAILED,
+)
 from observability.spans import mark_failed, record_degradation, traced
 from observability.tracing import message_usage, traced_agent_invoke, traced_invoke
 from rag.tools.search_legal import search_legal
@@ -27,6 +29,7 @@ from skills.legal_research.context import (
     compressible_history,
 )
 from skills.legal_research.edit_parsing import (
+    EDIT_RETRY_FAILED_NOTE,
     _extract_proposed_edits,
     _extract_proposed_preferences,
     _looks_like_context_only_request,
@@ -277,26 +280,39 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             f"Your previous prose answer (which forgot the JSON block):\n{content}\n\n"
             f"Now output the edits JSON for the change you described above."
         )
-        retry_response = traced_invoke(
-            json_llm,
-            [
-                {"role": "system", "content": _JSON_RETRY_SYSTEM},
-                {"role": "user", "content": retry_user},
-            ],
-            name="doc_chat_json_retry",
-        )
-        retry_raw = (
-            retry_response.content if hasattr(retry_response, "content") else str(retry_response)
-        )
-        retry_edits = _parse_json_edits(retry_raw)
-        if retry_edits:
-            edits = retry_edits
-            logger.info("[legal_research] JSON-mode retry yielded %d edit(s)", len(edits))
-        else:
-            logger.warning(
-                "[legal_research] JSON-mode retry produced no usable edits; raw=%r",
-                retry_raw[:200],
+        try:
+            retry_response = traced_invoke(
+                json_llm,
+                [
+                    {"role": "system", "content": _JSON_RETRY_SYSTEM},
+                    {"role": "user", "content": retry_user},
+                ],
+                name="doc_chat_json_retry",
             )
+        except Exception as e:
+            # The one call here that meets every client-side condition of the
+            # Ollama CUDA crash compliance-bot hit on Spark (ollama#17434: MoE +
+            # format=json + think off + num_ctx >= 4352). Unwrapped, it reached
+            # legal_research's catch-all and replaced the good answer above
+            # with "Error: Legal research failed". Keep the answer, say so.
+            logger.warning(
+                "[legal_research] JSON-mode retry failed: %s — keeping the prose answer", e
+            )
+            record_degradation(EDIT_RETRY_FAILED, announced=True, detail=e.__class__.__name__)
+            content = f"{content}\n\n{EDIT_RETRY_FAILED_NOTE}"
+        else:
+            retry_raw = (
+                retry_response.content if hasattr(retry_response, "content") else str(retry_response)
+            )
+            retry_edits = _parse_json_edits(retry_raw)
+            if retry_edits:
+                edits = retry_edits
+                logger.info("[legal_research] JSON-mode retry yielded %d edit(s)", len(edits))
+            else:
+                logger.warning(
+                    "[legal_research] JSON-mode retry produced no usable edits; raw=%r",
+                    retry_raw[:200],
+                )
 
     # Same shape as the edit-promise retry, for the preference path: the model
     # frequently answers a "remember…" request in prose ("noted for this
