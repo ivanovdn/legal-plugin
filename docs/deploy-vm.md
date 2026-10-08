@@ -138,6 +138,8 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
   up -d --build redis app-db backend caddy
 ```
 
+> **Everything the stack runs is pinned** — images as `tag@sha256` in both compose files and both Dockerfiles, Python packages through `requirements-runtime.lock` — so a rebuild changes nothing a commit didn't. Until 2026-10-08 a rebuild re-resolved version ranges whenever the VM's build cache had been evicted, and silently moved production to fastapi 0.143.0, whose built-in tracing took over every trace root. Bump a pin on purpose (CLAUDE.md, *Stack*).
+
 > **Always name the services.** A bare `up -d` (no list) starts *everything* defined in the base `docker-compose.yml` — including the heavy local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio`), which will thrash a constrained VM. The lean list above (+ `phoenix`, pulled in by `backend`'s `depends_on`) is the whole VM footprint.
 
 **Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.

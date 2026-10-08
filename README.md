@@ -124,7 +124,7 @@ docker compose up -d      # Qdrant, Redis, Langfuse (+ Postgres, ClickHouse, Min
 ```bash
 uv venv .venv --python 3.12
 source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip sync requirements.lock    # exact pins; requirements.txt holds the ranges it was compiled from
 ```
 
 ### 4 · Run the backend + web UI
