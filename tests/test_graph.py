@@ -1,4 +1,5 @@
 # tests/test_graph.py
+import time
 from unittest.mock import patch, MagicMock
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -311,6 +312,36 @@ def test_graph_full_flow_with_audit(tmp_path, monkeypatch):
     with get_pool().connection() as conn:
         rows = conn.execute("SELECT * FROM audit_log").fetchall()
     assert len(rows) >= 1
+
+
+def test_graph_carries_the_turn_start_to_the_audit_row(tmp_path, monkeypatch):
+    """LangGraph drops input keys the state schema does not declare. A
+    turn_started_at missing from LegalAgentState never reaches memory_writer,
+    and the audit row silently reads 0 ms — invisible to a memory_writer unit
+    test, which hands the node a plain dict."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        build_graph().invoke(_make_state(
+            request="What are indemnification standards?",
+            session_id="duration-test",
+            turn_started_at=time.time() - 1.0,
+        ))
+
+    with get_pool().connection() as conn:
+        (duration_ms,) = conn.execute(
+            "SELECT duration_ms FROM audit_log WHERE session_id = %s", ("duration-test",)
+        ).fetchone()
+    assert duration_ms >= 1000
 
 
 def test_graph_includes_history_appender_node():

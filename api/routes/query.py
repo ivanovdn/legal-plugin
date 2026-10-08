@@ -2,6 +2,7 @@
 """Query endpoints — submit requests, resume interrupts, check status."""
 
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -238,6 +239,8 @@ def submit_query(
         "context_truncated": None,
         "token_usage": None,
         "context_breakdown": None,
+        # memory_writer derives audit_log.duration_ms from this.
+        "turn_started_at": time.time(),
     }
 
     graph = _get_graph()
@@ -332,11 +335,16 @@ def resume_query(session_id: str, body: ResumeRequest):
 
     try:
         result = graph.invoke(
-            Command(resume={
-                "approved": body.approved,
-                "notes": body.notes,
-                "revised_response": body.revised_response,
-            }),
+            Command(
+                resume={
+                    "approved": body.approved,
+                    "notes": body.notes,
+                    "revised_response": body.revised_response,
+                },
+                # Restamped: measured from the interrupted submit, the audit
+                # row would count the attorney's review wait as latency.
+                update={"turn_started_at": time.time()},
+            ),
             config=config,
         )
         refresh_ttl(session_id)

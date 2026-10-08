@@ -4,12 +4,14 @@ Before this, api/routes/query.py put the SESSION id in state["trace_id"] and
 returned nothing turn-scoped, while one session_id covers every turn in both
 Word tabs. Feedback captured against that would point at a dozen prompts.
 """
+import time
 from types import SimpleNamespace
 
 from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.trace import TracerProvider
 
 import api.routes.query as q
+from api.models import ResumeRequest
 from observability.spans import current_trace_id
 
 
@@ -101,3 +103,44 @@ def test_legacy_awaiting_review_branch_carries_the_ids():
     )
     assert payload["turn_id"] == "t-9"
     assert payload["trace_id"] == "abc"
+
+
+def test_submit_stamps_the_turn_start(monkeypatch):
+    """memory_writer derives audit_log.duration_ms from this. Unstamped, every
+    audit row reads 0 ms."""
+    recorder = {}
+    c = _client(monkeypatch, recorder)
+    before = time.time()
+    c.post("/api/query", json={"request": "hi", "task_type": "research"})
+    after = time.time()
+    started = recorder.get("turn_started_at")
+    assert started is not None and before <= started <= after
+
+
+def test_resume_restamps_the_turn_start(monkeypatch):
+    """A resume is its own turn. Unstamped, its audit row would measure from the
+    submit it interrupted, so the attorney's review wait would read as latency."""
+    captured = {}
+
+    class FakeState:
+        values = {"awaiting_review": False}
+
+    class CapturingGraph:
+        def get_state(self, config):
+            return FakeState()
+
+        def invoke(self, command, config=None):
+            captured["command"] = command
+            return {"task_type": "drafting", "report": {}, "risk_level": "low",
+                    "awaiting_review": False}
+
+    monkeypatch.setattr(q, "_get_graph", lambda: CapturingGraph())
+    monkeypatch.setattr(q, "_checkpointer_active", True)
+    monkeypatch.setattr(q, "refresh_ttl", lambda *a, **k: None)
+
+    before = time.time()
+    q.resume_query("sess-rs", ResumeRequest(approved=True, notes="", revised_response=""))
+    after = time.time()
+
+    started = (captured["command"].update or {}).get("turn_started_at")
+    assert started is not None and before <= started <= after
