@@ -48,12 +48,19 @@ opentelemetry-instrumentation-redis>=0.50b0
 
 # Frontend
 chainlit>=2.0,<3.0
+# PDF export in clients/web/app.py — imported there but never declared; it
+# only existed because someone installed it by hand, which the lock exposed.
+fpdf2>=2.8,<3.0
 
 # HTTP client (for reranker, Ollama direct calls)
 httpx>=0.28,<1.0
 
 # Auth (O365 SSO — slice 3; dormant until sso_enabled)
 PyJWT[crypto]>=2.9,<3.0
+
+# Dependency-lock gate (scripts/check_locks.py) — a direct import, so declared
+# rather than borrowed from pytest's dependencies.
+packaging>=24,<27
 
 # Testing
 pytest>=8.0,<9.0

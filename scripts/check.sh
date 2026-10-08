@@ -10,6 +10,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# First, because everything after it is evidence only about the versions it
+# ran on: the venv must hold exactly requirements.lock, and the runtime lock the
+# image installs must agree with it pin for pin (2026-10-08: tests on fastapi
+# 0.136.1, production rebuilt onto 0.143.0, nothing here could see it).
+uv run python scripts/check_locks.py
+
 echo "==> backend tests"
 uv run pytest tests/ -q
 
@@ -47,8 +53,8 @@ cd "$REPO_ROOT"
 bash scripts/eval.sh
 
 # The deployed artifact is NOT the dev venv, and until 2026-09-16 nothing here
-# ever looked at it. `Dockerfile` installs requirements-runtime.txt, NOT
-# requirements.txt, so a top-level import can resolve perfectly in .venv and be
+# ever looked at it. `Dockerfile` installs requirements-runtime.lock (compiled
+# from requirements-runtime.txt), NOT requirements.txt, so a top-level import can resolve perfectly in .venv and be
 # absent from the image. Two opentelemetry-instrumentation-* imports did
 # exactly that: 27 commits, a review per task and a fully green run of THIS
 # script, and the container still died at `uvicorn api.main:app` with
@@ -56,7 +62,7 @@ bash scripts/eval.sh
 #
 # Cost is bounded by layer caching: measured 0.40s fully cached and 0.44s when
 # only source changed (the common case), because the pip layer is keyed on
-# requirements-runtime.txt alone. It is only slow when a requirements file
+# requirements-runtime.lock alone. It is only slow when a lock file
 # changed — which is precisely when this must run. Docker is already required
 # above (testcontainers), so this adds no new dependency.
 echo "==> backend image builds + app imports inside it"
@@ -73,8 +79,9 @@ if ! docker run --rm legal-plugin-backend:checkgate python -c "import api.main" 
   echo "      is a container that cannot start — production down, not degraded." >&2
   echo "      Almost always: a top-level import in a module reachable from" >&2
   echo "      api.main is declared in requirements.txt but NOT in" >&2
-  echo "      requirements-runtime.txt, which is the only one the image" >&2
-  echo "      installs. Declare it in BOTH. Do not 'verify' by importing in" >&2
+  echo "      requirements-runtime.txt (the image installs only the runtime" >&2
+  echo "      lock compiled from it). Declare it in BOTH and re-lock both" >&2
+  echo "      (CLAUDE.md, Stack). Do not 'verify' by importing in" >&2
   echo "      .venv — that is the dev environment, and it is what hid this" >&2
   echo "      for 27 commits (2026-09-16 opentelemetry-instrumentation-*)." >&2
   exit 1
