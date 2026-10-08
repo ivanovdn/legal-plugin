@@ -31,9 +31,12 @@ def memory_writer(state: LegalAgentState) -> dict:
     report_updates: dict = {}
 
     # Wall clock since api/routes/query.py stamped the request — what the
-    # attorney waited, give or take this node. 0 only when nothing stamped it.
+    # attorney waited, give or take this node. 0 when nothing stamped it, and
+    # floored at 0 for a clock stepped back mid-turn. On a human-reviewed run it
+    # is the request that COMPLETED the run (the resume restamps; the
+    # interrupted submit writes no row), not the run end to end.
     started = state.get("turn_started_at")
-    duration_ms = round((time.time() - started) * 1000) if started else 0
+    duration_ms = max(0, round((time.time() - started) * 1000)) if started else 0
 
     entry = dict(
         session_id=state.get("session_id", ""),

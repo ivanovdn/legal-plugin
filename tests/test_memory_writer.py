@@ -200,3 +200,13 @@ def test_audit_duration_is_measured_from_the_turn_start(monkeypatch):
     mod.memory_writer(_state(turn_started_at=time.time() - 2.0))
     # Two seconds of wall clock, plus however long the node itself took.
     assert 2000 <= captured["duration_ms"] < 10_000
+
+
+def test_audit_duration_is_never_negative(monkeypatch):
+    """The wall clock can step backwards (an NTP correction mid-turn); a
+    negative latency would be as false as the 0 it replaced."""
+    captured = {}
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(mod, "save_review", lambda **kw: None)
+    mod.memory_writer(_state(turn_started_at=time.time() + 60.0))
+    assert captured["duration_ms"] == 0

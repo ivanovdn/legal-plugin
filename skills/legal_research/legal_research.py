@@ -29,7 +29,6 @@ from skills.legal_research.context import (
     compressible_history,
 )
 from skills.legal_research.edit_parsing import (
-    EDIT_RETRY_FAILED_NOTE,
     _extract_proposed_edits,
     _extract_proposed_preferences,
     _looks_like_context_only_request,
@@ -294,12 +293,14 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
             # Ollama CUDA crash compliance-bot hit on Spark (ollama#17434: MoE +
             # format=json + think off + num_ctx >= 4352). Unwrapped, it reached
             # legal_research's catch-all and replaced the good answer above
-            # with "Error: Legal research failed". Keep the answer, say so.
+            # with "Error: Legal research failed". Keep the answer untouched:
+            # it still reads as an edit promise with no card, which is exactly
+            # what the pane's promisedEditMissing warning (ChatTab.tsx, same
+            # regex) fires on — that warning is the announcement.
             logger.warning(
                 "[legal_research] JSON-mode retry failed: %s — keeping the prose answer", e
             )
             record_degradation(EDIT_RETRY_FAILED, announced=True, detail=e.__class__.__name__)
-            content = f"{content}\n\n{EDIT_RETRY_FAILED_NOTE}"
         else:
             retry_raw = (
                 retry_response.content if hasattr(retry_response, "content") else str(retry_response)

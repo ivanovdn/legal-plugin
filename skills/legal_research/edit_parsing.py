@@ -17,15 +17,6 @@ logger = logging.getLogger(__name__)
 _JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 _PREFERENCE_BLOCK_RE = re.compile(r"```preference\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
-# Appended to a reply whose JSON-mode edit retry failed. The prose before it
-# may say "I have replaced…", so it says plainly that nothing was changed.
-# Defined here, beside the stripping below, so the line the attorney sees and
-# the line the replay removes cannot drift apart.
-EDIT_RETRY_FAILED_NOTE = (
-    "_Nothing was changed in the document: the edit described above couldn't be "
-    "prepared for you to apply. Ask again to retry._"
-)
-
 
 def _strip_structured_blocks(prose: str) -> str:
     """Remove fenced ```json``` / ```preference``` blocks, keeping the prose.
@@ -44,15 +35,12 @@ def _strip_structured_blocks(prose: str) -> str:
 
     Stripping loses nothing the conversation needs — the prose still says "I
     have updated the signatory name to John Doe", so a later "the legal name we
-    filled recently" still resolves. Only the machinery goes — including
-    EDIT_RETRY_FAILED_NOTE, which is a status line for the attorney, not
-    conversation, and replayed would teach the model to end a reply with it.
+    filled recently" still resolves. Only the machinery goes.
     """
     if not prose:
         return ""
     out = _JSON_BLOCK_RE.sub("", prose)
     out = _PREFERENCE_BLOCK_RE.sub("", out)
-    out = out.replace(EDIT_RETRY_FAILED_NOTE, "")
     # A stripped block leaves its blank lines behind; collapse them so the
     # replayed turn reads as ordinary prose.
     return re.sub(r"\n{3,}", "\n\n", out).strip()

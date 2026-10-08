@@ -1258,16 +1258,23 @@ def _turn_whose_json_retry_crashes(monkeypatch):
     return state, turn()
 
 
-def test_json_retry_failure_keeps_the_answer_and_tells_the_attorney(monkeypatch):
+def test_json_retry_failure_keeps_the_answer_untouched(monkeypatch):
     """Unwrapped, the retry's exception reached legal_research's catch-all: the
     attorney got 'Error: Legal research failed — CUDA error…' and lost the
-    answer the first call had already produced."""
+    answer the first call had already produced.
+
+    Announced, yet the reply gains nothing: the pane's promisedEditMissing
+    warning (ChatTab.tsx — the same regex as _EDIT_PROMISE_RE) fires on exactly
+    this reply, a promised edit with no card, and says nothing was changed. A
+    backend-appended line would only be a second notice with different advice."""
     from observability.degradations import EDIT_RETRY_FAILED
+    from skills.legal_research.edit_parsing import _looks_like_edit_promise
 
     state, reasons = _turn_whose_json_retry_crashes(monkeypatch)
 
-    assert state["llm_response"].startswith(_PROSE)
-    assert len(state["llm_response"]) > len(_PROSE)      # a line telling them so
+    assert state["llm_response"] == _PROSE
+    # Still reads as a promise, so the pane's warning — the announcement — fires.
+    assert _looks_like_edit_promise(state["llm_response"])
     assert state["proposed_edits"] == []
     assert reasons == [EDIT_RETRY_FAILED]
 
@@ -1275,14 +1282,3 @@ def test_json_retry_failure_keeps_the_answer_and_tells_the_attorney(monkeypatch)
     events = [e for e in span.events if e.name == "degradation"]
     assert events[0].attributes["degradation.announced"] is True
     assert span.status.status_code != StatusCode.ERROR
-
-
-def test_the_retry_failure_line_never_replays_into_a_later_prompt(monkeypatch):
-    """The line is for the attorney. Replayed, it is an in-context example of a
-    reply that ends in an apology instead of an edit — the same contamination
-    _strip_structured_blocks exists to stop for fenced blocks."""
-    from skills.legal_research.edit_parsing import _sanitize_history
-
-    state, _ = _turn_whose_json_retry_crashes(monkeypatch)
-    replayed = _sanitize_history([{"role": "assistant", "content": state["llm_response"]}])
-    assert replayed == [{"role": "assistant", "content": _PROSE}]
