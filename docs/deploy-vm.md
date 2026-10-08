@@ -142,13 +142,19 @@ docker compose -f docker-compose.yml -f docker-compose.remote.yml \
 
 **Qdrant:** the command above omits it — set `QDRANT_REMOTE_URL` in `.env` to reuse an external Qdrant (e.g. Spark `http://172.20.0.22:6333`, alongside compliance-bot). For a self-contained deploy instead, add `qdrant` to the `up` list and leave `QDRANT_REMOTE_URL` unset.
 
-Either way, **create the collections once** — the script is idempotent and skips any that exist:
+Either way, **create `legal_docs` once.** On a Qdrant of your own, the idempotent script creates all three of this app's collections:
 
 ```bash
 $DC run --rm --no-deps backend python scripts/create_collections.py
 ```
 
-Every grounded SOW chat turn and every SOW review looks up the governing MSA; without `legal_docs` that lookup 404s and is recorded as a degradation, so `app.outcome=degraded` fires on all of them and stops meaning anything. Found on the VM 2026-10-08: Spark's Qdrant had none of `legal_docs` / `case_history` / `memory`. An empty `legal_docs` is the honest state — no MSA on file — and a real Qdrant outage still records `msa_lookup_failed`. **Before seeding it**, know that `get_parent_msa` takes the one MSA on file for the client (`internal` for every Word turn), so seeding the demo MSA would compare every SOW against Trinetix's model MSA, not the counterparty's agreement.
+On a **shared** Qdrant (Spark), create only `legal_docs` — the one collection a Word turn reads. `memory` has no reader and `case_history` serves only contract generation, which the pane cannot reach; both are generic names to claim on another team's instance. This reads the URL and vector size from the app's own settings, so the dimension always matches the embedding model:
+
+```bash
+$DC run --rm --no-deps backend python -c "from qdrant_client import QdrantClient; from qdrant_client.models import Distance, VectorParams; from config import get_settings; s = get_settings(); c = QdrantClient(url=s.qdrant_url); c.collection_exists('legal_docs') or c.create_collection('legal_docs', vectors_config=VectorParams(size=s.qdrant_vector_dim, distance=Distance.COSINE)); print(sorted(x.name for x in c.get_collections().collections))"
+```
+
+Every grounded SOW chat turn and every SOW review looks up the governing MSA; without `legal_docs` that lookup 404s and is recorded as a degradation, so `app.outcome=degraded` fires on all of them and stops meaning anything. Found on the VM 2026-10-08: Spark's Qdrant had none of `legal_docs` / `case_history` / `memory`; only `legal_docs` was created there. An empty `legal_docs` is the honest state — no MSA on file — and a real Qdrant outage still records `msa_lookup_failed`. **Before seeding it**, know that `get_parent_msa` takes the one MSA on file for the client (`internal` for every Word turn), so seeding the demo MSA would compare every SOW against Trinetix's model MSA, not the counterparty's agreement.
 
 **Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and is **recreated** by any `up` that names `backend` whenever its own config changed (hence the ⚠ callout above), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
 
