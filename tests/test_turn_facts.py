@@ -100,3 +100,21 @@ def test_facts_do_not_leak_between_requests_and_are_empty_outside_one():
     assert turn("sow") == {"contract_type": "sow"}
     note_turn(contract_type="orphan")          # outside any root: a no-op, never raises
     assert turn_facts() == {}
+
+
+def test_facts_recorded_in_a_child_span_reach_the_root_after_it_closes():
+    @traced("child")
+    def child():
+        set_gen_attributes(name="doc_chat", model="m", output="a", usage=_USAGE)
+        note_turn(contract_type="msa")
+        mark_failed(LLM_CALL_FAILED, exc=RuntimeError("boom"))
+
+    @traced("root")
+    def root():
+        child()
+        return turn_facts()
+
+    facts = root()
+    assert [c["name"] for c in facts["llm_detail"]] == ["doc_chat"]
+    assert facts["contract_type"] == "msa"
+    assert facts["error"] == "llm_call_failed: RuntimeError: boom"
