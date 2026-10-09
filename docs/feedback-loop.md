@@ -5,11 +5,13 @@
 it got wrong"* section — hand testers that, not this. (It was split out of
 `tester-setup.md`, which is now install steps only.)
 
-**What exists:** two Postgres tables in `app-db`. `feedback` holds what an
+**What exists:** three Postgres tables in `app-db`. `feedback` holds what an
 attorney wrote plus a replayable snapshot of the input; `interaction_event`
 holds every Apply, Discard, failure and per-turn counter, recorded silently.
 Both are keyed to a `turn_id` minted per request, so any row resolves to the
-exact prompt that produced it.
+exact prompt that produced it. `turn_log` holds one row per request to
+`/api/query`, its resume and `/api/compact` — failures included — with what
+grounded the answer, where the time went and which Word and build sent it.
 
 **What it is for:** six roadmap items are blocked on rates nobody has measured.
 Complaints alone can never produce a rate — they are a numerator. The event log
@@ -47,6 +49,61 @@ identical. `--days` is what makes a trend visible.
 
 The output has four sections, and the middle two must never be read against
 each other — see the warning below.
+
+---
+
+## A session, turn by turn
+
+`--turns` prints `turn_log` as a timeline, oldest first:
+
+```bash
+uv run python -m scripts.feedback_report --turns --attorney <id> --days 2
+$DC run --rm --no-deps backend python -m scripts.feedback_report --turns --days 1   # on the VM
+```
+
+Each entry reads top to bottom: what happened (task, outcome, reason codes, the
+error if there was one) · where the time went (model reload, prompt reading,
+generation, tokens) · what grounded it (playbook, MSA, how much of the document
+was sent) · what the attorney did with it (edits applied / failed / discarded,
+flags — applied and failed also count the Findings tab's redlines) · what sent
+it (Word platform and version, pane build, backend build — `⚠ stale pane` when
+the two builds differ) · the question, the `turn_id`, and the `trace_id` to open
+in Phoenix.
+
+Ready queries — paste into `$DC exec -T app-db psql -U legal -d legal -P pager=off`:
+
+```sql
+-- Attorneys whose Word still runs an older pane than the backend
+SELECT attorney_id, max(timestamp) AS last_seen, pane_build, backend_build
+FROM turn_log WHERE pane_build <> '' AND pane_build <> backend_build
+GROUP BY attorney_id, pane_build, backend_build ORDER BY last_seen DESC;
+
+-- Turns that waited on a model reload (Spark switching between its clients)
+SELECT timestamp, attorney_id, task_type, duration_ms, llm_load_ms
+FROM turn_log WHERE llm_load_ms > 1000 ORDER BY llm_load_ms DESC LIMIT 20;
+
+-- SOW turns answered without a governing MSA
+SELECT timestamp, attorney_id, document_id, degradations
+FROM turn_log WHERE contract_type = 'sow' AND msa_title = '' ORDER BY id DESC;
+
+-- Failed turns and what broke
+SELECT timestamp, attorney_id, kind, task_type, error
+FROM turn_log WHERE outcome = 'failed' ORDER BY id DESC LIMIT 20;
+
+-- Which Word the testers use
+SELECT office_platform, office_version, count(*) AS turns,
+       count(DISTINCT attorney_id) AS attorneys
+FROM turn_log GROUP BY 1, 2 ORDER BY turns DESC;
+```
+
+**Reading it right:**
+- `timestamp` is when the request **arrived**; every other table stamps when it wrote.
+- `pane_build = ''` is a pane built before the turn_log deploy (or Chainlit) — unknown, not stale. Panes pick up a new bundle the next time they open.
+- `outcome` is the very value stamped on the trace as `app.outcome`; `degradations` are the reason codes from `observability/degradations.py`.
+- `duration_ms` is measured in the request handler, `audit_log.duration_ms` in the graph's last node — close, not equal.
+- A row is written after the response. If app-db was down at that moment, the row is in the backend log instead: `$DC logs backend | grep "TURN LOG WRITE FAILED"`.
+- Turns from before the turn_log deploy have no row.
+- A review turn shows `0 proposed`: `edits_proposed` counts chat edit cards only. Its redline Apply and failure events (`redline_applied`, `redline_failed`) still land in the applied / failed counts, because those counts add up events from both tabs. The findings themselves are counted by the pane's `findings_rendered` event, not in `turn_log`.
 
 ---
 
@@ -141,6 +198,11 @@ does, and it needs no trace lookup — which is what made it computable at all.
 - **Unsaved documents orphan their rows.** Word cannot persist the document id
   on an unsaved file, so closing one loses the link between its feedback and any
   later feedback on the same contract. Open bug; tell testers to save first.
+- **What the attorney waited, measured in Word, and what the pane did between
+  turns** (opened, tabs viewed, Finalize). `turn_log.duration_ms` is the
+  server's view. Planned as SP3 (pane lifecycle events).
+- **Requests rejected before a handler runs** — a malformed request (422), an
+  SSO 401 once SSO is on — leave no row. Planned as SP3 (Caddy access log).
 
 ---
 

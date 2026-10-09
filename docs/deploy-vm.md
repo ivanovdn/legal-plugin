@@ -135,13 +135,18 @@ If the version is not `15.2.0`, stop and pin the image to what is running instea
 
 ```bash
 { echo "== $(git rev-parse --short HEAD) $(date -u +%FT%TZ)"
-  docker compose -f docker-compose.yml -f docker-compose.remote.yml \
+  BUILD_SHA=$(git rev-parse --short HEAD) \
+    docker compose -f docker-compose.yml -f docker-compose.remote.yml \
     up -d --build redis app-db backend caddy
   echo "== exit $?"
 } 2>&1 | tee -a "data/deploy-logs/deploy-$(date -u +%F)-$(git rev-parse --short HEAD).log"
 ```
 
 The `tee` keeps the whole build output — which steps ran, which came from cache, which containers were recreated — and the exit status in `data/deploy-logs/` (*Working files*, below). On 2026-10-08 two such logs were what showed the unpinned rebuild re-resolving the Python packages, and the pinned one reproducing the pane byte for byte.
+
+`BUILD_SHA` stamps both images with the commit: the backend records it on every `turn_log` row (`backend_build`), and the pane sends it with every request (`pane_build`), so a row where the two differ is an attorney still running an older pane. Without it both say `unknown`. Because the bundle now carries its commit, the pane is rebuilt on every deploy (~30 s; `npm ci` stays cached) — the 2026-10-08 "byte-identical pane" check gives way to the build-id check in Step 5.
+
+**A deploy that changes the database schema takes a dump first** (*Working files*, below, reason `pre-<change>`); `turn_log` (SP2) was the first such deploy.
 
 > **Everything the stack runs is pinned** — images as `tag@sha256` in both compose files and both Dockerfiles, Python packages through `requirements-runtime.lock` — so a rebuild changes nothing a commit didn't. Until 2026-10-08 a rebuild re-resolved version ranges whenever the VM's build cache had been evicted, and silently moved production to fastapi 0.143.0, whose built-in tracing took over every trace root. Bump a pin on purpose (CLAUDE.md, *Stack*).
 
@@ -321,6 +326,23 @@ Each must be ≥ 1. Use `grep -o … | wc -l`, **not** `grep -c`: a Vite bundle 
 essentially one line, so `grep -c` with several `-e` patterns returns `1` when
 *any* single pattern matches and tells you nothing about the others.
 
+**Confirm both images carry the commit you deployed** (`$BUNDLE` from the probe above):
+
+```bash
+SHA=$(git rev-parse --short HEAD)
+$DC exec -T backend env | grep BUILD_SHA              # BUILD_SHA=<SHA>
+printf '%s' "$BUNDLE" | grep -o -F "$SHA" | wc -l     # >= 1
+```
+
+Then ask one question from Word and read its row:
+
+```bash
+$DC exec -T app-db psql -U legal -d legal -P pager=off -c \
+  "SELECT timestamp, kind, outcome, office_platform, office_version, pane_build, backend_build FROM turn_log ORDER BY id DESC LIMIT 1;"
+```
+
+`pane_build` and `backend_build` must both be the commit, and `office_platform` / `office_version` must name your Word. If `pane_build` is empty, the pane you asked from was opened before the deploy — close and reopen it.
+
 **Confirm the backend is logging.** App records only reach the log because
 `api/main.py::configure_logging()` runs at import — uvicorn configures its own
 loggers and leaves root at WARNING. A restart is enough to test it:
@@ -390,7 +412,7 @@ Pick the hostname and use the **same string everywhere** — this doc uses
    that hostname from its internal CA (the `tls internal` line in the `Caddyfile`):
 
    ```bash
-   $DC up -d --build --force-recreate caddy
+   BUILD_SHA=$(git rev-parse --short HEAD) $DC up -d --build --force-recreate caddy
    ```
 
    > `--build` because the pane is built **inside** the caddy image (Step 3), so this
