@@ -11,6 +11,7 @@ os.environ.setdefault("TRACING_ENABLED", "false")
 
 import pytest
 import yaml
+from fastapi import BackgroundTasks
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -18,6 +19,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from testcontainers.postgres import PostgresContainer
 
 import memory.db as db
+from api.client_info import ClientInfo
 from config import get_settings
 
 
@@ -82,3 +84,19 @@ def _clear_spans():
 def spans_by_name(name: str):
     """Finished spans with this name, for assertions."""
     return [s for s in _span_exporter.get_finished_spans() if s.name == name]
+
+
+def call_handler(fn, *args, **kwargs):
+    """Call a route handler as a plain function, the way FastAPI would.
+
+    Supplies what FastAPI injects and a direct call would not — BackgroundTasks
+    and the request's ClientInfo — then runs the background tasks, as FastAPI
+    does after sending the response. A handler that raises propagates and its
+    tasks never run: FastAPI behaves the same way, which is why raising exits
+    write their turn_log row synchronously."""
+    tasks = kwargs.setdefault("background_tasks", BackgroundTasks())
+    kwargs.setdefault("client", ClientInfo())
+    response = fn(*args, **kwargs)
+    for task in tasks.tasks:
+        task.func(*task.args, **task.kwargs)
+    return response

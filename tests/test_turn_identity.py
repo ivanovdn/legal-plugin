@@ -15,6 +15,7 @@ import api.routes.query as q
 from api.main import app
 from api.models import ResumeRequest
 from observability.spans import current_trace_id
+from tests.conftest import call_handler
 
 
 def test_trace_id_is_empty_when_the_span_is_not_recording(monkeypatch):
@@ -141,7 +142,7 @@ def test_resume_restamps_the_turn_start(monkeypatch):
     monkeypatch.setattr(q, "refresh_ttl", lambda *a, **k: None)
 
     before = time.time()
-    q.resume_query("sess-rs", ResumeRequest(approved=True, notes="", revised_response=""))
+    call_handler(q.resume_query, "sess-rs", ResumeRequest(approved=True, notes="", revised_response=""))
     after = time.time()
 
     started = (captured["command"].update or {}).get("turn_started_at")

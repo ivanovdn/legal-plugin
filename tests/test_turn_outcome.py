@@ -13,7 +13,7 @@ import psycopg_pool
 import pytest
 from opentelemetry.trace import StatusCode
 
-from tests.conftest import spans_by_name
+from tests.conftest import call_handler, spans_by_name
 
 
 def test_llm_caller_marks_its_span_error_when_ollama_fails(monkeypatch):
@@ -85,7 +85,7 @@ def test_submit_query_marks_failed_when_the_graph_raises(monkeypatch):
     # _record_startup_checkpointer_degradation from also firing here.
     monkeypatch.setattr(mod, "_checkpointer_active", True)
 
-    resp = mod.submit_query(
+    resp = call_handler(mod.submit_query,
         QueryRequest(request="review this"), user_id="u1", user_name="U",
     )
     assert resp.status == "error"
@@ -115,7 +115,7 @@ def test_submit_query_is_ok_on_a_clean_turn(monkeypatch):
     monkeypatch.setattr(mod, "_checkpointer_active", True)
     monkeypatch.setattr(mod, "refresh_ttl", lambda *a, **k: None)
 
-    resp = mod.submit_query(
+    resp = call_handler(mod.submit_query,
         QueryRequest(request="hi"), user_id="u1", user_name="U",
     )
     assert resp.status == "ok"
@@ -147,7 +147,7 @@ def test_submit_query_is_degraded_when_the_checkpointer_was_never_available(monk
     monkeypatch.setattr(mod, "_checkpointer_active", False)
     monkeypatch.setattr(mod, "refresh_ttl", lambda *a, **k: None)
 
-    resp = mod.submit_query(
+    resp = call_handler(mod.submit_query,
         QueryRequest(request="hi"), user_id="u1", user_name="U",
     )
     assert resp.status == "ok"
@@ -183,7 +183,7 @@ def test_submit_query_degrades_when_the_checkpointer_dies_mid_invoke(monkeypatch
     monkeypatch.setattr(mod, "_checkpointer_active", True)
     monkeypatch.setattr(mod, "_get_stateless_graph", lambda: StatelessGraph())
 
-    resp = mod.submit_query(
+    resp = call_handler(mod.submit_query,
         QueryRequest(request="review this"), user_id="u1", user_name="U",
     )
     assert resp.status == "ok"
@@ -216,7 +216,7 @@ def test_submit_query_marks_failed_when_the_stateless_fallback_also_fails(monkey
     monkeypatch.setattr(mod, "_checkpointer_active", True)
     monkeypatch.setattr(mod, "_get_stateless_graph", lambda: AlsoDyingStatelessGraph())
 
-    resp = mod.submit_query(
+    resp = call_handler(mod.submit_query,
         QueryRequest(request="review this"), user_id="u1", user_name="U",
     )
     assert resp.status == "error"
@@ -270,7 +270,7 @@ def test_resume_query_marks_failed_when_get_state_raises(monkeypatch):
     monkeypatch.setattr(mod, "_get_graph", lambda: BoomGetStateGraph())
     monkeypatch.setattr(mod, "_checkpointer_active", True)
 
-    resp = mod.resume_query(
+    resp = call_handler(mod.resume_query,
         "sess-2", ResumeRequest(approved=True, notes="", revised_response=""),
     )
     assert resp.status == "error"
@@ -308,7 +308,7 @@ def test_resume_query_is_ok_when_prior_state_is_empty(monkeypatch):
     monkeypatch.setattr(mod, "_get_graph", lambda: EmptyStateGraph())
     monkeypatch.setattr(mod, "_checkpointer_active", True)
 
-    resp = mod.resume_query(
+    resp = call_handler(mod.resume_query,
         "sess-missing", ResumeRequest(approved=True, notes="", revised_response=""),
     )
     assert resp.status == "error"
@@ -342,7 +342,7 @@ def test_resume_query_is_degraded_when_prior_state_is_empty_and_checkpointer_sta
     monkeypatch.setattr(mod, "_get_graph", lambda: EmptyStateGraph())
     monkeypatch.setattr(mod, "_checkpointer_active", False)
 
-    resp = mod.resume_query(
+    resp = call_handler(mod.resume_query,
         "sess-missing-2", ResumeRequest(approved=True, notes="", revised_response=""),
     )
     assert resp.status == "error"
@@ -374,7 +374,7 @@ def test_resume_query_marks_failed_when_invoke_raises(monkeypatch):
     monkeypatch.setattr(mod, "_get_graph", lambda: BoomInvokeGraph())
     monkeypatch.setattr(mod, "_checkpointer_active", True)
 
-    resp = mod.resume_query(
+    resp = call_handler(mod.resume_query,
         "sess-3", ResumeRequest(approved=True, notes="", revised_response=""),
     )
     assert resp.status == "error"
@@ -412,7 +412,7 @@ def test_resume_query_is_ok_on_a_clean_resume(monkeypatch):
     monkeypatch.setattr(mod, "_checkpointer_active", True)
     monkeypatch.setattr(mod, "refresh_ttl", lambda *a, **k: None)
 
-    resp = mod.resume_query(
+    resp = call_handler(mod.resume_query,
         "sess-4", ResumeRequest(approved=True, notes="", revised_response=""),
     )
     assert resp.status == "ok"

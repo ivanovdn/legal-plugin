@@ -5,12 +5,14 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from langgraph.types import Command
 from redis.exceptions import RedisError
 
-from api.models import ApiResponse, QueryRequest, ResumeRequest
 from api.auth import resolve_user_id, resolve_user_name
+from api.client_info import ClientInfo, resolve_client_info
+from api.models import ApiResponse, QueryRequest, ResumeRequest
+from api.turn_record import finish_turn, start_turn
 from config import get_settings
 from graph.checkpointer import build_checkpointer, refresh_ttl
 from graph.graph import build_graph
@@ -21,7 +23,7 @@ from observability.degradations import (
 )
 from observability.spans import (
     current_trace_id, degradations, mark_failed, record_degradation,
-    set_outcome, set_trace_attributes, traced,
+    set_trace_attributes, traced,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,16 @@ router = APIRouter(prefix="/api")
 _graph = None
 _checkpointer_active = False
 _stateless_graph = None
+
+# What a resume answers when there is nothing to resume — also the row's error.
+_SESSION_GONE = "session expired or not found"
+
+
+def _uploaded_text(state: dict) -> str:
+    """The document a checkpointed run carried. The resume row's fingerprint
+    must match the submit's, which hashed the same text."""
+    docs = state.get("uploaded_docs") or []
+    return "\n\n".join(doc.get("text", "") for doc in docs if isinstance(doc, dict))
 
 
 def _get_stateless_graph():
@@ -182,10 +194,16 @@ def _payload_from_result(
 @traced("query")
 def submit_query(
     body: QueryRequest,
+    background_tasks: BackgroundTasks,
     user_id: str = Depends(resolve_user_id),
     user_name: str = Depends(resolve_user_name),
+    client: ClientInfo = Depends(resolve_client_info),
 ):
-    """Submit a legal request for graph execution."""
+    """Submit a legal request for graph execution.
+
+    Every exit goes through finish_turn, which stamps app.outcome and records
+    the turn_log row from that same value.
+    """
     session_id = body.session_id or str(uuid.uuid4())
     # A session_id spans every turn in both Word tabs; a turn_id names one.
     # Feedback and interaction events join on it.
@@ -198,6 +216,12 @@ def submit_query(
         session_id=session_id,
         input=body.request,
         metadata={"user_name": user_name, "turn_id": turn_id},
+    )
+    turn = start_turn(
+        kind="query", turn_id=turn_id, client=client,
+        attorney_id=user_id, user_name=user_name, session_id=session_id,
+        document_id=body.document_uuid, task_type=body.task_type,
+        request=body.request, doc_text=body.uploaded_text,
     )
 
     initial_state = {
@@ -252,10 +276,17 @@ def submit_query(
     try:
         result = graph.invoke(initial_state, config=config)
         refresh_ttl(session_id)
-        set_outcome(derive_outcome(degradations()))
-        return ApiResponse(
+        # Built before finish_turn so nothing after it can raise into the
+        # except below and record the turn a second time.
+        response = ApiResponse(
             status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
         )
+        finish_turn(
+            turn, outcome=derive_outcome(degradations()), status="ok",
+            awaiting_review=response.data["awaiting_review"], result=result,
+            background_tasks=background_tasks,
+        )
+        return response
     except Exception as e:
         if _checkpointer_active and _is_redis_failure(e):
             logger.error(
@@ -272,27 +303,37 @@ def submit_query(
                 if isinstance(report, dict):
                     report["memory_degraded"] = True
                     result["report"] = report
-                set_outcome(derive_outcome(degradations()))
-                return ApiResponse(
+                response = ApiResponse(
                     status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
                 )
+                finish_turn(
+                    turn, outcome=derive_outcome(degradations()), status="ok",
+                    awaiting_review=response.data["awaiting_review"], result=result,
+                    background_tasks=background_tasks,
+                )
+                return response
             except Exception as e2:
                 logger.exception("Stateless fallback failed after checkpointer outage")
                 mark_failed(STATELESS_FALLBACK_FAILED, exc=e2)
-                set_outcome(OUTCOME_FAILED)
-                return ApiResponse(
-                    status="error",
-                    errors=[f"Session memory unavailable and fallback failed: {e2}"],
-                )
+                error = f"Session memory unavailable and fallback failed: {e2}"
+                finish_turn(turn, outcome=OUTCOME_FAILED, status="error", api_error=error,
+                            background_tasks=background_tasks)
+                return ApiResponse(status="error", errors=[error])
         logger.exception("Graph execution failed")
         mark_failed(GRAPH_INVOKE_FAILED, exc=e)
-        set_outcome(OUTCOME_FAILED)
+        finish_turn(turn, outcome=OUTCOME_FAILED, status="error", api_error=str(e),
+                    background_tasks=background_tasks)
         return ApiResponse(status="error", errors=[str(e)])
 
 
 @router.post("/query/{session_id}/resume", response_model=ApiResponse)
 @traced("resume")
-def resume_query(session_id: str, body: ResumeRequest):
+def resume_query(
+    session_id: str,
+    body: ResumeRequest,
+    background_tasks: BackgroundTasks,
+    client: ClientInfo = Depends(resolve_client_info),
+):
     """Resume graph execution after human review interrupt."""
     # A resume is a distinct turn from the submit that interrupted it, and is
     # separately flaggable.
@@ -307,6 +348,10 @@ def resume_query(session_id: str, body: ResumeRequest):
             "has_revised": bool(body.revised_response),
         },
     )
+    # Resume reads no identity headers (only submit_query does), so who asked
+    # and about what are filled in from the checkpointed run once it loads.
+    turn = start_turn(kind="resume", turn_id=turn_id, client=client,
+                      session_id=session_id, request=body.notes)
 
     graph = _get_graph()
     _record_startup_checkpointer_degradation()
@@ -317,8 +362,9 @@ def resume_query(session_id: str, body: ResumeRequest):
     except Exception as e:
         logger.warning("resume: get_state failed for %s: %s", session_id, e)
         mark_failed(RESUME_STATE_LOAD_FAILED, exc=e, detail=e.__class__.__name__)
-        set_outcome(OUTCOME_FAILED)
-        return ApiResponse(status="error", errors=["session expired or not found"])
+        finish_turn(turn, outcome=OUTCOME_FAILED, status="error", api_error=_SESSION_GONE,
+                    background_tasks=background_tasks)
+        return ApiResponse(status="error", errors=[_SESSION_GONE])
     if not prior or not prior.values:
         # An expired/unknown session is the checkpoint TTL working as
         # designed, not something broken — get_state succeeded and correctly
@@ -332,8 +378,18 @@ def resume_query(session_id: str, body: ResumeRequest):
         # derived, not hardcoded to OUTCOME_OK: a startup-absent checkpointer
         # (see _record_startup_checkpointer_degradation above) can have
         # already recorded a reason on this same request, which must win.
-        set_outcome(derive_outcome(degradations()))
-        return ApiResponse(status="error", errors=["session expired or not found"])
+        finish_turn(turn, outcome=derive_outcome(degradations()), status="error",
+                    api_error=_SESSION_GONE, background_tasks=background_tasks)
+        return ApiResponse(status="error", errors=[_SESSION_GONE])
+
+    checkpointed = prior.values
+    turn.update(
+        attorney_id=checkpointed.get("user_id", ""),
+        user_name=checkpointed.get("user_name", ""),
+        task_type=checkpointed.get("task_type", ""),
+        document_id=checkpointed.get("document_id", ""),
+        doc_text=_uploaded_text(checkpointed),
+    )
 
     try:
         result = graph.invoke(
@@ -351,14 +407,20 @@ def resume_query(session_id: str, body: ResumeRequest):
             config=config,
         )
         refresh_ttl(session_id)
-        set_outcome(derive_outcome(degradations()))
-        return ApiResponse(
+        response = ApiResponse(
             status="ok", data=_payload_from_result(result, session_id, turn_id, trace_id)
         )
+        finish_turn(
+            turn, outcome=derive_outcome(degradations()), status="ok",
+            awaiting_review=response.data["awaiting_review"], result=result,
+            background_tasks=background_tasks,
+        )
+        return response
     except Exception as e:
         logger.exception("resume: graph invoke failed for %s", session_id)
         mark_failed(RESUME_FAILED, exc=e)
-        set_outcome(OUTCOME_FAILED)
+        finish_turn(turn, outcome=OUTCOME_FAILED, status="error", api_error=str(e),
+                    background_tasks=background_tasks)
         return ApiResponse(status="error", errors=[str(e)])
 
 
