@@ -134,9 +134,14 @@ docker exec legal-plugin-phoenix-1 python3 -c "import sqlite3; s=sqlite3.connect
 If the version is not `15.2.0`, stop and pin the image to what is running instead — an older Phoenix may refuse a newer schema. Traces written between the snapshot and the recreate are lost, so do it when no one is mid-session. Then bring the stack up:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.remote.yml \
-  up -d --build redis app-db backend caddy
+{ echo "== $(git rev-parse --short HEAD) $(date -u +%FT%TZ)"
+  docker compose -f docker-compose.yml -f docker-compose.remote.yml \
+    up -d --build redis app-db backend caddy
+  echo "== exit $?"
+} 2>&1 | tee -a "data/deploy-logs/deploy-$(date -u +%F)-$(git rev-parse --short HEAD).log"
 ```
+
+The `tee` keeps the whole build output — which steps ran, which came from cache, which containers were recreated — and the exit status in `data/deploy-logs/` (*Working files*, below). On 2026-10-08 two such logs were what showed the unpinned rebuild re-resolving the Python packages, and the pinned one reproducing the pane byte for byte.
 
 > **Everything the stack runs is pinned** — images as `tag@sha256` in both compose files and both Dockerfiles, Python packages through `requirements-runtime.lock` — so a rebuild changes nothing a commit didn't. Until 2026-10-08 a rebuild re-resolved version ranges whenever the VM's build cache had been evicted, and silently moved production to fastapi 0.143.0, whose built-in tracing took over every trace root. Bump a pin on purpose (CLAUDE.md, *Stack*).
 
@@ -193,6 +198,47 @@ sudo journalctl CONTAINER_NAME=legal-plugin-backend-1 --since 2026-10-01 --no-pa
 ```
 
 `sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default `SystemMaxUse` is 10% of the filesystem, capped at 4 GiB). The journal survives a reboot only on persistent storage — the default here, because `/var/log/journal` exists (checked on SRV-AGENT-01 2026-10-08).
+
+### Working files — deploy logs and backups
+
+What we make on the VM by hand — deploy logs, backups, the exported root certificate — goes in one of two folders inside the checkout, never loose in `~` and never anywhere else in the repo:
+
+| Folder | Holds | Kept |
+|---|---|---|
+| `data/deploy-logs/` | One log per deploy, written by the command above: the build output and the exit status. Named `deploy-<UTC date>-<commit>.log`; a second run of the same commit that day appends. | Always — about 40 KB each. |
+| `data/backups/` | A copy of production data taken right before something that could destroy it (below). Named `<what>-<UTC date>-<reason>`, e.g. `app-db-2026-10-15-pre-sp2.sql.gz`. | Until the operation it protected is verified, then deleted — most hold contract text. The Caddy CA stays. |
+
+**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build: .`, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` is mounted into a container, so these two folders are invisible to the stack. `data/` itself belongs to root (Docker created it for that mount), so the two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`:
+
+```bash
+sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
+```
+
+**What to back up, and when.** Nothing runs on a schedule yet (the `app-db` note above asks for one); each backup is a manual step before a risky one:
+
+- **`app-db`**, before any deploy that changes its schema or the Postgres version:
+
+  ```bash
+  $DC exec -T app-db pg_dump -U legal -d legal | gzip > "data/backups/app-db-$(date -u +%F)-<reason>.sql.gz"
+  ```
+
+- **Phoenix**, before a Phoenix version bump — the new version migrates the database when it starts, so going back needs the copy taken before. SQLite's online backup, so the live database copies consistently (the image has no shell, only Python):
+
+  ```bash
+  $DC exec -T phoenix python3 -c "import sqlite3; s=sqlite3.connect('file:/mnt/data/phoenix.db?mode=ro', uri=True); d=sqlite3.connect('/tmp/backup.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"   # must print ok
+  $DC cp phoenix:/tmp/backup.db "data/backups/phoenix-$(date -u +%F)-<reason>.db"
+  $DC exec -T phoenix python3 -c "import os; os.remove('/tmp/backup.db')"
+  ```
+
+- **Caddy's CA**, once — it does not change. If `caddy_data` is lost, Caddy mints a new CA and every attorney's install breaks until they import a new certificate (Step 7's ⚠); `root.crt` + `root.key` are what it would take to put the old one back:
+
+  ```bash
+  $DC cp caddy:/data/caddy/pki/authorities/local "data/backups/caddy-ca-$(date -u +%F)"
+  ```
+
+  `root.key` can sign a certificate for **any** site, and every attorney's machine will trust it. It never leaves the VM.
+
+These copies sit on the same disk as what they protect: they cover our mistakes — a bad migration, a `down -v`, a broken upgrade — not the loss of the VM. **No restore has been rehearsed yet**; rehearse one on a scratch stack before counting on it. Dry-run on SRV-AGENT-01 on 2026-10-09 without writing anything: the dump came to 91 KB gzipped, Phoenix's online backup passed its integrity check in memory, and the CA listed its four files.
 
 ---
 
@@ -307,8 +353,11 @@ Pick the hostname and use the **same string everywhere** — this doc uses
    so this file is stable across redeploys:
 
    ```bash
-   $DC cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root-ca.crt
+   $DC cp caddy:/data/caddy/pki/authorities/local/root.crt data/backups/caddy-root-ca.crt
    ```
+
+   Into `data/backups/`, not the checkout root: a file there would be copied into
+   the backend image on the next build (Step 4, *Working files*).
 
 4. **Render the manifest.** Just URLs — runs anywhere with Python + the repo, no VM
    access needed:
