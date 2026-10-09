@@ -1,6 +1,6 @@
 # memory/db.py
 """Postgres connection pool for the relational stores (audit, review,
-conversation, conversation_summary, feedback, interaction_event).
+conversation, conversation_summary, feedback, interaction_event, turn_log).
 
 One app-wide psycopg pool built from config.database_url. Connections are
 autocommit — the stores issue single-statement writes/reads, so no explicit
@@ -118,6 +118,59 @@ _STATEMENTS = [
     # CREATE above because CREATE TABLE IF NOT EXISTS will not add a column to
     # a table that already exists (same pattern as audit_log.user_name).
     "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS request TEXT NOT NULL DEFAULT ''",
+    # One row per accepted request to /api/query, its resume and /api/compact —
+    # failures included — written by the request handler after the response
+    # (api/turn_record.py). `timestamp` is when the request ARRIVED; the other
+    # tables stamp when they wrote. Spec:
+    # docs/superpowers/specs/2026-10-09-turn-log-design.md
+    """
+    CREATE TABLE IF NOT EXISTS turn_log (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL,
+        session_id TEXT NOT NULL DEFAULT '',
+        document_id TEXT NOT NULL DEFAULT '',
+        attorney_id TEXT NOT NULL,
+        user_name TEXT NOT NULL DEFAULT '',
+        task_type TEXT NOT NULL DEFAULT '',
+        request TEXT NOT NULL DEFAULT '',
+        doc_chars INTEGER NOT NULL DEFAULT 0,
+        doc_sha256 TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        degradations JSONB NOT NULL DEFAULT '[]',
+        error TEXT NOT NULL DEFAULT '',
+        awaiting_review BOOLEAN NOT NULL DEFAULT FALSE,
+        contract_type TEXT NOT NULL DEFAULT '',
+        contract_type_defaulted BOOLEAN NOT NULL DEFAULT FALSE,
+        msa_title TEXT NOT NULL DEFAULT '',
+        preferences_chars INTEGER NOT NULL DEFAULT 0,
+        doc_kept_pct INTEGER,
+        context JSONB,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        llm_calls INTEGER NOT NULL DEFAULT 0,
+        llm_load_ms INTEGER NOT NULL DEFAULT 0,
+        llm_prompt_ms INTEGER NOT NULL DEFAULT 0,
+        llm_gen_ms INTEGER NOT NULL DEFAULT 0,
+        tokens_in INTEGER NOT NULL DEFAULT 0,
+        tokens_out INTEGER NOT NULL DEFAULT 0,
+        llm_detail JSONB NOT NULL DEFAULT '[]',
+        response_chars INTEGER NOT NULL DEFAULT 0,
+        edits_proposed INTEGER NOT NULL DEFAULT 0,
+        preferences_proposed INTEGER NOT NULL DEFAULT 0,
+        compaction JSONB,
+        office_platform TEXT NOT NULL DEFAULT '',
+        office_version TEXT NOT NULL DEFAULT '',
+        pane_build TEXT NOT NULL DEFAULT '',
+        backend_build TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_log_turn ON turn_log (turn_id)",
+    "CREATE INDEX IF NOT EXISTS idx_turn_log_attorney ON turn_log (attorney_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_turn_log_doc ON turn_log (document_id, id)",
 ]
 
 
@@ -149,8 +202,8 @@ def get_pool() -> ConnectionPool:
 
 
 def init_db() -> None:
-    """Create all six store tables + indexes if absent (audit_log, review_store,
-    conversation_store, conversation_summary, feedback, interaction_event).
+    """Create all seven store tables + indexes if absent (audit_log, review_store,
+    conversation_store, conversation_summary, feedback, interaction_event, turn_log).
     Idempotent."""
     with get_pool().connection() as conn:
         for stmt in _STATEMENTS:

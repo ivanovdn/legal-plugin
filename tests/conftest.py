@@ -49,7 +49,7 @@ def _clean_tables(_pg_container):
     with db.get_pool().connection() as conn:
         conn.execute(
             "TRUNCATE audit_log, review_store, conversation_store, "
-            "conversation_summary, feedback, interaction_event RESTART IDENTITY"
+            "conversation_summary, feedback, interaction_event, turn_log RESTART IDENTITY"
         )
     yield
 
