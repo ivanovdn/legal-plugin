@@ -38,6 +38,13 @@ _root_metadata: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 _root_degradations: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
     "otel_root_degradations", default=None
 )
+# Facts about this request for its turn_log row (memory/turn_log.py): each
+# model call, the first failure's message, and whatever note_turn() records.
+# Same lifecycle as _root_degradations, and like it fed BEFORE any
+# is_recording() guard — the row must come out identical with tracing off.
+_root_turn: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "otel_root_turn", default=None
+)
 
 
 def _as_attr(value: Any) -> Any:
@@ -60,10 +67,12 @@ def traced(name: str, kind: str | None = None) -> Callable:
                 root_token = None
                 meta_token = None
                 deg_token = None
+                turn_token = None
                 if _root_span.get() is None:
                     root_token = _root_span.set(span)
                     meta_token = _root_metadata.set({})
                     deg_token = _root_degradations.set([])
+                    turn_token = _root_turn.set({})
                 if kind == "LLM":
                     span.set_attribute(
                         SpanAttributes.OPENINFERENCE_SPAN_KIND,
@@ -78,6 +87,8 @@ def traced(name: str, kind: str | None = None) -> Callable:
                         _root_metadata.reset(meta_token)
                     if deg_token is not None:
                         _root_degradations.reset(deg_token)
+                    if turn_token is not None:
+                        _root_turn.reset(turn_token)
         # Exposed for tests to assert WHICH name a function was decorated with —
         # functools.wraps alone only proves "wrapped by something", not "wrapped
         # with this span name". Nothing in production reads this; don't delete it
@@ -140,11 +151,19 @@ def set_gen_attributes(
 ) -> None:
     """Record GENERATION attributes on the CURRENT span. Best-effort; never raises.
 
+    Also records the call for the request's turn_log row (`_record_llm_call`),
+    before the recording guard.
+
     `usage` is the {input, output, total, unit} dict from observability.tracing.
     `timings` is the {total_ms, load_ms, prompt_eval_ms, eval_ms} dict from
     observability.tracing.ollama_timings.
     """
     try:
+        # Before the recording guard, like _accumulate: the turn_log row must
+        # count this call whether or not anyone is tracing. A call is a
+        # completed generation — attribute-only calls (model=... alone) are not.
+        if output is not None or usage or timings:
+            _record_llm_call(name, model, usage, timings)
         span = trace.get_current_span()
         if span is None or not span.is_recording():
             return
@@ -236,6 +255,71 @@ def degradations() -> list[str]:
     return list(_root_degradations.get() or [])
 
 
+def note_turn(**facts: Any) -> None:
+    """Record facts about this request for its turn_log row. Never raises.
+
+    The last write of a key wins; outside a request root it is a no-op. Like
+    _accumulate it ignores whether a span is recording: the row must come out
+    the same with tracing off."""
+    try:
+        acc = _root_turn.get()
+        if acc is not None:
+            acc.update(facts)
+    except Exception:
+        pass
+
+
+def turn_facts() -> dict:
+    """What this request has recorded so far, for its turn_log row. A copy —
+    read it before the root span closes, which resets it."""
+    acc = _root_turn.get() or {}
+    out = dict(acc)
+    if "llm_detail" in out:
+        out["llm_detail"] = [dict(call) for call in out["llm_detail"]]
+    return out
+
+
+def _record_llm_call(
+    name: str | None, model: str | None, usage: dict | None, timings: dict | None,
+) -> None:
+    """Append one model call to the request's llm_detail. Never raises."""
+    try:
+        acc = _root_turn.get()
+        if acc is None:
+            return
+        usage = usage or {}
+        timings = timings or {}
+        acc.setdefault("llm_detail", []).append({
+            "name": name or "",
+            "model": model or "",
+            "tokens_in": usage.get("input"),
+            "tokens_out": usage.get("output"),
+            "load_ms": timings.get("load_ms"),
+            "prompt_ms": timings.get("prompt_eval_ms"),
+            "gen_ms": timings.get("eval_ms"),
+            "total_ms": timings.get("total_ms"),
+        })
+    except Exception:
+        pass
+
+
+def _note_first_error(reason: str, exc: BaseException | None, detail: str) -> None:
+    """Keep the FIRST failure's message: it is what broke; later ones are
+    usually its consequences. Never raises."""
+    try:
+        acc = _root_turn.get()
+        if acc is None or acc.get("error"):
+            return
+        if exc is not None:
+            acc["error"] = f"{reason}: {exc.__class__.__name__}: {exc}"
+        elif detail:
+            acc["error"] = f"{reason}: {detail}"
+        else:
+            acc["error"] = reason
+    except Exception:
+        pass
+
+
 def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = "") -> None:
     """Set the CURRENT span to ERROR and record `exc`. Never raises.
 
@@ -253,6 +337,7 @@ def mark_failed(reason: str, *, exc: BaseException | None = None, detail: str = 
     """
     try:
         _accumulate(reason)
+        _note_first_error(reason, exc, detail)
         span = trace.get_current_span()
         if span is None or not span.is_recording():
             return
