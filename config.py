@@ -223,6 +223,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://legal:legal@localhost:5434/legal"
     db_pool_timeout: float = 3.0              # seconds to wait for a pooled connection; psycopg_pool's own default is 30s, long enough that an app-db outage reads as a hang rather than a degrade
     log_level: str = "INFO"                   # root log level; a real settings field because pydantic-settings forbids extra .env keys, so a bare os.environ read would crash the backend the moment an operator set it in .env
+    build_sha: str = "dev"                    # the commit this backend was built from (env BUILD_SHA, set by the Dockerfile from the deploy command's build arg) — recorded on every turn_log row; "unknown" = an image built without one, "dev" = a local run
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

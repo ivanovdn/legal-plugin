@@ -10,7 +10,13 @@ x-logging: &logging
 
 services:
   backend:
-    build: .
+    build:
+      context: .
+      # The deployed commit, baked into the image and recorded on every
+      # turn_log row. Set by the deploy command (docs/deploy-vm.md Step 4);
+      # missing -> "unknown", visibly.
+      args:
+        BUILD_SHA: ${BUILD_SHA:-unknown}
     image: legal-plugin-backend:latest
     logging: *logging
     env_file:

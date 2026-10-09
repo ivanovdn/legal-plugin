@@ -89,6 +89,13 @@ if ! docker run --rm --platform linux/amd64 legal-plugin-backend:checkgate pytho
   echo "      for 27 commits (2026-09-16 opentelemetry-instrumentation-*)." >&2
   exit 1
 fi
+built_sha="$(docker run --rm --platform linux/amd64 legal-plugin-backend:checkgate printenv BUILD_SHA)"
+if [ "$built_sha" != "unknown" ]; then
+  rm -f "$image_log"
+  echo "FAIL: an image built without BUILD_SHA reports '$built_sha', expected 'unknown'." >&2
+  echo "      turn_log.backend_build reads it; a deploy that forgets BUILD_SHA must say so on every row." >&2
+  exit 1
+fi
 rm -f "$image_log"
 
 echo "==> all checks passed"

@@ -29,6 +29,13 @@ COPY . .
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
+# The commit this image was built from, for turn_log.backend_build (config.py
+# build_sha). The deploy command passes it (docs/deploy-vm.md Step 4); built
+# without it, the image says "unknown" on every row. Last on purpose: a new
+# value per deploy invalidates only these two cheap layers, never the pip one.
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=$BUILD_SHA
+
 EXPOSE 8000
 
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
