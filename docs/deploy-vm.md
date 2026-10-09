@@ -144,7 +144,7 @@ If the version is not `15.2.0`, stop and pin the image to what is running instea
 
 The `tee` keeps the whole build output — which steps ran, which came from cache, which containers were recreated — and the exit status in `data/deploy-logs/` (*Working files*, below). On 2026-10-08 two such logs were what showed the unpinned rebuild re-resolving the Python packages, and the pinned one reproducing the pane byte for byte.
 
-`BUILD_SHA` stamps both images with the commit: the backend records it on every `turn_log` row (`backend_build`), and the pane sends it with every request (`pane_build`), so a row where the two differ is an attorney still running an older pane. Without it both say `unknown`. Because the bundle now carries its commit, the pane is rebuilt on every deploy (~30 s; `npm ci` stays cached) — the 2026-10-08 "byte-identical pane" check gives way to the build-id check in Step 5.
+`BUILD_SHA` stamps both images with the commit: the backend records it on every `turn_log` row (`backend_build`), and the pane sends it with every request (`pane_build`), so a row where the two differ is an attorney still running an older pane. Without it both say `unknown`. Put the same prefix on any other command that builds an image. Because the bundle now carries its commit, the pane is rebuilt on every deploy (~30 s; `npm ci` stays cached) — the 2026-10-08 "byte-identical pane" check gives way to the build-id check in Step 5.
 
 **A deploy that changes the database schema takes a dump first** (*Working files*, below, reason `pre-<change>`); `turn_log` (SP2) was the first such deploy.
 
@@ -553,7 +553,7 @@ layer, and could never fix it. The fix is to make the pip layer re-run:
 
 ```bash
 docker builder prune -f
-$DC build --no-cache backend
+BUILD_SHA=$(git rev-parse --short HEAD) $DC build --no-cache backend
 $DC up -d backend
 $DC run --rm --no-deps backend python -c "import config; print('ok')"
 ```
