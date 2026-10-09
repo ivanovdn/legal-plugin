@@ -89,7 +89,9 @@ if ! docker run --rm --platform linux/amd64 legal-plugin-backend:checkgate pytho
   echo "      for 27 commits (2026-09-16 opentelemetry-instrumentation-*)." >&2
   exit 1
 fi
-built_sha="$(docker run --rm --platform linux/amd64 legal-plugin-backend:checkgate printenv BUILD_SHA)"
+# printenv exits 1 when the variable is absent, and under `set -e` that would end the
+# script right here, silently, before the FAIL text below can print.
+built_sha="$(docker run --rm --platform linux/amd64 legal-plugin-backend:checkgate printenv BUILD_SHA || true)"
 if [ "$built_sha" != "unknown" ]; then
   rm -f "$image_log"
   echo "FAIL: an image built without BUILD_SHA reports '$built_sha', expected 'unknown'." >&2
