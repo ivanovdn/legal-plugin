@@ -91,3 +91,25 @@ def test_a_failed_turn_shows_its_error():
                      degradations=["graph_invoke_failed"],
                      facts={"error": "graph_invoke_failed: ValueError: node exploded"}))
     assert "error: graph_invoke_failed: ValueError: node exploded" in _text(recent_turns()[0])
+
+
+def test_recent_turns_counts_each_turns_own_events_by_kind():
+    """Two turns with their own events and a distinct count in every column, so a
+    missing turn_id correlation, a dropped redline_* action or a swapped
+    failed/discarded label each shows up as a wrong number."""
+    write_turn(_turn("t-1"))
+    write_turn(_turn("t-2", arrived_at="2026-10-09T09:50:00+00:00"))
+    for action in ("edit_applied", "edit_applied", "redline_applied",
+                   "redline_failed", "redline_failed"):
+        record_event(turn_id="t-1", session_id="s-1", document_id="doc-1",
+                     attorney_id="atty-1", surface="findings", action=action)
+    for action in ("edit_failed", "edit_discarded", "edit_discarded"):
+        record_event(turn_id="t-2", session_id="s-1", document_id="doc-1",
+                     attorney_id="atty-1", surface="chat", action=action)
+    save_feedback(turn_id="t-2", trace_id="", session_id="s-1", document_id="doc-1",
+                  attorney_id="atty-1", user_name="A. Tester", surface="chat",
+                  target_kind="reply", target_ref="", comment="wrong cap", snapshot=None)
+
+    t1, t2 = recent_turns()
+    assert (t1["turn_id"], t1["applied"], t1["failed"], t1["discarded"], t1["flags"]) == ("t-1", 3, 2, 0, 0)
+    assert (t2["turn_id"], t2["applied"], t2["failed"], t2["discarded"], t2["flags"]) == ("t-2", 0, 1, 2, 1)
