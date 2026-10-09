@@ -7,6 +7,7 @@ supplies what FastAPI would inject and runs the background tasks afterwards.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ import memory.turn_log as turn_log
 from api.client_info import ClientInfo
 from api.main import app
 from api.models import CompactRequest, QueryRequest, ResumeRequest
+from graph.graph import build_graph
 from memory.db import get_pool
 from tests.conftest import call_handler, spans_by_name
 
@@ -342,3 +344,72 @@ def test_a_returning_compact_exit_schedules_exactly_one_write_and_does_not_make_
                                background_tasks=tasks, user_id="atty-1", user_name="A. Tester",
                                client=ClientInfo())
     assert len(tasks.tasks) == 1 and _rows() == []
+
+
+_SOW = (
+    "STATEMENT OF WORK No. 3\n\n"
+    "This Statement of Work is issued under the Master Services Agreement between "
+    "Acme Corp and Trinetix.\n"
+    "Payment is due within 60 days of invoice.\n"
+)
+
+
+class _Message:
+    """What ChatOllama returns: content, token usage and Ollama's durations (ns)."""
+    def __init__(self, content, tokens_in, tokens_out, load_ns, prompt_ns, gen_ns):
+        self.content = content
+        self.usage_metadata = {"input_tokens": tokens_in, "output_tokens": tokens_out,
+                               "total_tokens": tokens_in + tokens_out}
+        self.response_metadata = {"model": "qwen3.6:latest", "load_duration": load_ns,
+                                  "prompt_eval_duration": prompt_ns, "eval_duration": gen_ns,
+                                  "total_duration": load_ns + prompt_ns + gen_ns}
+
+
+class _LLM:
+    def __init__(self, message):
+        self._message = message
+
+    def invoke(self, messages):
+        return self._message
+
+
+def test_a_real_sow_chat_turn_records_its_grounding_and_both_model_calls(monkeypatch):
+    """Through the real graph: the collector must cross into graph nodes in the
+    suite, not only in production, and LangGraph must keep turn_id (declared in
+    LegalAgentState) all the way to the audit row."""
+    grounding = importlib.import_module("skills.grounding")
+    research = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setattr(grounding, "get_parent_msa",
+                        lambda client_id, **kw: ("Trinetix Model MSA", "MSA text"))
+    monkeypatch.setattr(research, "_build_llm", lambda: _LLM(_Message(
+        "I will replace the payment term with net 30 days.", 9000, 120,
+        5_900_000_000, 6_100_000_000, 1_100_000_000)))
+    monkeypatch.setattr(research, "_build_json_llm", lambda: _LLM(_Message(
+        '{"action": "replace", "target_text": "Payment is due within 60 days of invoice.", '
+        '"new_text": "Payment is due within 30 days of invoice."}',
+        2000, 60, 0, 800_000_000, 300_000_000)))
+    monkeypatch.setattr("graph.nodes.rag_retriever.hybrid_search", lambda *a, **k: [])
+    _wire(monkeypatch, build_graph(checkpointer=None))
+
+    resp = TestClient(app).post(
+        "/api/query",
+        json={"request": "Change the payment term to net 30.", "task_type": "research",
+              "uploaded_text": _SOW, "filters": {"client_id": "internal"},
+              "document_uuid": "doc-sow-3"},
+        headers={"X-User-ID": "atty-int", "X-Office-Platform": "Mac",
+                 "X-Office-Version": "16.89", "X-Pane-Build": "abc1234"},
+    ).json()
+
+    assert resp["status"] == "ok"
+    (row,) = _rows()
+    assert row["turn_id"] == resp["data"]["turn_id"]
+    assert (row["outcome"], row["document_id"]) == ("ok", "doc-sow-3")
+    assert (row["contract_type"], row["msa_title"]) == ("sow", "Trinetix Model MSA")
+    assert [call["name"] for call in row["llm_detail"]] == ["doc_chat", "doc_chat_json_retry"]
+    assert (row["llm_load_ms"], row["llm_prompt_ms"], row["llm_gen_ms"]) == (5900, 6900, 1400)
+    assert (row["tokens_in"], row["tokens_out"]) == (11000, 180)
+    assert row["edits_proposed"] == 1 and row["context"]["parts"]
+    assert row["office_platform"] == "Mac"
+    with get_pool().connection() as conn:
+        (audit_turn_id,) = conn.execute("SELECT turn_id FROM audit_log").fetchone()
+    assert audit_turn_id == row["turn_id"]
