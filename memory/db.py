@@ -122,6 +122,10 @@ _STATEMENTS = [
     # CREATE above because CREATE TABLE IF NOT EXISTS will not add a column to
     # a table that already exists (same pattern as audit_log.user_name).
     "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS request TEXT NOT NULL DEFAULT ''",
+    # Add later turn_log columns with an `ALTER TABLE turn_log ADD COLUMN IF NOT
+    # EXISTS …` statement BELOW its CREATE, never only inside it: CREATE TABLE IF
+    # NOT EXISTS will not touch a table that already exists (the VM's), and every
+    # insert naming the new column would then fail — quietly, into the app log.
     # One row per accepted request to /api/query, its resume and /api/compact —
     # failures included — written by the request handler after the response
     # (api/turn_record.py). `timestamp` is when the request ARRIVED; the other
