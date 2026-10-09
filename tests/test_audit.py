@@ -36,3 +36,12 @@ def test_write_audit_log_persists_user_name():
             "SELECT user_name FROM audit_log WHERE user_id = 'uuid-1'"
         ).fetchone()
     assert row[0] == "Dmytro Ivanov"
+
+
+def test_the_audit_row_stores_its_turn_id():
+    write_audit_log(session_id="s-t", user_id="u", skill_name="research",
+                    task_type="research", request_summary="q", turn_id="turn-7")
+    with get_pool().connection() as conn:
+        (turn_id,) = conn.execute(
+            "SELECT turn_id FROM audit_log WHERE session_id = 's-t'").fetchone()
+    assert turn_id == "turn-7"

@@ -241,6 +241,8 @@ def submit_query(
         "context_breakdown": None,
         # memory_writer derives audit_log.duration_ms from this.
         "turn_started_at": time.time(),
+        # audit_log carries it, so an audit row joins its turn_log row exactly.
+        "turn_id": turn_id,
     }
 
     graph = _get_graph()
@@ -342,8 +344,9 @@ def resume_query(session_id: str, body: ResumeRequest):
                     "revised_response": body.revised_response,
                 },
                 # Restamped: measured from the interrupted submit, the audit
-                # row would count the attorney's review wait as latency.
-                update={"turn_started_at": time.time()},
+                # row would count the attorney's review wait as latency. And
+                # re-identified: this resume is its own turn.
+                update={"turn_started_at": time.time(), "turn_id": turn_id},
             ),
             config=config,
         )

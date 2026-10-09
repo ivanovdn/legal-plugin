@@ -64,3 +64,4 @@ class LegalAgentState(TypedDict):
     token_usage: dict | None               # NEW — real prompt/completion counts from the LLM response (observability.tracing shape)
     context_breakdown: dict | None          # NEW — what this turn's context actually spent, for the pane's counter
     turn_started_at: float                 # NEW — epoch secs the request began (submit or resume); audit duration_ms derives from it
+    turn_id: str                           # NEW — the request's turn id (query.py mints it; a resume re-stamps it); audit_log carries it so its row joins turn_log

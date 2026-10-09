@@ -49,6 +49,7 @@ def memory_writer(state: LegalAgentState) -> dict:
         review_notes=state.get("attorney_notes", ""),
         duration_ms=duration_ms,
         user_name=state.get("user_name", ""),
+        turn_id=state.get("turn_id", ""),
     )
 
     # Degrade rather than die when the audit store is unreachable. A turn does

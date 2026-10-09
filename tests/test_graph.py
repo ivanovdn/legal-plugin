@@ -734,3 +734,74 @@ def test_graph_without_checkpointer_still_completes_in_one_shot(tmp_path, monkey
 
     # With interrupt disabled, graph completes through output_formatter
     assert result.get("report", {}).get("response", "") != ""
+
+
+def test_graph_carries_the_turn_id_to_the_audit_row(tmp_path, monkeypatch):
+    """Same trap as turn_started_at: LangGraph drops input keys the state schema
+    does not declare, so an undeclared turn_id would reach memory_writer as ''
+    and no audit row would ever join its turn_log row."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=_fake_chunks), \
+         patch("skills.legal_research.legal_research._build_agent", return_value=_fake_agent()), \
+         patch("skills.contract_generation.contract_generation._build_agent", return_value=_fake_agent()):
+
+        build_graph().invoke(_make_state(
+            request="What are indemnification standards?",
+            session_id="turn-id-test",
+            turn_id="turn-123",
+        ))
+
+    with get_pool().connection() as conn:
+        (turn_id,) = conn.execute(
+            "SELECT turn_id FROM audit_log WHERE session_id = %s", ("turn-id-test",)
+        ).fetchone()
+    assert turn_id == "turn-123"
+
+
+def test_graph_resume_writes_the_resume_turn_id(tmp_path, monkeypatch):
+    """Review Focus #5. A resume is its own turn: the audit row it completes must
+    carry the turn_id the resume's Command(update=) applies — including over a
+    run checkpointed before turn_id existed (no turn_id in its state)."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("RERANKER_ENABLED", "false")
+    monkeypatch.setenv("BM25_ENABLED", "false")
+    monkeypatch.setenv("INTERRUPT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_review_blocker), \
+         patch("graph.nodes.rag_retriever.hybrid_search", return_value=[]):
+
+        compiled = build_graph(checkpointer=MemorySaver())
+        config = {"configurable": {"thread_id": "resume-turn-id"}}
+        state = _make_state(
+            request="Review this contract.",
+            task_type="contract_review",
+            skill_plan=["contract_review"],
+            uploaded_docs=[{"text": "MASTER SERVICES AGREEMENT between Acme and Trinetix."}],
+            session_id="resume-turn-id",
+        )                                   # no turn_id: a pre-SP2 checkpoint
+        state["interactive_review"] = True
+        assert "__interrupt__" in compiled.invoke(state, config=config)
+
+        compiled.invoke(
+            Command(
+                resume={"approved": True, "notes": "", "revised_response": ""},
+                update={"turn_id": "turn-resume"},
+            ),
+            config=config,
+        )
+
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT turn_id FROM audit_log WHERE session_id = %s", ("resume-turn-id",)
+        ).fetchall()
+    assert rows == [("turn-resume",)]

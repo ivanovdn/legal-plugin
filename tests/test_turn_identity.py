@@ -7,10 +7,12 @@ Word tabs. Feedback captured against that would point at a dozen prompts.
 import time
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
 from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.trace import TracerProvider
 
 import api.routes.query as q
+from api.main import app
 from api.models import ResumeRequest
 from observability.spans import current_trace_id
 
@@ -144,3 +146,38 @@ def test_resume_restamps_the_turn_start(monkeypatch):
 
     started = (captured["command"].update or {}).get("turn_started_at")
     assert started is not None and before <= started <= after
+
+
+def test_submit_seeds_the_turn_id_it_returns(monkeypatch):
+    """memory_writer writes state["turn_id"] into audit_log; it must be the id
+    the pane received, or the audit row joins nothing."""
+    recorder = {}
+    c = _client(monkeypatch, recorder)
+    data = c.post("/api/query", json={"request": "hi", "task_type": "research"}).json()["data"]
+    assert recorder.get("turn_id") == data["turn_id"]
+
+
+def test_resume_restamps_the_turn_id(monkeypatch):
+    captured = {}
+
+    class FakeState:
+        values = {"awaiting_review": False}
+
+    class CapturingGraph:
+        def get_state(self, config):
+            return FakeState()
+
+        def invoke(self, command, config=None):
+            captured["command"] = command
+            return {"task_type": "drafting", "report": {}, "risk_level": "low",
+                    "awaiting_review": False}
+
+    monkeypatch.setattr(q, "_get_graph", lambda: CapturingGraph())
+    monkeypatch.setattr(q, "_checkpointer_active", True)
+    monkeypatch.setattr(q, "refresh_ttl", lambda *a, **k: None)
+
+    data = TestClient(app).post(
+        "/api/query/sess-rt/resume",
+        json={"approved": True, "notes": "", "revised_response": ""},
+    ).json()["data"]
+    assert (captured["command"].update or {}).get("turn_id") == data["turn_id"]

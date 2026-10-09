@@ -38,6 +38,10 @@ _STATEMENTS = [
     )
     """,
     "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_name TEXT NOT NULL DEFAULT ''",
+    # The request's turn id, so an audit row joins its turn_log row exactly
+    # instead of by session and timestamp. '' on rows written before it existed.
+    "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS turn_id TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS idx_audit_turn ON audit_log (turn_id)",
     """
     CREATE TABLE IF NOT EXISTS review_store (
         id BIGSERIAL PRIMARY KEY,
