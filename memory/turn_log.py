@@ -120,7 +120,7 @@ def build_turn_row(
         "awaiting_review": bool(awaiting_review),
         "contract_type": facts.get("contract_type", ""),
         "contract_type_defaulted": bool(facts.get("contract_type_defaulted", False)),
-        "msa_title": facts.get("msa_title", ""),
+        "msa_title": facts.get("msa_title") or "",
         "preferences_chars": int(facts.get("preferences_chars", 0)),
         "doc_kept_pct": truncated.get("kept_pct") if isinstance(truncated, dict) else None,
         "context": state.get("context_breakdown") or None,

@@ -124,6 +124,15 @@ def test_a_lone_surrogate_breaks_neither_the_fingerprint_nor_the_write():
     write_turn(row)                                     # must not raise
 
 
+def test_an_msa_whose_title_is_null_still_writes_its_row():
+    """get_parent_msa passes a Qdrant payload's doc_title straight through, and a
+    payload holding null gives None (the default only covers an absent key) —
+    which NOT NULL would then refuse, losing the row to the log."""
+    row = _row(turn_id="t-no-title", facts={"msa_title": None})
+    assert row["msa_title"] == ""
+    write_turn(row)                                     # must not raise
+
+
 def test_a_written_row_reads_back_with_its_json_columns_intact():
     write_turn(_row(degradations=["context_truncated"],
                     facts={"llm_detail": [{"name": "doc_chat", "tokens_in": 5}]},
