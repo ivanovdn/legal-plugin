@@ -74,6 +74,7 @@ def intent_router(state: LegalAgentState) -> LegalAgentState:
             task_type = classified
 
         set_gen_attributes(
+            name="intent_router",
             input=prompt,
             output=content,
             model=settings.llm_model,

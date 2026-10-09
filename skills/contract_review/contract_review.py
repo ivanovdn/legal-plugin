@@ -18,7 +18,7 @@ import logging
 from config import get_settings
 from graph.state import LegalAgentState
 from observability.degradations import MSA_LOOKUP_FAILED
-from observability.spans import record_degradation, set_trace_attributes, traced
+from observability.spans import note_turn, record_degradation, set_trace_attributes, traced
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
@@ -145,6 +145,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
         pass
 
     playbook = load_playbook_bundle(contract_type)
+    note_turn(contract_type=contract_type, contract_type_defaulted=was_ambiguous)
 
     # Build user message with contract text if available
     if uploaded_text:
@@ -179,6 +180,7 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
                 f"\n\n--- GOVERNING MSA ({msa_doc_title}) ---\n{msa_text}\n--- END GOVERNING MSA ---"
             )
             msa_attached = True
+            note_turn(msa_title=msa_doc_title)
             logger.info("[contract_review] attached governing MSA %r (%d chars)", msa_doc_title, len(msa_text))
         else:
             logger.info("[contract_review] no governing MSA on file for client_id=%s — reviewing SOW standalone", client_id)

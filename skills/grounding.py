@@ -16,7 +16,7 @@ from skills.base import load_bundle
 from config import get_settings
 from memory.preferences import load_preferences
 from observability.degradations import PREFERENCES_LOAD_FAILED
-from observability.spans import record_degradation
+from observability.spans import note_turn, record_degradation
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,8 @@ def preferences_block_for_state(state: dict) -> str:
     attorney_id = (state.get("user_id") or "").strip()
     if not attorney_id:
         return ""
-    return load_attorney_preferences_block(
+    block = load_attorney_preferences_block(
         attorney_id, settings.preferences_dir, settings.preferences_max_chars
     )
+    note_turn(preferences_chars=len(block))
+    return block

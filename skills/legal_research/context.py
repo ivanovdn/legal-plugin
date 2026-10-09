@@ -39,7 +39,7 @@ from observability.degradations import (
     PRIOR_CONVERSATION_LOAD_FAILED, PRIOR_REVIEW_LOAD_FAILED,
     REVIEW_RECONCILIATION_FAILED, SUMMARY_LOAD_FAILED,
 )
-from observability.spans import record_degradation
+from observability.spans import note_turn, record_degradation
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
@@ -192,14 +192,18 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
     The two lookups fail separately. When one try covered both, a failed MSA
     lookup was logged "answering ungrounded" and coded chat_grounding_failed
     while the playbook sat in the prompt (pilot trace 9f239597, 2026-10-08).
+
+    Notes what it attached for the turn_log row: the contract type only once
+    its playbook loaded, the MSA title only once its block is built.
     """
     try:
-        contract_type, _ = detect_contract_type(uploaded_text)
+        contract_type, defaulted = detect_contract_type(uploaded_text)
         playbook = load_playbook_bundle(contract_type)
     except Exception as e:
         logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
         record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail=e.__class__.__name__)
         return "", ""
+    note_turn(contract_type=contract_type, contract_type_defaulted=defaulted)
     if contract_type != "sow":
         return playbook, ""
     client_id = (state.get("filters") or {}).get("client_id", "")
@@ -214,6 +218,7 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
     if not parent:
         return playbook, ""
     title, msa_text = parent
+    note_turn(msa_title=title)
     return playbook, (
         f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
         f"{msa_text}\n--- END GOVERNING MSA ---"

@@ -170,6 +170,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         state["token_usage"] = ollama_usage(data)
 
         set_gen_attributes(
+            name="llm_caller",
             input=messages,
             output=content,
             model=settings.llm_model,

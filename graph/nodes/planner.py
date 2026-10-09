@@ -67,6 +67,7 @@ def planner(state: LegalAgentState) -> LegalAgentState:
             state["skill_plan"] = parsed["skill_plan"]
 
         set_gen_attributes(
+            name="planner",
             input=prompt,
             output=content,
             model=settings.llm_model,

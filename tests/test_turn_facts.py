@@ -6,12 +6,23 @@ row a turn writes is identical with tracing off.
 """
 from __future__ import annotations
 
+import importlib
+from types import SimpleNamespace
+
 from opentelemetry import trace as otel_trace
 
+from graph.nodes import intent_router, llm_caller, planner
 from observability.degradations import COMPACTION_FAILED, LLM_CALL_FAILED
 from observability.spans import (
     mark_failed, note_turn, set_gen_attributes, traced, turn_facts,
 )
+
+# importlib, never `import skills.x.x as m`: skills/legal_research/__init__.py and
+# skills/contract_review/__init__.py re-export the FUNCTION over the submodule
+# attribute, so an `as` import would bind the function, not the module.
+grounding = importlib.import_module("skills.grounding")
+context = importlib.import_module("skills.legal_research.context")
+review = importlib.import_module("skills.contract_review.contract_review")
 
 _USAGE = {"input": 900, "output": 120, "total": 1020, "unit": "TOKENS"}
 _TIMINGS = {"total_ms": 13200, "load_ms": 5900, "prompt_eval_ms": 6100, "eval_ms": 1100}
@@ -118,3 +129,97 @@ def test_facts_recorded_in_a_child_span_reach_the_root_after_it_closes():
     assert [c["name"] for c in facts["llm_detail"]] == ["doc_chat"]
     assert facts["contract_type"] == "msa"
     assert facts["error"] == "llm_call_failed: RuntimeError: boom"
+
+
+_SOW = (
+    "STATEMENT OF WORK\n\n"
+    "This Statement of Work is issued under the Master Services Agreement dated 1 May 2026.\n"
+    "Payment is due within 60 days of invoice.\n"
+)
+
+
+def _noted_by(fn):
+    """Run fn inside a request root and return what it noted."""
+    @traced("turn")
+    def turn():
+        fn()
+        return turn_facts()
+    return turn()
+
+
+def test_chat_grounding_notes_the_playbook_and_the_msa_it_attached(monkeypatch):
+    monkeypatch.setattr(grounding, "get_parent_msa",
+                        lambda client_id, **kw: ("Trinetix Model MSA", "MSA text"))
+
+    facts = _noted_by(lambda: context._build_chat_grounding(
+        {"filters": {"client_id": "internal"}}, _SOW))
+
+    assert facts == {"contract_type": "sow", "contract_type_defaulted": False,
+                     "msa_title": "Trinetix Model MSA"}
+
+
+def test_chat_grounding_notes_a_defaulted_type_and_no_msa():
+    facts = _noted_by(lambda: context._build_chat_grounding(
+        {"filters": {}}, "A note about lunch plans."))
+
+    assert facts == {"contract_type": "nda", "contract_type_defaulted": True}
+
+
+def test_chat_grounding_notes_nothing_when_the_playbook_fails(monkeypatch):
+    """contract_type means 'the playbook attached' — a failed load attached none."""
+    def boom(_contract_type):
+        raise OSError("bundle missing")
+
+    monkeypatch.setattr(context, "load_playbook_bundle", boom)
+    facts = _noted_by(lambda: context._build_chat_grounding({"filters": {}}, _SOW))
+
+    assert "contract_type" not in facts
+
+
+def test_review_notes_the_playbook_and_the_msa_it_attached(monkeypatch):
+    monkeypatch.setattr(grounding, "get_parent_msa",
+                        lambda client_id, **kw: ("Trinetix Model MSA", "MSA text"))
+    state = {"request": "Review this contract.", "uploaded_docs": [{"text": _SOW}],
+             "filters": {"client_id": "internal"}}
+
+    facts = _noted_by(lambda: review.contract_review(state))
+
+    assert facts == {"contract_type": "sow", "contract_type_defaulted": False,
+                     "msa_title": "Trinetix Model MSA"}
+
+
+def test_preferences_note_the_size_of_the_block_they_inject(monkeypatch):
+    monkeypatch.setattr(grounding, "get_settings", lambda: SimpleNamespace(
+        preferences_enabled=True, preferences_dir="unused", preferences_max_chars=4000))
+    monkeypatch.setattr(grounding, "load_preferences", lambda base, atty: "- Prefer net 30.")
+
+    blocks: list[str] = []
+    facts = _noted_by(lambda: blocks.append(
+        grounding.preferences_block_for_state({"user_id": "atty-1"})))
+
+    assert blocks[0] and facts == {"preferences_chars": len(blocks[0])}
+
+
+def test_the_three_raw_ollama_nodes_name_their_calls(monkeypatch):
+    """llm_caller, planner and intent_router never passed a name, so their
+    llm_detail entries would be anonymous — the name is how a row tells a
+    review's call from a classifier's. All three import the same httpx module,
+    so one patch serves them all."""
+    class FakeResp:
+        def raise_for_status(self): ...
+        def json(self):
+            return {"message": {"content": '{"task_type":"research","skill_plan":["research"]}'},
+                    "prompt_eval_count": 10, "eval_count": 2}
+
+    monkeypatch.setattr(llm_caller.httpx, "post", lambda *a, **k: FakeResp())
+
+    @traced("turn")
+    def turn():
+        intent_router.intent_router({"request": "what is an NDA?"})
+        planner.planner({"request": "review then research",
+                         "skill_plan": ["contract_review", "research"]})
+        llm_caller.llm_caller({"request": "q", "retrieved_chunks": [], "messages": [],
+                               "task_type": "research"})
+        return [call["name"] for call in turn_facts()["llm_detail"]]
+
+    assert turn() == ["intent_router", "planner", "llm_caller"]
