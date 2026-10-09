@@ -146,7 +146,7 @@ The `tee` keeps the whole build output — which steps ran, which came from cach
 
 `BUILD_SHA` stamps both images with the commit: the backend records it on every `turn_log` row (`backend_build`), and the pane sends it with every request (`pane_build`), so a row where the two differ is an attorney still running an older pane. Without it both say `unknown`. Put the same prefix on any other command that builds an image. Because the bundle now carries its commit, the pane is rebuilt on every deploy (~30 s; `npm ci` stays cached) — the 2026-10-08 "byte-identical pane" check gives way to the build-id check in Step 5.
 
-**A deploy that changes the database schema takes a dump first** (*Working files*, below, reason `pre-<change>`); `turn_log` (SP2) was the first such deploy.
+**A deploy that changes the database schema takes a dump first** (*Working files*, below, reason `pre-<change>`); `turn_log` (SP2) is the first deploy taken under this rule.
 
 > **Everything the stack runs is pinned** — images as `tag@sha256` in both compose files and both Dockerfiles, Python packages through `requirements-runtime.lock` — so a rebuild changes nothing a commit didn't. Until 2026-10-08 a rebuild re-resolved version ranges whenever the VM's build cache had been evicted, and silently moved production to fastapi 0.143.0, whose built-in tracing took over every trace root. Bump a pin on purpose (CLAUDE.md, *Stack*).
 
@@ -213,7 +213,7 @@ What we make on the VM by hand — deploy logs, backups, the exported root certi
 | `data/deploy-logs/` | One log per deploy, written by the command above: the build output and the exit status. Named `deploy-<UTC date>-<commit>.log`; a second run of the same commit that day appends. | Always — about 40 KB each. |
 | `data/backups/` | A copy of production data taken right before something that could destroy it (below). Named `<what>-<UTC date>-<reason>`, e.g. `app-db-2026-10-15-pre-sp2.sql.gz`. | Until the operation it protected is verified, then deleted — most hold contract text. The Caddy CA stays. |
 
-**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build: .`, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` is mounted into a container, so these two folders are invisible to the stack. `data/` itself belongs to root (Docker created it for that mount), so the two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`:
+**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build.context: .` in compose, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` is mounted into a container, so these two folders are invisible to the stack. `data/` itself belongs to root (Docker created it for that mount), so the two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`:
 
 ```bash
 sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
