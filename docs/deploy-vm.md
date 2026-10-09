@@ -230,7 +230,7 @@ sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
   $DC exec -T phoenix python3 -c "import os; os.remove('/tmp/backup.db')"
   ```
 
-- **Caddy's CA**, once — it does not change. If `caddy_data` is lost, Caddy mints a new CA and every attorney's install breaks until they import a new certificate (Step 7's ⚠); `root.crt` + `root.key` are what it would take to put the old one back:
+- **Caddy's CA**, once — it does not change. If `caddy_data` is lost, Caddy mints a new CA and every attorney's install breaks until they import a new certificate (Step 7's ⚠); `root.crt` + `root.key` put the old one back (*Restoring Caddy's CA*, below). SRV-AGENT-01's was taken 2026-10-09: `data/backups/caddy-ca-2026-10-09`, root fingerprint `04:63:41:EF…:52:7B`.
 
   ```bash
   $DC cp caddy:/data/caddy/pki/authorities/local "data/backups/caddy-ca-$(date -u +%F)"
@@ -238,7 +238,23 @@ sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
 
   `root.key` can sign a certificate for **any** site, and every attorney's machine will trust it. It never leaves the VM.
 
-These copies sit on the same disk as what they protect: they cover our mistakes — a bad migration, a `down -v`, a broken upgrade — not the loss of the VM. **No restore has been rehearsed yet**; rehearse one on a scratch stack before counting on it. Dry-run on SRV-AGENT-01 on 2026-10-09 without writing anything: the dump came to 91 KB gzipped, Phoenix's online backup passed its integrity check in memory, and the CA listed its four files.
+These copies sit on the same disk as what they protect: they cover our mistakes — a bad migration, a `down -v`, a broken upgrade — not the loss of the VM. The `app-db` and Phoenix restores **have not been rehearsed yet**; rehearse one on a scratch stack before counting on it. Each backup command was dry-run on SRV-AGENT-01 on 2026-10-09 without writing anything: the dump came to 91 KB gzipped, Phoenix's online backup passed its integrity check in memory, and the CA listed its four files.
+
+**Restoring Caddy's CA** — only when the live root no longer matches the backup (compare them with the last two commands below). Only `root.crt` and `root.key` go back: Caddy issues a fresh intermediate and site certificate from them, so it does not matter that the intermediate in the backup has long expired.
+
+```bash
+$DC rm -sf caddy                           # stop and remove the container; its volumes stay
+docker volume rm legal-plugin_caddy_data   # ONLY this volume, never `down -v`: it holds the replacement CA nobody trusts
+$DC up --no-start --no-deps caddy          # a fresh, empty caddy_data; Caddy not started, backend untouched
+docker run --rm -v legal-plugin_caddy_data:/data -v "$PWD/data/backups/caddy-ca-<date>":/backup:ro \
+  --entrypoint sh legal-plugin-pane:latest \
+  -c 'mkdir -p /data/caddy/pki/authorities/local && cp /backup/root.crt /backup/root.key /data/caddy/pki/authorities/local/'
+$DC up -d --no-deps caddy
+$DC exec -T caddy cat /data/caddy/pki/authorities/local/root.crt | openssl x509 -noout -fingerprint -sha256
+openssl x509 -in data/backups/caddy-ca-<date>/root.crt -noout -fingerprint -sha256   # must print the same
+```
+
+Rehearsed 2026-10-09 on a scratch stack built from the same pane image, with a stand-in `backend` that Caddy depends on: losing the volume and bringing Caddy back up minted a new CA that the old root no longer verified (`curl --cacert <old root.crt>` exit 60 — what every attorney's machine would see); after these steps the old root verified again (exit 0), the live root's fingerprint matched the backup's, and the stand-in backend was never restarted.
 
 ---
 
