@@ -61,6 +61,8 @@ uv run python -m scripts.feedback_report --turns --attorney <id> --days 2
 $DC run --rm --no-deps backend python -m scripts.feedback_report --turns --days 1   # on the VM
 ```
 
+`--turns` shows the newest 50 turns by default, and says so under the heading when it stops there; `--limit N` shows more.
+
 Each entry reads top to bottom: what happened (task, outcome, reason codes, the
 error if there was one) · where the time went (model reload, prompt reading,
 generation, tokens) · what grounded it (playbook, MSA, how much of the document

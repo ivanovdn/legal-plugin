@@ -41,7 +41,9 @@ def _parse_args() -> argparse.Namespace:
                    help="ISO timestamp lower bound; overrides --days")
     p.add_argument("--attorney", default="", help="filter to one attorney_id")
     p.add_argument("--document", default="", help="filter to one document_id")
-    p.add_argument("--limit", type=int, default=50, help="max feedback rows (default 50)")
+    p.add_argument("--limit", type=int, default=50,
+                   help="max rows per list: feedback rows, or the newest turns under --turns "
+                        "(default 50)")
     p.add_argument("--turns", action="store_true",
                    help="print the turn timeline (turn_log) instead of the feedback summary")
     return p.parse_args()
@@ -94,10 +96,15 @@ def format_turn(t: dict) -> list[str]:
     return lines
 
 
-def print_turns(rows: list[dict]) -> None:
+def print_turns(rows: list[dict], limit: int) -> None:
     print(f"=== Turns ({len(rows)}) ===")
     print("  One entry per request to /api/query, its resume or /api/compact —")
-    print("  failures included — oldest first. How to read it: docs/feedback-loop.md.\n")
+    print("  failures included — oldest first. How to read it: docs/feedback-loop.md.")
+    # recent_turns keeps the newest `limit`, so a full page may have cut off the
+    # START of the story — and fifty rows read like the whole of it.
+    if rows and len(rows) >= limit:
+        print(f"  Only the newest {limit} turns are shown — raise --limit for more.")
+    print()
     if not rows:
         print("  (none yet)\n")
         return
@@ -126,7 +133,7 @@ def main() -> None:
 
     if args.turns:
         print_turns(recent_turns(since=since, attorney_id=args.attorney,
-                                 document_id=args.document, limit=args.limit))
+                                 document_id=args.document, limit=args.limit), args.limit)
         return
 
     rows = recent_feedback(args.limit, **f)

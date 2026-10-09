@@ -177,9 +177,11 @@ def write_turn_quietly(row: dict[str, Any]) -> None:
 def recent_turns(
     *, since: str = "", attorney_id: str = "", document_id: str = "", limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """The newest `limit` turns within the filter, oldest first, each with what
-    the attorney then did with it: Apply / failure / Discard events and flags
-    written against the same turn_id."""
+    """The `limit` most recently written turns within the filter, in the order
+    their requests arrived (oldest first), each with what the attorney then did
+    with it: Apply / failure / Discard events and flags written against the same
+    turn_id. Arrival order, not write order: the row is written after the
+    response, so a slow turn lands after a quick one that arrived later."""
     where, params = _filters(since, document_id, attorney_id)
     sql = f"""
         SELECT * FROM (
@@ -196,7 +198,7 @@ def recent_turns(
             ORDER BY t.id DESC
             LIMIT %s
         ) newest
-        ORDER BY id
+        ORDER BY timestamp, id
     """
     with get_pool().connection() as conn:
         cur = conn.execute(sql, [*params, limit])

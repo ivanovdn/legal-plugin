@@ -1,9 +1,11 @@
 """feedback_report --turns: a session read back from turn_log, turn by turn."""
 from __future__ import annotations
 
+import sys
+
 from memory.feedback_store import record_event, save_feedback
 from memory.turn_log import build_turn_row, recent_turns, write_turn
-from scripts.feedback_report import format_turn
+from scripts.feedback_report import format_turn, main, print_turns
 
 
 def _turn(turn_id, **overrides):
@@ -44,6 +46,45 @@ def test_recent_turns_reads_oldest_first_within_the_newest_limit():
     for i in range(3):
         write_turn(_turn(f"t-{i}", arrived_at=f"2026-10-09T10:0{i}:00+00:00"))
     assert [r["turn_id"] for r in recent_turns(limit=2)] == ["t-1", "t-2"]
+
+
+def test_recent_turns_reads_in_the_order_the_requests_arrived():
+    """The row is written after the response, so a slow turn is written AFTER a
+    quick one that arrived later: id order is not the order the attorney lived it."""
+    write_turn(_turn("t-quick", arrived_at="2026-10-09T10:00:10+00:00"))
+    write_turn(_turn("t-slow", arrived_at="2026-10-09T10:00:00+00:00"))
+    assert [r["turn_id"] for r in recent_turns()] == ["t-slow", "t-quick"]
+
+
+def test_a_full_page_says_older_turns_are_cut_off(capsys):
+    """--limit used to cut the timeline off with no sign of it: fifty rows read
+    like the whole story."""
+    for i in range(3):
+        write_turn(_turn(f"t-{i}", arrived_at=f"2026-10-09T10:0{i}:00+00:00"))
+    print_turns(recent_turns(limit=2), limit=2)
+    out = capsys.readouterr().out
+    assert "=== Turns (2) ===" in out
+    assert "the newest 2 turns" in out and "raise --limit" in out
+
+
+def test_a_page_with_room_to_spare_says_nothing_about_a_cut(capsys):
+    write_turn(_turn("t-1"))
+    print_turns(recent_turns(limit=5), limit=5)
+    out = capsys.readouterr().out
+    assert "=== Turns (1) ===" in out and "turn: t-1" in out
+    assert "newest" not in out and "--limit" not in out
+
+
+def test_the_cli_hands_its_limit_to_the_printer(monkeypatch, capsys):
+    """The one place --limit meets print_turns: a printer that is right and a
+    main() that forgets to pass the limit would still print an unmarked cut."""
+    for i in range(3):
+        write_turn(_turn(f"t-{i}", arrived_at=f"2026-10-09T10:0{i}:00+00:00"))
+    monkeypatch.setattr(sys, "argv", ["feedback_report", "--turns", "--limit", "2"])
+    main()
+    out = capsys.readouterr().out
+    assert "=== Turns (2) ===" in out and "the newest 2 turns" in out
+    assert "turn: t-1" in out and "turn: t-2" in out and "turn: t-0" not in out
 
 
 def test_since_filters_by_arrival_time():
