@@ -3,7 +3,7 @@
 
 import type { EditProposal } from "./parseEditBlocks";
 import { resolveDocumentId } from "./docIdentity";
-import { userHeaders } from "./attorneyIdentity";
+import { requestHeaders } from "./requestHeaders";
 import type { ContextTruncated, TokenUsage } from "./contextNotice";
 import type { ContextBreakdown } from "./contextGauge";
 
@@ -43,7 +43,7 @@ export interface QueryResponse {
 async function postQuery(body: Record<string, unknown>): Promise<QueryResponse> {
   const res = await fetch("/api/query", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...userHeaders() },
+    headers: { "Content-Type": "application/json", ...requestHeaders() },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -128,7 +128,7 @@ export async function compactConversation(
 ): Promise<CompactResponse> {
   const res = await fetch("/api/compact", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...userHeaders() },
+    headers: { "Content-Type": "application/json", ...requestHeaders() },
     body: JSON.stringify({ document_id: documentId, reclaim_chars: reclaimChars }),
   });
   if (!res.ok) {

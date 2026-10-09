@@ -4,7 +4,7 @@
 // accidentally await it, and a telemetry outage can never surface in the pane
 // or break an Apply. sendFeedback is the opposite: it throws, because the
 // attorney is watching for confirmation that their report sent.
-import { userHeaders } from "./attorneyIdentity";
+import { requestHeaders } from "./requestHeaders";
 
 export interface TurnRef {
   turnId: string;
@@ -45,7 +45,7 @@ export function buildSnapshot(parts: {
 export async function sendFeedback(target: FlagTarget, comment: string): Promise<void> {
   const res = await fetch("/api/feedback", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...userHeaders() },
+    headers: { "Content-Type": "application/json", ...requestHeaders() },
     body: JSON.stringify({
       turn_id: target.turn.turnId,
       trace_id: target.turn.traceId,
@@ -73,7 +73,7 @@ export function recordEvent(
   try {
     void fetch("/api/events", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...userHeaders() },
+      headers: { "Content-Type": "application/json", ...requestHeaders() },
       body: JSON.stringify({
         events: [
           {

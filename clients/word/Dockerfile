@@ -24,6 +24,15 @@ RUN npm ci
 
 COPY . .
 
+# The commit this bundle is built from, compiled in as __PANE_BUILD__
+# (vite.config.ts) and sent as X-Pane-Build on every request, so turn_log can
+# tell a stale pane from a current one. The deploy command passes it
+# (docs/deploy-vm.md Step 4); built without it the bundle says "unknown". After
+# `npm ci` on purpose: a new commit re-runs only the build (~30 s), never the
+# install. The bundle therefore differs on every deploy.
+ARG BUILD_SHA=unknown
+ENV PANE_BUILD=$BUILD_SHA
+
 # `npm run build` is `tsc --noEmit && vite build`, so a type error fails the
 # image instead of quietly shipping a broken pane.
 #

@@ -1,9 +1,9 @@
 // Preferences API client — reads/writes the attorney's USER.md via the backend.
-// Keyed by the same X-User-ID attorney identity the query client sends.
-import { userHeaders } from "./attorneyIdentity";
+// Keyed by the same headers the query client sends (requestHeaders.ts).
+import { requestHeaders } from "./requestHeaders";
 
 export async function getPreferences(): Promise<string> {
-  const res = await fetch("/api/preferences", { headers: userHeaders() });
+  const res = await fetch("/api/preferences", { headers: requestHeaders() });
   if (!res.ok) throw new Error(`Backend returned ${res.status} ${res.statusText}`);
   const json = await res.json();
   return (json?.data?.markdown as string) ?? "";
@@ -12,7 +12,7 @@ export async function getPreferences(): Promise<string> {
 export async function savePreferences(markdown: string): Promise<void> {
   const res = await fetch("/api/preferences", {
     method: "PUT",
-    headers: { "Content-Type": "application/json", ...userHeaders() },
+    headers: { "Content-Type": "application/json", ...requestHeaders() },
     body: JSON.stringify({ markdown }),
   });
   if (!res.ok) throw new Error(`Backend returned ${res.status} ${res.statusText}`);

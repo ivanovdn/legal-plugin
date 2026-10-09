@@ -77,7 +77,10 @@ services:
     # backend image was rebuilt by `up --build`, and the VM has no npm — so the
     # served pane silently froze at whatever was last built by hand while the
     # backend kept moving. Now `up --build` produces both from one commit.
-    build: ./clients/word
+    build:
+      context: ./clients/word
+      args:
+        BUILD_SHA: ${BUILD_SHA:-unknown}
     image: legal-plugin-pane:latest
     logging: *logging
     ports:

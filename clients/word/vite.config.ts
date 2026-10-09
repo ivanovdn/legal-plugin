@@ -25,6 +25,15 @@ export default defineConfig(async ({ command }) => {
   const https = command === "serve" ? await getHttpsServerOptions() : undefined;
   return {
     plugins: [react(), noStore],
+    // The commit this bundle was built from, sent as X-Pane-Build on every
+    // request (src/requestHeaders.ts) and recorded on turn_log. The pane image
+    // passes it in (clients/word/Dockerfile: BUILD_SHA -> PANE_BUILD); the dev
+    // server says "dev"; a build without it says "unknown", visibly.
+    define: {
+      __PANE_BUILD__: JSON.stringify(
+        process.env.PANE_BUILD || (command === "serve" ? "dev" : "unknown"),
+      ),
+    },
     root: "src",
     publicDir: "../assets",
     server: {
