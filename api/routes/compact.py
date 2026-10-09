@@ -15,15 +15,17 @@ be a guess — and the counter's own honesty constraint is that its figures are
 the last turn's real measured values. The pane's counter updates on the next
 message.
 """
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
 
-from api.auth import resolve_user_id
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+
+from api.auth import resolve_user_id, resolve_user_name
+from api.client_info import ClientInfo, resolve_client_info
 from api.models import ApiResponse, CompactRequest
+from api.turn_record import finish_turn, start_turn
 from config import get_settings
 from observability.degradations import COMPACTION_FAILED, OUTCOME_FAILED, derive_outcome
-from observability.spans import (
-    degradations, mark_failed, set_outcome, set_trace_attributes, traced,
-)
+from observability.spans import degradations, mark_failed, set_trace_attributes, traced
 from skills.legal_research.compaction import compact_conversation
 
 router = APIRouter(prefix="/api")
@@ -32,7 +34,11 @@ router = APIRouter(prefix="/api")
 @router.post("/compact", response_model=ApiResponse)
 @traced("compact")
 def post_compact(
-    body: CompactRequest, user_id: str = Depends(resolve_user_id)
+    body: CompactRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(resolve_user_id),
+    user_name: str = Depends(resolve_user_name),
+    client: ClientInfo = Depends(resolve_client_info),
 ) -> ApiResponse:
     if not get_settings().compaction_enabled:
         raise HTTPException(status_code=403, detail="compaction is disabled")
@@ -51,6 +57,12 @@ def post_compact(
         user_id=user_id,
         metadata={"document_id": document_id, "reclaim_chars": body.reclaim_chars},
     )
+
+    # Past the two guards the request is accepted, and every exit from here
+    # records a turn_log row; a 403/400 was rejected before any work, like a
+    # 422. Its own turn_id: a compaction is not part of any chat turn.
+    turn = start_turn(kind="compact", turn_id=str(uuid.uuid4()), client=client,
+                      attorney_id=user_id, user_name=user_name, document_id=document_id)
 
     # compact_conversation guards generation and the write, but NOT its own
     # reads: select_compactable_rows -> latest_to_id / load_rows_after sit
@@ -73,7 +85,9 @@ def post_compact(
         result = compact_conversation(document_id, user_id, body.reclaim_chars)
     except Exception as e:
         mark_failed(COMPACTION_FAILED, detail=e.__class__.__name__)
-        set_outcome(OUTCOME_FAILED)
+        # Raising skips background tasks, so the row is written now.
+        finish_turn(turn, outcome=OUTCOME_FAILED, status="error",
+                    api_error=e.__class__.__name__)
         raise
 
     # COMPACTION_FAILED is recorded HERE, not at compaction.py's own excepts:
@@ -84,7 +98,8 @@ def post_compact(
     # other, so neither can double-count.
     if result["error"]:
         mark_failed(COMPACTION_FAILED, detail=result["error"])
-        set_outcome(OUTCOME_FAILED)
+        finish_turn(turn, outcome=OUTCOME_FAILED, status="error",
+                    api_error=result["error"], compaction=result)
         raise HTTPException(status_code=500, detail=result["error"])
 
     # A net-benefit refusal (the summary would be no smaller than the messages
@@ -95,5 +110,6 @@ def post_compact(
     if result.get("reason"):
         set_trace_attributes(metadata={"compaction.refused_reason": result["reason"]})
 
-    set_outcome(derive_outcome(degradations()))
+    finish_turn(turn, outcome=derive_outcome(degradations()), status="ok",
+                compaction=result, background_tasks=background_tasks)
     return ApiResponse(status="ok", data=result)

@@ -984,7 +984,7 @@ def test_compact_route_gives_the_llm_span_a_parent(monkeypatch):
 
     monkeypatch.setattr(mod, "compact_conversation", lambda *a, **k: fake_generation())
 
-    mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+    call_handler(mod.post_compact, CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1", user_name="U")
 
     child = spans_by_name("llm")[0]
     assert child.parent is not None, "the compaction LLM span must not be an orphan root"
@@ -1008,7 +1008,7 @@ def test_compact_route_marks_failed_when_compaction_errors(monkeypatch):
     })
 
     with pytest.raises(HTTPException):
-        mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+        call_handler(mod.post_compact, CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1", user_name="U")
 
     span = spans_by_name("compact")[0]
     assert span.attributes["app.outcome"] == "failed"
@@ -1038,7 +1038,7 @@ def test_compact_route_records_a_net_benefit_refusal_without_marking_it_failed(m
         "compacted": False, "reclaimed": 0,
     })
 
-    mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+    call_handler(mod.post_compact, CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1", user_name="U")
 
     span = spans_by_name("compact")[0]
     assert span.attributes["app.outcome"] == "ok"
@@ -1075,7 +1075,7 @@ def test_compact_route_marks_failed_when_the_store_read_raises(monkeypatch):
     monkeypatch.setattr(mod, "compact_conversation", boom)
 
     with pytest.raises(psycopg_pool.PoolTimeout):
-        mod.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1")
+        call_handler(mod.post_compact, CompactRequest(document_id="doc-1", reclaim_chars=5000), user_id="u1", user_name="U")
 
     span = spans_by_name("compact")[0]
     assert span.attributes["app.outcome"] == "failed"
@@ -1122,7 +1122,7 @@ def test_compact_route_early_guards_are_error_spans_with_no_outcome(
     ))
 
     with pytest.raises(HTTPException) as excinfo:
-        mod.post_compact(CompactRequest(document_id=document_id, reclaim_chars=0), user_id="u1")
+        call_handler(mod.post_compact, CompactRequest(document_id=document_id, reclaim_chars=0), user_id="u1", user_name="U")
     assert excinfo.value.status_code == status
 
     span = spans_by_name("compact")[0]

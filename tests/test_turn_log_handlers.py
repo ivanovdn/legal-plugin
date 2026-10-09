@@ -9,18 +9,21 @@ from __future__ import annotations
 
 import json
 import logging
+from types import SimpleNamespace
 
+import psycopg_pool
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
 
+import api.routes.compact as compact_route
 import api.routes.query as q
 import api.turn_record as turn_record
 import memory.turn_log as turn_log
 from api.client_info import ClientInfo
 from api.main import app
-from api.models import QueryRequest, ResumeRequest
+from api.models import CompactRequest, QueryRequest, ResumeRequest
 from memory.db import get_pool
 from tests.conftest import call_handler, spans_by_name
 
@@ -259,4 +262,83 @@ def test_a_resume_exit_schedules_exactly_one_write_and_does_not_make_it(monkeypa
     tasks = BackgroundTasks()
     q.resume_query("sess-r", ResumeRequest(approved=False, notes="tighten the cap", revised_response=""),
                    background_tasks=tasks, client=ClientInfo())
+    assert len(tasks.tasks) == 1 and _rows() == []
+
+
+def _compact(monkeypatch, outcome_fn):
+    monkeypatch.setattr(compact_route, "compact_conversation", outcome_fn)
+    return call_handler(
+        compact_route.post_compact, CompactRequest(document_id="doc-1", reclaim_chars=5000),
+        user_id="atty-1", user_name="A. Tester",
+    )
+
+
+_CONDENSED = {"compacted": True, "from_id": 1, "to_id": 6, "messages": 6, "quotes": 5,
+              "dropped": 1, "reclaimed": 4200, "requested": 5000, "segment_id": 3,
+              "reason": "", "error": ""}
+
+COMPACT_EXITS = {
+    "ok": (lambda *a: dict(_CONDENSED), None),
+    "refused": (lambda *a: {"compacted": False, "reason": "would not save space", "error": ""},
+                None),
+    "error": (lambda *a: {"compacted": False, "reason": "",
+                          "error": "the condensed summary could not be verified"},
+              HTTPException),
+    "store_read_raised": (_raises(psycopg_pool.PoolTimeout("couldn't get a connection")),
+                          psycopg_pool.PoolTimeout),
+}
+
+
+@pytest.mark.parametrize("exit_name", list(COMPACT_EXITS))
+def test_every_compact_exit_writes_exactly_one_row(monkeypatch, exit_name):
+    """RED first. The two raising exits must write synchronously: FastAPI never
+    runs background tasks for a request that raised, and neither does
+    call_handler. Mutation: pass background_tasks on a raising exit."""
+    outcome_fn, raises = COMPACT_EXITS[exit_name]
+    if raises:
+        with pytest.raises(raises):
+            _compact(monkeypatch, outcome_fn)
+    else:
+        _compact(monkeypatch, outcome_fn)
+    (row,) = _rows()
+    assert (row["kind"], row["document_id"], row["attorney_id"]) == ("compact", "doc-1", "atty-1")
+    assert row["user_name"] == "A. Tester"
+    assert row["outcome"] == spans_by_name("compact")[0].attributes["app.outcome"]
+
+
+def test_compaction_rows_keep_what_was_condensed_or_why_not(monkeypatch):
+    _compact(monkeypatch, COMPACT_EXITS["ok"][0])
+    _compact(monkeypatch, COMPACT_EXITS["refused"][0])
+    with pytest.raises(HTTPException):
+        _compact(monkeypatch, COMPACT_EXITS["error"][0])
+    condensed, refused, failed = _rows()
+    assert condensed["compaction"]["reclaimed"] == 4200 and condensed["status"] == "ok"
+    assert refused["compaction"]["reason"] == "would not save space"
+    assert refused["outcome"] == "ok"
+    assert (failed["status"], failed["outcome"]) == ("error", "failed")
+    assert failed["error"] == "compaction_failed: the condensed summary could not be verified"
+
+
+@pytest.mark.parametrize("disabled,document_id", [(True, "doc-1"), (False, "   ")])
+def test_the_compact_guards_write_no_row(monkeypatch, disabled, document_id):
+    """A 403 or 400 is rejected before any work, like a 422."""
+    monkeypatch.setattr(compact_route, "get_settings",
+                        lambda: SimpleNamespace(compaction_enabled=not disabled))
+    with pytest.raises(HTTPException):
+        call_handler(compact_route.post_compact,
+                     CompactRequest(document_id=document_id, reclaim_chars=0),
+                     user_id="atty-1", user_name="")
+    assert _rows() == []
+
+
+@pytest.mark.parametrize("exit_name", ["ok", "refused"])
+def test_a_returning_compact_exit_schedules_exactly_one_write_and_does_not_make_it(monkeypatch, exit_name):
+    """Same rule as the query/resume exits: a returning exit queues the write for
+    after the response. Calls the handler directly — call_handler would run the
+    queued task first and hide the timing."""
+    monkeypatch.setattr(compact_route, "compact_conversation", COMPACT_EXITS[exit_name][0])
+    tasks = BackgroundTasks()
+    compact_route.post_compact(CompactRequest(document_id="doc-1", reclaim_chars=5000),
+                               background_tasks=tasks, user_id="atty-1", user_name="A. Tester",
+                               client=ClientInfo())
     assert len(tasks.tasks) == 1 and _rows() == []
