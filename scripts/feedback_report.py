@@ -4,6 +4,7 @@
     uv run python -m scripts.feedback_report
     uv run python -m scripts.feedback_report --days 7
     uv run python -m scripts.feedback_report --attorney <id> --document <id>
+    uv run python -m scripts.feedback_report --turns --attorney <id> --days 2
 
 Feedback nobody reads is worse than none — it costs the attorney something and
 returns nothing. This is the whole reporting story; there is deliberately no UI.
@@ -29,6 +30,7 @@ from memory.feedback_store import (
     event_counts,
     recent_feedback,
 )
+from memory.turn_log import recent_turns
 
 
 def _parse_args() -> argparse.Namespace:
@@ -40,7 +42,68 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--attorney", default="", help="filter to one attorney_id")
     p.add_argument("--document", default="", help="filter to one document_id")
     p.add_argument("--limit", type=int, default=50, help="max feedback rows (default 50)")
+    p.add_argument("--turns", action="store_true",
+                   help="print the turn timeline (turn_log) instead of the feedback summary")
     return p.parse_args()
+
+
+def _secs(ms: int) -> str:
+    return f"{ms / 1000:.1f}s"
+
+
+def format_turn(t: dict) -> list[str]:
+    """One turn as the timeline prints it: what happened, where the time went,
+    what grounded it, what the attorney did with it, what sent it, and the
+    question with the ids to look it up by."""
+    task = t["task_type"] or t["kind"]
+    codes = f" [{', '.join(t['degradations'])}]" if t["degradations"] else ""
+    who = t["user_name"] or t["attorney_id"]
+    lines = [f"  {t['timestamp'][:19]}  {who}  {t['kind']}:{task}  {t['outcome']}{codes}"]
+    if t["error"]:
+        lines.append(f"    error: {t['error'][:160]}")
+    lines.append(
+        f"    {_secs(t['duration_ms'])} total · {t['llm_calls']} model call(s): "
+        f"load {_secs(t['llm_load_ms'])} · prompt {_secs(t['llm_prompt_ms'])} · "
+        f"gen {_secs(t['llm_gen_ms'])} · {t['tokens_in']}→{t['tokens_out']} tokens"
+    )
+    grounding = t["contract_type"] or "no playbook"
+    if t["contract_type_defaulted"]:
+        grounding += " (type defaulted)"
+    grounding += f" · MSA: {t['msa_title'] or '—'}"
+    if t["doc_kept_pct"] is not None:
+        grounding += f" · document cut to {t['doc_kept_pct']}%"
+    lines.append(f"    {grounding} · doc {t['doc_chars']} chars")
+    lines.append(
+        f"    edits {t['edits_proposed']} proposed → {t['applied']} applied, "
+        f"{t['failed']} failed, {t['discarded']} discarded · flags {t['flags']}"
+    )
+    # An empty pane_build is a pane from before SP2 (or Chainlit) — unknown,
+    # not stale. Only two different builds are a stale pane.
+    stale = ("  ⚠ stale pane"
+             if t["pane_build"] and t["pane_build"] != t["backend_build"] else "")
+    sender = t["office_platform"] or "no Office headers"
+    if t["office_version"]:
+        sender += f" {t['office_version']}"
+    lines.append(
+        f"    {sender} · pane {t['pane_build'] or '—'} · backend {t['backend_build']}{stale}"
+    )
+    if t["request"]:
+        lines.append(f"    asked: {t['request'][:100]}")
+    trace = f"  trace: {t['trace_id']}" if t["trace_id"] else ""
+    lines.append(f"    turn: {t['turn_id']}{trace}")
+    return lines
+
+
+def print_turns(rows: list[dict]) -> None:
+    print(f"=== Turns ({len(rows)}) ===")
+    print("  One entry per request to /api/query, its resume or /api/compact —")
+    print("  failures included — oldest first. How to read it: docs/feedback-loop.md.\n")
+    if not rows:
+        print("  (none yet)\n")
+        return
+    for row in rows:
+        print("\n".join(format_turn(row)))
+        print()
 
 
 def main() -> None:
@@ -60,6 +123,11 @@ def main() -> None:
     if args.document:
         scope.append(f"document {args.document}")
     print(f"Scope: {' · '.join(scope) if scope else 'all time, all attorneys, all documents'}\n")
+
+    if args.turns:
+        print_turns(recent_turns(since=since, attorney_id=args.attorney,
+                                 document_id=args.document, limit=args.limit))
+        return
 
     rows = recent_feedback(args.limit, **f)
     print(f"=== Feedback ({len(rows)}) ===\n")

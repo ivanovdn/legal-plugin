@@ -18,6 +18,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from memory.db import get_pool
+from memory.feedback_store import _filters
 
 logger = logging.getLogger(__name__)
 
@@ -171,3 +172,33 @@ def write_turn_quietly(row: dict[str, Any]) -> None:
             "TURN LOG WRITE FAILED (%s) — row recorded here instead: %s",
             e, json.dumps(row, default=str, ensure_ascii=False),
         )
+
+
+def recent_turns(
+    *, since: str = "", attorney_id: str = "", document_id: str = "", limit: int = 200,
+) -> list[dict[str, Any]]:
+    """The newest `limit` turns within the filter, oldest first, each with what
+    the attorney then did with it: Apply / failure / Discard events and flags
+    written against the same turn_id."""
+    where, params = _filters(since, document_id, attorney_id)
+    sql = f"""
+        SELECT * FROM (
+            SELECT t.*,
+                (SELECT count(*) FROM interaction_event e WHERE e.turn_id = t.turn_id
+                   AND e.action IN ('edit_applied', 'redline_applied')) AS applied,
+                (SELECT count(*) FROM interaction_event e WHERE e.turn_id = t.turn_id
+                   AND e.action IN ('edit_failed', 'redline_failed')) AS failed,
+                (SELECT count(*) FROM interaction_event e WHERE e.turn_id = t.turn_id
+                   AND e.action = 'edit_discarded') AS discarded,
+                (SELECT count(*) FROM feedback f WHERE f.turn_id = t.turn_id) AS flags
+            FROM turn_log t
+            {"WHERE " + where if where else ""}
+            ORDER BY t.id DESC
+            LIMIT %s
+        ) newest
+        ORDER BY id
+    """
+    with get_pool().connection() as conn:
+        cur = conn.execute(sql, [*params, limit])
+        names = [column.name for column in cur.description]
+        return [dict(zip(names, values)) for values in cur.fetchall()]
