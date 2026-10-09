@@ -16,6 +16,7 @@ import psycopg_pool
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import MemorySaver
 from redis.exceptions import RedisError
 
 import api.routes.compact as compact_route
@@ -413,3 +414,81 @@ def test_a_real_sow_chat_turn_records_its_grounding_and_both_model_calls(monkeyp
     with get_pool().connection() as conn:
         (audit_turn_id,) = conn.execute("SELECT turn_id FROM audit_log").fetchone()
     assert audit_turn_id == row["turn_id"]
+
+
+_NDA = (
+    "MUTUAL NON-DISCLOSURE AGREEMENT\n\n"
+    "This Non-Disclosure Agreement is made between Acme Corp and Trinetix.\n"
+    "Confidentiality obligations survive for 5 years after termination.\n"
+)
+
+# One chat reply holding BOTH structured blocks the pane turns into cards: an
+# edit (```json) and a suggested preference (```preference).
+_CHAT_REPLY_WITH_AN_EDIT_AND_A_PREFERENCE = (
+    "I will change the survival period to 3 years.\n\n"
+    "```json\n"
+    '{"action": "replace", '
+    '"target_text": "Confidentiality obligations survive for 5 years after termination.", '
+    '"new_text": "Confidentiality obligations survive for 3 years after termination."}\n'
+    "```\n\n"
+    "I have noted your preference.\n\n"
+    "```preference\n"
+    "I prefer a 3-year survival period for confidentiality obligations.\n"
+    "```\n"
+)
+
+
+class _OllamaReply:
+    """What httpx.post hands llm_caller: a 200 carrying one /api/chat body."""
+    def __init__(self, content):
+        self._content = content
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"message": {"content": self._content}, "prompt_eval_count": 10, "eval_count": 5}
+
+
+def test_a_review_turn_does_not_inherit_the_previous_chat_turns_proposals(monkeypatch):
+    """RED first. Word shares ONE session_id across both tabs, and the checkpointer
+    carries every state key a turn does not set into the next turn, so review ->
+    chat with edits -> re-review is a normal workflow. Only legal_research resets
+    proposed_edits / proposed_preferences; the re-review's row then counted the
+    chat turn's cards as its own. Two real turns over one real graph and one
+    session, as in production.
+
+    Mutation: take "proposed_edits" / "proposed_preferences" back out of
+    submit_query's initial_state."""
+    research = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setattr(research, "_build_llm", lambda: _LLM(_Message(
+        _CHAT_REPLY_WITH_AN_EDIT_AND_A_PREFERENCE, 9000, 120,
+        5_900_000_000, 6_100_000_000, 1_100_000_000)))
+    monkeypatch.setattr("graph.nodes.rag_retriever.hybrid_search", lambda *a, **k: [])
+    monkeypatch.setattr("graph.nodes.llm_caller.httpx.post",
+                        lambda *a, **k: _OllamaReply("# Review Summary\nNo issues."))
+    _wire(monkeypatch, build_graph(checkpointer=MemorySaver()))
+    client = TestClient(app)
+
+    def post(request, task_type):
+        return client.post(
+            "/api/query",
+            json={"request": request, "task_type": task_type, "uploaded_text": _NDA,
+                  "session_id": "sess-both-tabs", "document_uuid": "doc-nda-1"},
+            headers={"X-User-ID": "atty-int"},
+        ).json()
+
+    post("Change the survival period to 3 years, and remember that I prefer 3 years.", "research")
+    review = post("Review this contract.", "contract_review")
+
+    chat_row, review_row = _rows()
+    # Without these the assertions below could pass because turn 1 never proposed anything.
+    assert (chat_row["task_type"], chat_row["edits_proposed"], chat_row["preferences_proposed"]) == (
+        "research", 1, 1)
+    assert review_row["task_type"] == "contract_review"
+    assert (review_row["edits_proposed"], review_row["preferences_proposed"]) == (0, 0)
+    # Neither turn took the SOW path, whose governing-MSA lookup this test does not fake.
+    assert (chat_row["contract_type"], review_row["contract_type"]) == ("nda", "nda")
+    # The row counts what the pane was sent, so the pane must not get the stale cards either.
+    assert review["data"]["report"]["proposed_edits"] == []
+    assert review["data"]["report"]["proposed_preferences"] == []

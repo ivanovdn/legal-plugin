@@ -260,9 +260,13 @@ def submit_query(
         # paths, the base.py stub) never reaches its reset. Without a seed
         # here, the Redis checkpointer carries a PRIOR turn's value forward
         # and a later healthy turn reports a truncation that never happened.
+        # proposed_edits/proposed_preferences are the same: only legal_research
+        # resets them, so a review after a chat turn would carry that turn's cards.
         "context_truncated": None,
         "token_usage": None,
         "context_breakdown": None,
+        "proposed_edits": [],
+        "proposed_preferences": [],
         # memory_writer derives audit_log.duration_ms from this.
         "turn_started_at": time.time(),
         # audit_log carries it, so an audit row joins its turn_log row exactly.
