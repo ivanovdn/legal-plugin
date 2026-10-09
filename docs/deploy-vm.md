@@ -165,7 +165,7 @@ Every grounded SOW chat turn and every SOW review looks up the governing MSA; wi
 
 **Tracing:** `phoenix` comes up automatically — it's a `backend` dependency (`depends_on: phoenix`), and is **recreated** by any `up` that names `backend` whenever its own config changed (hence the ⚠ callout above), and `docker-compose.remote.yml` already points `OTEL_EXPORTER_OTLP_ENDPOINT` at `http://phoenix:6006` with no auth header needed. This is unrelated to the local-dev Langfuse stack (`langfuse-web langfuse-worker postgres clickhouse minio` from `docker-compose.yml`) — that's the *local* trace backend and isn't needed on the VM.
 
-> **`app-db` is a hard dependency.** The backend needs it up and **healthy** (audit log, review store, and per-attorney conversations all live there) — bring it up first if you're staging services incrementally, and don't tear it down while the backend is running. Its data is a **named volume** (`app_db_data`) — reviews are attorney work product, so back it up (`pg_dump` on a schedule, or snapshot the volume) same as any production database.
+> **`app-db` is a hard dependency.** The backend needs it up and **healthy** (audit log, review store, and per-attorney conversations all live there) — bring it up first if you're staging services incrementally, and don't tear it down while the backend is running. Its data is a **named volume** (`app_db_data`) — reviews are attorney work product, so it is dumped every night (*Working files*, below).
 
 **Phoenix smoke test — confirm a trace lands:**
 
@@ -214,7 +214,23 @@ What we make on the VM by hand — deploy logs, backups, the exported root certi
 sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
 ```
 
-**What to back up, and when.** Nothing runs on a schedule yet (the `app-db` note above asks for one); each backup is a manual step before a risky one:
+**`app-db` is dumped every night** by the deploy user's crontab — its only entry, installed 2026-10-09. At 02:17 UTC it writes `data/backups/app-db-<UTC date>-nightly.sql.gz`, deletes nightly dumps older than 14 days (never a manual backup: those lack the `-nightly` suffix), and appends one line per run to `data/backups/app-db-nightly.log` — `ok <file> <bytes>`, or `FAILED` with the error. `pipefail`, plus a `.part` file renamed only on success, keep a failed dump from passing for a good one. **Nothing alerts on a `FAILED`**, so read the log's last line whenever you are on the VM:
+
+```bash
+tail -3 data/backups/app-db-nightly.log
+crontab -l   # the deployed copy of the entry below — reinstall it from here if it is ever lost
+```
+
+```
+SHELL=/bin/bash
+MAILTO=""
+# legal-plugin: nightly app-db dump into data/backups, last 14 kept, one log line per run (docs/deploy-vm.md, Working files)
+17 2 * * * cd "$HOME/legal-plugin" && f="data/backups/app-db-$(date -u -I)-nightly.sql.gz" && { set -o pipefail; docker compose -f docker-compose.yml -f docker-compose.remote.yml exec -T app-db pg_dump -U legal -d legal </dev/null | gzip > "$f.part" && mv "$f.part" "$f" && find data/backups -maxdepth 1 -name 'app-db-*-nightly.sql.gz*' -mtime +13 -delete && echo "$(date -u -Is) ok $f $(wc -c < "$f") bytes" || echo "$(date -u -Is) FAILED $f"; } >> data/backups/app-db-nightly.log 2>&1
+```
+
+There is no `%` in it (`date -I`, `wc -c`) on purpose: cron turns an unescaped `%` into a newline. Installed with `crontab -` and then run once exactly as cron would (`env -i HOME=… PATH=/usr/bin:/bin SHELL=/bin/bash`): it logged `ok … 91184 bytes`.
+
+**What else to back up, and when.** A nightly dump can be a day old, so before anything risky take a manual one too:
 
 - **`app-db`**, before any deploy that changes its schema or the Postgres version:
 
@@ -238,7 +254,26 @@ sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
 
   `root.key` can sign a certificate for **any** site, and every attorney's machine will trust it. It never leaves the VM.
 
-These copies sit on the same disk as what they protect: they cover our mistakes — a bad migration, a `down -v`, a broken upgrade — not the loss of the VM. The `app-db` and Phoenix restores **have not been rehearsed yet**; rehearse one on a scratch stack before counting on it. Each backup command was dry-run on SRV-AGENT-01 on 2026-10-09 without writing anything: the dump came to 91 KB gzipped, Phoenix's online backup passed its integrity check in memory, and the CA listed its four files.
+These copies sit on the same disk as what they protect: they cover our mistakes — a bad migration, a `down -v`, a broken upgrade — not the loss of the VM. Each backup command was dry-run on SRV-AGENT-01 on 2026-10-09 without writing anything: the dump came to 91 KB gzipped, Phoenix's online backup passed its integrity check in memory, and the CA listed its four files.
+
+**Checking an `app-db` dump restores** — load it into a throwaway Postgres from the same image (no network, data in memory, removed on stop) and compare every table's row count with the live database. Rehearsed 2026-10-09 on the first nightly dump: all six tables matched exactly (`audit_log` 98, `conversation_store` 168, `conversation_summary` 3, `feedback` 2, `interaction_event` 156, `review_store` 14). Rows written after the dump show up as a difference.
+
+```bash
+IMG=$(docker inspect legal-plugin-app-db-1 --format '{{.Image}}')
+docker run -d --rm --name app-db-restore-check --network none --tmpfs /var/lib/postgresql/data \
+  -e POSTGRES_USER=legal -e POSTGRES_PASSWORD=check -e POSTGRES_DB=legal "$IMG"
+# -h 127.0.0.1: during init the image runs a socket-only server, so TCP answers only once the real one is up
+until docker exec app-db-restore-check pg_isready -h 127.0.0.1 -U legal -d legal -q; do sleep 1; done
+gunzip -c data/backups/app-db-<date>-nightly.sql.gz \
+  | docker exec -i -e PGPASSWORD=check app-db-restore-check psql -h 127.0.0.1 -U legal -d legal -v ON_ERROR_STOP=1 -q
+Q="SELECT format('SELECT %L, count(*) FROM %I', table_name, table_name) FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name \gexec"
+diff <(echo "$Q" | $DC exec -T app-db psql -U legal -d legal -At) \
+     <(echo "$Q" | docker exec -i -e PGPASSWORD=check app-db-restore-check psql -h 127.0.0.1 -U legal -d legal -At) \
+  && echo "every table matches"
+docker stop app-db-restore-check
+```
+
+Restore with the same image's `psql`, not an older client: the dump carries `\restrict` / `\unrestrict` meta-commands, which `pg_dump` gained in the 2025 security releases. **Still not rehearsed:** swapping a dump into the live `app-db`, and any Phoenix restore — rehearse on a scratch stack before counting on either.
 
 **Restoring Caddy's CA** — only when the live root no longer matches the backup (compare them with the last two commands below). Only `root.crt` and `root.key` go back: Caddy issues a fresh intermediate and site certificate from them, so it does not matter that the intermediate in the backup has long expired.
 
