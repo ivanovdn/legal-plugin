@@ -11,6 +11,7 @@ import json
 import logging
 
 import pytest
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
 
@@ -231,3 +232,31 @@ def test_a_failed_row_build_changes_nothing_the_attorney_sees(monkeypatch, caplo
     assert resp.status == "ok"
     assert _rows() == []
     assert "could not build the row" in caplog.text and resp.data["turn_id"] in caplog.text
+
+
+@pytest.mark.parametrize("exit_name", list(SUBMIT_EXITS))
+def test_a_submit_exit_schedules_exactly_one_write_and_does_not_make_it(monkeypatch, exit_name):
+    """The row is SCHEDULED, not written, by the time the handler returns (spec
+    D4: the attorney waits for no insert).
+
+    Calls the handler directly, on purpose — call_handler runs the queued tasks
+    before returning, so through it a deferred write and a synchronous one look
+    the same. Mutations: leave out `background_tasks=` on one exit (finish_turn
+    then writes now); call finish_turn twice on one exit (UNIQUE(turn_id) would
+    quietly reject the second INSERT and leave one row)."""
+    scenario = SUBMIT_EXITS[exit_name]
+    _wire(monkeypatch, scenario["graph"], stateless=scenario.get("stateless"))
+    tasks = BackgroundTasks()
+    q.submit_query(QueryRequest(request="review this", uploaded_text="NDA text"),
+                   background_tasks=tasks, user_id="atty-1", user_name="A. Tester", client=ClientInfo())
+    assert len(tasks.tasks) == 1 and _rows() == []
+
+
+@pytest.mark.parametrize("exit_name", list(RESUME_EXITS))
+def test_a_resume_exit_schedules_exactly_one_write_and_does_not_make_it(monkeypatch, exit_name):
+    """Resume's twin of the test above — direct call on purpose, same mutations."""
+    _wire(monkeypatch, RESUME_EXITS[exit_name])
+    tasks = BackgroundTasks()
+    q.resume_query("sess-r", ResumeRequest(approved=False, notes="tighten the cap", revised_response=""),
+                   background_tasks=tasks, client=ClientInfo())
+    assert len(tasks.tasks) == 1 and _rows() == []
