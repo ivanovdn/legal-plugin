@@ -2,7 +2,7 @@
 import { clientHeaders, paneBuild, requestHeaders } from "./requestHeaders";
 import { pass } from "./testAssert";
 
-type Globals = { Office?: unknown; localStorage?: unknown };
+type Globals = { Office?: unknown; localStorage?: unknown; __PANE_BUILD__?: unknown };
 const g = globalThis as Globals;
 
 // tsx applies no Vite `define`, so this is the fallback a real build never sees.
@@ -22,10 +22,16 @@ pass(mac["X-Office-Platform"] === "Mac" && mac["X-Office-Version"] === "16.89",
   "reads platform and version from Office.context.diagnostics");
 
 // Review Focus #2: fetch throws on a header value outside Latin-1, which would
-// fail the attorney's whole request over telemetry.
-g.Office = { context: { diagnostics: { platform: "Mac", version: "16.89éж\n" } } };
-pass(clientHeaders()["X-Office-Version"] === "16.89",
-  "non-ASCII and control characters are stripped before they reach fetch");
+// fail the attorney's whole request over telemetry. All THREE headers must come
+// out as printable ASCII, at most 64 characters — one dirty value per header.
+g.Office = { context: { diagnostics: { platform: "Maéc", version: "16.89éж\n" } } };
+g.__PANE_BUILD__ = "b".repeat(70) + "é";
+const dirty = clientHeaders();
+delete g.__PANE_BUILD__;
+pass(
+  dirty["X-Office-Platform"] === "Mac" && dirty["X-Office-Version"] === "16.89" &&
+    dirty["X-Pane-Build"] === "b".repeat(64),
+  "platform, version and pane build are each stripped to printable ASCII and capped at 64 before they reach fetch");
 
 // A host whose diagnostics throw.
 g.Office = { context: { get diagnostics(): never { throw new Error("not ready"); } } };

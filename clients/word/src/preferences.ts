@@ -1,5 +1,5 @@
 // Preferences API client — reads/writes the attorney's USER.md via the backend.
-// Keyed by the same headers the query client sends (requestHeaders.ts).
+// Keyed by the same X-User-ID attorney identity the query client sends (requestHeaders.ts).
 import { requestHeaders } from "./requestHeaders";
 
 export async function getPreferences(): Promise<string> {
