@@ -25,7 +25,8 @@ pass(mac["X-Office-Platform"] === "Mac" && mac["X-Office-Version"] === "16.89",
 // fail the attorney's whole request over telemetry. All THREE headers must come
 // out as printable ASCII, at most 64 characters — one dirty value per header.
 g.Office = { context: { diagnostics: { platform: "Maéc", version: "16.89éж\n" } } };
-g.__PANE_BUILD__ = "b".repeat(70) + "é";
+// The é sits inside the first 64 characters, so the cap alone cannot remove it.
+g.__PANE_BUILD__ = "b".repeat(10) + "é" + "b".repeat(60);
 const dirty = clientHeaders();
 delete g.__PANE_BUILD__;
 pass(
