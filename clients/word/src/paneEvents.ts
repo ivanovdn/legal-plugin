@@ -9,6 +9,11 @@ import { readDocumentId } from "./docIdentity";
 let paneSessionId = "";
 let installedOn: EventTarget | null = null;
 let reporting = false;
+// Office/WebView can fire the same uncaught error over and over; per pane load,
+// repeat of the previous window error is skipped and window errors stop at a ceiling.
+const WINDOW_REPORT_CEILING = 20;
+let windowReports = 0;
+let lastWindowMessage = "";
 
 /** The pane's session (App mints it once per pane load); every pane event carries it. */
 export function setPaneSession(sessionId: string): void {
@@ -41,16 +46,24 @@ export function reportClientError(where: string, error: unknown, turnId = ""): v
   }
 }
 
+function reportWindowError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === lastWindowMessage || windowReports >= WINDOW_REPORT_CEILING) return;
+  lastWindowMessage = message;
+  windowReports++;
+  reportClientError("window", error);
+}
+
 /** Uncaught errors and unhandled rejections → client_error. Once per target. */
 export function installErrorHandlers(target: EventTarget): void {
   if (installedOn === target) return;
   installedOn = target;
   target.addEventListener("error", (e) => {
     const ev = e as ErrorEvent;
-    reportClientError("window", ev.error ?? ev.message ?? "unknown error");
+    reportWindowError(ev.error ?? ev.message ?? "unknown error");
   });
   target.addEventListener("unhandledrejection", (e) => {
-    reportClientError("window", (e as PromiseRejectionEvent).reason ?? "unhandled rejection");
+    reportWindowError((e as PromiseRejectionEvent).reason ?? "unhandled rejection");
   });
 }
 

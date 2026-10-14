@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { sendFeedback, type FlagTarget } from "../feedback";
+import { reportClientError } from "../paneEvents";
 
 // In-pane, deliberately NOT Office.context.ui.displayDialogAsync: a dialog is a
 // separate window with its own origin and message passing, and this codebase
@@ -62,6 +63,7 @@ export default function FeedbackPanel({
       setStatus({ kind: "sent" });
       closeTimer.current = setTimeout(onClose, 1200);
     } catch (e) {
+      reportClientError("feedback", e);
       if (!mounted.current) return; // unmounted while the request was in flight
       setStatus({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }

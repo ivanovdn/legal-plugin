@@ -488,13 +488,17 @@ steps above.
 
 ## What the assistant records
 
-While we test, the assistant records:
+While we test, the assistant records, on the company's server:
 
-- the questions you ask and the reviews you run, and its answers;
+- the questions you ask, the reviews you run, and its answers — which often quote your contract;
+- the text of the open document, which has to be sent to the server for the assistant to answer at all; our diagnostic traces keep a copy of what was sent;
 - what you do with its suggestions — applied, discarded, or failed to apply;
-- **when the task pane is opened, which tab you use, how long answers take, and any error it shows you.**
+- when the task pane is opened, which tab you use, how long answers take, and any error it shows you;
+- for every request, the time, your computer's network address and the name you entered in the pane.
 
-None of this records the text of your document, except that an error message can quote the passage it was working on. It is used only to find what the assistant gets wrong.
+When you send feedback — **Send feedback** or a flag on a card — the current text of the document and the assistant's output go with it.
+
+The records of pane use (opens, tabs, waits, errors) contain no document text, except that an error message can quote the passage it was working on. All of it is used only to find what the assistant gets wrong.
 
 ---
 

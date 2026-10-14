@@ -127,6 +127,10 @@ One entry per attorney per UTC day:
 - **waited in Word** is measured in the pane from pressing Send / Review to the result on screen; **server** is `turn_log.duration_ms`. The gap is reading the document out of Word, the network and Caddy.
 - Opens, waits, tabs and errors exist only from panes built after SP3 (2026-10-14); a day from an older pane shows its turns with `opens 0` and builds `—`.
 - `--document` narrows by document id, and a pane opened on a document that never got one (never reviewed or chatted) has none — leave `--document` off when counting opens.
+- **finalize** counts `finalize_applied` only; a failed Finalize is in the timeline (`--turns`), not in this count.
+- The **waited** medians include requests that failed — a fast error or a long timeout moves them; check `errors` on the same line.
+- `⚠ stale pane` on the build line means the pane's build differs from the backend's that day: someone is running an older pane.
+- A review refused before it was sent (document empty or too short) is a `client_error` with no turn.
 
 The pane's events, all `interaction_event` rows with `surface = 'pane'`:
 
@@ -135,8 +139,10 @@ The pane's events, all `interaction_event` rows with `surface = 'pane'`:
 | `pane_opened` | each pane load | — | `saved` / `unsaved` / `""` |
 | `tab_viewed` | each tab switch | `findings` / `chat` / `preferences` | — |
 | `finalize_applied` / `finalize_failed` | after the in-pane confirm | — | the error, on failure |
-| `client_error` | an error the pane showed, or an uncaught one | `chat` / `review` / `compact` / `preferences` / `window` | the message |
+| `client_error` | an error the pane showed, or an uncaught one | `chat` / `review` / `compact` / `preferences` / `feedback` / `window` | the message |
 | `turn_waited` | a chat answer or review on screen, or failed | `chat` / `review` | milliseconds |
+
+Uncaught pane errors (`window`) are de-duplicated and capped at 20 per pane load.
 
 `--turns` now shows each turn's `(waited X in Word)` and prints the session's turn-less pane events (opened, tab, Finalize, errors) between the turns. Requests that never reached the backend are in Caddy's files — [deploy-vm.md](deploy-vm.md), *Logs*.
 

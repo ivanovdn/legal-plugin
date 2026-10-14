@@ -89,3 +89,16 @@ clock = 1250.6;
 pass(elapsed() === 251, "startWait gives whole milliseconds since it started");
 clock = 900;
 pass(elapsed() === 0, "a clock that steps backwards never gives a negative wait");
+
+// Window noise: the same uncaught error over and over is one report, and there is a ceiling.
+sent = [];
+for (let i = 0; i < 5; i++) {
+  win.dispatchEvent(Object.assign(new Event("error"), { error: new Error("Script error.") }));
+}
+pass(sent.length === 1, "a repeated identical window error is reported once");
+
+sent = [];
+for (let i = 0; i < 40; i++) {
+  win.dispatchEvent(Object.assign(new Event("error"), { error: new Error(`distinct ${i}`) }));
+}
+pass(sent.length > 0 && sent.length <= 20, "window errors stop being reported at the per-load ceiling");

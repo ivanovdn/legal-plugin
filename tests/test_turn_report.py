@@ -239,3 +239,18 @@ def test_the_feedback_summary_leaves_pane_activity_to_activity(monkeypatch, caps
     out = capsys.readouterr().out
     assert "=== Per-item actions (1) ===" in out
     assert "pane_opened" not in out and "--activity" in out
+
+
+def test_an_overlong_wait_is_ignored_not_fatal():
+    write_turn(_turn("t-1", arrived_at="2026-10-09T10:00:00+00:00"))
+    _pane_row("2026-10-09T10:00:20+00:00", "turn_waited", turn_id="t-1",
+              target_ref="chat", detail="9" * 25)
+    (row,) = recent_turns()
+    assert row["waited_ms"] is None
+
+
+def test_a_wait_without_a_turn_reads_as_a_wait_with_no_answer():
+    e = {"timestamp": "2026-10-09T10:02:00+00:00", "action": "turn_waited", "target_ref": "chat"}
+    assert format_pane_event({**e, "detail": "9800"}) == \
+        "  2026-10-09T10:02:00  · waited 9.8s in chat with no answer"
+    assert format_pane_event({**e, "detail": "x"}).endswith("· waited in chat with no answer")

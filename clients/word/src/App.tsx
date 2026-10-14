@@ -160,9 +160,10 @@ export default function App() {
           Send feedback
         </button>
         <p className="disclosure">
-          During testing, the assistant records when this pane is opened, which tab you
-          use, how long answers take, errors it shows you, and what you do with its
-          suggestions — so we can measure what it gets wrong.
+          During testing, the assistant records your questions, its answers and the document
+          text sent with them, when this pane is opened, which tab you use, how long answers
+          take, errors it shows you, and what you do with its suggestions — so we can measure
+          what it gets wrong. Sending feedback includes the document.
         </p>
       </header>
       {/* Deliberately NOT the amber .status.warning used for memory_degraded.

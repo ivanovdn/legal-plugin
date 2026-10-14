@@ -195,7 +195,7 @@ def recent_turns(
                 (SELECT count(*) FROM feedback f WHERE f.turn_id = t.turn_id) AS flags,
                 (SELECT max(e.detail::bigint) FROM interaction_event e
                   WHERE e.turn_id = t.turn_id AND e.action = 'turn_waited'
-                    AND e.detail ~ '^[0-9]+$') AS waited_ms
+                    AND e.detail ~ '^[0-9]{{1,15}}$') AS waited_ms
             FROM turn_log t
             {"WHERE " + where if where else ""}
             ORDER BY t.id DESC

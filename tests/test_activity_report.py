@@ -141,3 +141,13 @@ def test_the_cli_reads_both_tables(monkeypatch, capsys):
     assert "A. Tester (atty-1)   opens 1 · chat 1 · reviews 0" in out
     assert "waited in Word: chat 9.8s" in out and "server: chat 7.2s" in out
     assert "pane abc1234 · backend abc1234" in out
+
+
+def test_a_wait_that_is_not_a_plain_number_is_ignored_not_fatal():
+    """detail is client-controlled; '²' passes str.isdigit() and int() rejects it."""
+    (day,) = build_activity([], [
+        _e("2026-10-15T10:00:00+00:00", "turn_waited", target_ref="chat", detail="²"),
+        _e("2026-10-15T10:00:01+00:00", "turn_waited", target_ref="chat", detail="9" * 20),
+        _e("2026-10-15T10:00:02+00:00", "turn_waited", target_ref="chat", detail="4200"),
+    ])
+    assert day["wait"]["chat"] == [4200]

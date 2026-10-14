@@ -17,6 +17,7 @@ separate one tester or one contract from the pool.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +60,7 @@ def _secs(ms: float) -> str:
 
 
 # turn_log task types as --activity names them; anything else (compaction) is not counted.
+_WAIT_MS = re.compile(r"[0-9]{1,15}")
 _TASK_KIND = {"research": "chat", "contract_review": "review"}
 
 
@@ -101,7 +103,7 @@ def build_activity(turns: list[dict], events: list[dict]) -> list[dict]:
         elif e["action"] == "client_error":
             d["errors"] += 1
         elif (e["action"] == "turn_waited" and e["target_ref"] in d["wait"]
-              and e["detail"].isdigit()):
+              and _WAIT_MS.fullmatch(e["detail"])):
             d["wait"][e["target_ref"]].append(int(e["detail"]))
         if e["pane_build"] or e["backend_build"]:
             d["pane_build"], d["backend_build"] = e["pane_build"], e["backend_build"]
@@ -182,12 +184,16 @@ def format_turn(t: dict) -> list[str]:
 
 def format_pane_event(e: dict) -> str:
     """A pane event that belongs to no turn, as one timeline line."""
+    waited = (f"waited {_secs(int(e['detail']))} in {e['target_ref'] or 'pane'} with no answer"
+              if _WAIT_MS.fullmatch(e["detail"])
+              else f"waited in {e['target_ref'] or 'pane'} with no answer")
     what = {
         "pane_opened": f"pane opened ({e['detail'] or 'save state unknown'})",
         "tab_viewed": f"tab: {e['target_ref']}",
         "finalize_applied": "finalize applied",
         "finalize_failed": f"finalize failed: {e['detail'][:120]}",
         "client_error": f"error in {e['target_ref'] or 'pane'}: {e['detail'][:120]}",
+        "turn_waited": waited,
     }.get(e["action"], e["action"])
     return f"  {e['timestamp'][:19]}  · {what}"
 
