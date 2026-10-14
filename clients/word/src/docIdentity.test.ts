@@ -15,7 +15,7 @@
 
 declare const process: { exitCode?: number };
 
-import { isDocumentUnsaved, probeFileUrl, resolveDocumentId, shouldWarnUnsaved } from "./docIdentity";
+import { isDocumentUnsaved, probeFileUrl, readDocumentId, resolveDocumentId, shouldWarnUnsaved } from "./docIdentity";
 import { pass } from "./testAssert";
 
 // --- the decision, as a pure table ------------------------------------------
@@ -121,3 +121,22 @@ main().catch((e) => {
   process.exitCode = 1;
   console.log(`FAIL: unexpected throw — ${e}`);
 });
+
+// --- readDocumentId: read-only, never mints ----------------------------------
+// The pane reads the id when it opens. resolveDocumentId() would CREATE one on a
+// document that has none, writing Office settings — which marks the file
+// modified, so Word asks "save changes?" about a document the attorney only
+// looked at. readDocumentId must never write.
+let settingsWrites = 0;
+const settingsWith = (value: string | null) => ({
+  context: { document: { settings: {
+    get: (k: string) => (k === "legalTriageDocId" ? value : null),
+    set: () => { settingsWrites++; },
+    saveAsync: () => { settingsWrites++; },
+  } } },
+});
+(globalThis as { Office?: unknown }).Office = settingsWith("doc-existing");
+pass(readDocumentId() === "doc-existing", "readDocumentId returns the stored id");
+(globalThis as { Office?: unknown }).Office = settingsWith(null);
+pass(readDocumentId() === "" && settingsWrites === 0,
+  "readDocumentId on a document with no id returns empty and writes nothing");

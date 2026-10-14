@@ -87,6 +87,18 @@ export async function isDocumentUnsaved(): Promise<boolean> {
   return shouldWarnUnsaved(url, failed);
 }
 
+/** The document's stored id, or "" — READ-ONLY. Never creates one: writing
+ *  Office settings marks the document modified, so a pane that merely opened
+ *  would make Word ask to save a file the attorney never changed. */
+export function readDocumentId(): string {
+  try {
+    const existing = Office.context.document.settings.get(SETTINGS_KEY);
+    return typeof existing === "string" ? existing : "";
+  } catch {
+    return "";
+  }
+}
+
 /** Read the document's stable id, creating + persisting one on first use. "" on failure. */
 export async function resolveDocumentId(): Promise<string> {
   try {
