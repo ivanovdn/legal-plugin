@@ -329,3 +329,36 @@ def edit_proposal_turns(
         rows = cur.fetchall()
     keys = ("timestamp", "turn_id", "request", "proposed", "applied", "discarded", "failed")
     return [dict(zip(keys, r)) for r in rows]
+
+
+def pane_events(
+    *, since: str = "", document_id: str = "", attorney_id: str = "",
+    session_ids: list[str] | None = None, without_turn: bool = False,
+) -> list[dict]:
+    """The pane's own lifecycle events (surface='pane'), oldest first: opens,
+    tabs, Finalize, errors shown, and turn_waited. `session_ids` narrows to the
+    sessions a --turns page shows; `without_turn` keeps only the events that
+    belong to no turn.
+
+    Keys: timestamp, attorney_id, session_id, turn_id, action, target_ref,
+    detail, pane_build, backend_build.
+    """
+    where, params = _filters(since, document_id, attorney_id)
+    clauses = ["surface = 'pane'"] + ([where] if where else [])
+    if session_ids is not None:
+        clauses.append("session_id = ANY(%s)")
+        params.append(list(session_ids))
+    if without_turn:
+        clauses.append("turn_id = ''")
+    with get_pool().connection() as conn:
+        cur = conn.execute(
+            f"""SELECT timestamp, attorney_id, session_id, turn_id, action, target_ref,
+                       detail, pane_build, backend_build
+                FROM interaction_event WHERE {' AND '.join(clauses)}
+                ORDER BY timestamp, id""",
+            params,
+        )
+        rows = cur.fetchall()
+    keys = ("timestamp", "attorney_id", "session_id", "turn_id", "action", "target_ref",
+            "detail", "pane_build", "backend_build")
+    return [dict(zip(keys, r)) for r in rows]

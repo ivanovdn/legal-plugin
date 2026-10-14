@@ -5,6 +5,7 @@
     uv run python -m scripts.feedback_report --days 7
     uv run python -m scripts.feedback_report --attorney <id> --document <id>
     uv run python -m scripts.feedback_report --turns --attorney <id> --days 2
+    uv run python -m scripts.feedback_report --activity --days 7
 
 Feedback nobody reads is worse than none — it costs the attorney something and
 returns nothing. This is the whole reporting story; there is deliberately no UI.
@@ -19,6 +20,7 @@ import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -28,9 +30,10 @@ from memory.feedback_store import (
     counter_totals,
     edit_proposal_turns,
     event_counts,
+    pane_events,
     recent_feedback,
 )
-from memory.turn_log import recent_turns
+from memory.turn_log import recent_turns, turn_summaries
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,11 +49,91 @@ def _parse_args() -> argparse.Namespace:
                         "(default 50)")
     p.add_argument("--turns", action="store_true",
                    help="print the turn timeline (turn_log) instead of the feedback summary")
+    p.add_argument("--activity", action="store_true",
+                   help="print one line per attorney per day: pane use beside the turns")
     return p.parse_args()
 
 
-def _secs(ms: int) -> str:
+def _secs(ms: float) -> str:
     return f"{ms / 1000:.1f}s"
+
+
+# turn_log task types as --activity names them; anything else (compaction) is not counted.
+_TASK_KIND = {"research": "chat", "contract_review": "review"}
+
+
+def _median_secs(values: list[int]) -> str:
+    return _secs(median(values)) if values else "—"
+
+
+def build_activity(turns: list[dict], events: list[dict]) -> list[dict]:
+    """One entry per (UTC day, attorney), oldest day first: pane use from the
+    pane's events beside the questions the backend served. A day with pane
+    opens and no turns is exactly the one the turn tables cannot show.
+    `events` must be oldest first, so the last build seen is the day's latest."""
+    names = {t["attorney_id"]: t["user_name"] for t in turns if t["user_name"]}
+    days: dict[tuple[str, str], dict] = {}
+
+    def entry(timestamp: str, attorney_id: str) -> dict:
+        key = (timestamp[:10], attorney_id)
+        if key not in days:
+            days[key] = {
+                "day": key[0], "attorney_id": attorney_id, "name": names.get(attorney_id, ""),
+                "opens": 0, "chat": 0, "reviews": 0, "finalize": 0, "errors": 0,
+                "wait": {"chat": [], "review": []}, "server": {"chat": [], "review": []},
+                "pane_build": "", "backend_build": "",
+            }
+        return days[key]
+
+    for t in turns:
+        kind = _TASK_KIND.get(t["task_type"])
+        if kind is None:
+            continue
+        d = entry(t["timestamp"], t["attorney_id"])
+        d["chat" if kind == "chat" else "reviews"] += 1
+        d["server"][kind].append(t["duration_ms"])
+    for e in events:
+        d = entry(e["timestamp"], e["attorney_id"])
+        if e["action"] == "pane_opened":
+            d["opens"] += 1
+        elif e["action"] == "finalize_applied":
+            d["finalize"] += 1
+        elif e["action"] == "client_error":
+            d["errors"] += 1
+        elif (e["action"] == "turn_waited" and e["target_ref"] in d["wait"]
+              and e["detail"].isdigit()):
+            d["wait"][e["target_ref"]].append(int(e["detail"]))
+        if e["pane_build"] or e["backend_build"]:
+            d["pane_build"], d["backend_build"] = e["pane_build"], e["backend_build"]
+    return [days[k] for k in sorted(days)]
+
+
+def format_activity(d: dict) -> list[str]:
+    """One attorney-day: counts, medians (Word wait beside server time), builds."""
+    who = f"{d['name']} ({d['attorney_id']})" if d["name"] else d["attorney_id"]
+    stale = ("  ⚠ stale pane" if d["pane_build"] and d["backend_build"]
+             and d["pane_build"] != d["backend_build"] else "")
+    return [
+        f"  {d['day']}  {who}   opens {d['opens']} · chat {d['chat']} · reviews {d['reviews']}"
+        f" · finalize {d['finalize']} · errors {d['errors']}",
+        f"    waited in Word: chat {_median_secs(d['wait']['chat'])} · review "
+        f"{_median_secs(d['wait']['review'])}   server: chat {_median_secs(d['server']['chat'])}"
+        f" · review {_median_secs(d['server']['review'])}   (medians)",
+        f"    pane {d['pane_build'] or '—'} · backend {d['backend_build'] or '—'}{stale}",
+    ]
+
+
+def print_activity(rows: list[dict]) -> None:
+    print(f"=== Activity ({len(rows)} attorney-days) ===")
+    print("  One entry per attorney per UTC day: pane opens and what was done in the")
+    print("  pane, beside the questions the backend served. How to read it: docs/feedback-loop.md.")
+    print()
+    if not rows:
+        print("  (none yet)\n")
+        return
+    for d in rows:
+        print("\n".join(format_activity(d)))
+        print()
 
 
 def format_turn(t: dict) -> list[str]:
@@ -137,6 +220,12 @@ def main() -> None:
         scope.append(f"document {args.document}")
     print(f"Scope: {' · '.join(scope) if scope else 'all time, all attorneys, all documents'}\n")
 
+    if args.activity:
+        print_activity(build_activity(
+            turn_summaries(since=since, attorney_id=args.attorney, document_id=args.document),
+            pane_events(**f),
+        ))
+        return
     if args.turns:
         print_turns(recent_turns(since=since, attorney_id=args.attorney,
                                  document_id=args.document, limit=args.limit + 1), args.limit)

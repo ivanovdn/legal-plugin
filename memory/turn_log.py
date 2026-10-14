@@ -204,3 +204,21 @@ def recent_turns(
         cur = conn.execute(sql, [*params, limit])
         names = [column.name for column in cur.description]
         return [dict(zip(names, values)) for values in cur.fetchall()]
+
+
+def turn_summaries(
+    *, since: str = "", attorney_id: str = "", document_id: str = "",
+) -> list[dict[str, Any]]:
+    """Every question in scope, oldest first — the counts and server times that
+    feedback_report --activity sets beside the pane's own events. kind='query'
+    only: a resume continues a review already counted, a compaction asks nothing."""
+    where, params = _filters(since, document_id, attorney_id)
+    sql = f"""
+        SELECT timestamp, attorney_id, user_name, task_type, duration_ms
+        FROM turn_log WHERE kind = 'query' {"AND " + where if where else ""}
+        ORDER BY timestamp, id
+    """
+    with get_pool().connection() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    keys = ("timestamp", "attorney_id", "user_name", "task_type", "duration_ms")
+    return [dict(zip(keys, r)) for r in rows]
