@@ -262,11 +262,14 @@ def submit_query(
         # and a later healthy turn reports a truncation that never happened.
         # proposed_edits/proposed_preferences are the same: only legal_research
         # resets them, so a review after a chat turn would carry that turn's cards.
+        # contract_type_detected is the reverse: only contract_review sets it, so a
+        # chat turn after a review would report the review's detection as its own.
         "context_truncated": None,
         "token_usage": None,
         "context_breakdown": None,
         "proposed_edits": [],
         "proposed_preferences": [],
+        "contract_type_detected": "",
         # memory_writer derives audit_log.duration_ms from this.
         "turn_started_at": time.time(),
         # audit_log carries it, so an audit row joins its turn_log row exactly.

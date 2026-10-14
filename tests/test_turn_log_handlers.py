@@ -492,3 +492,36 @@ def test_a_review_turn_does_not_inherit_the_previous_chat_turns_proposals(monkey
     # The row counts what the pane was sent, so the pane must not get the stale cards either.
     assert review["data"]["report"]["proposed_edits"] == []
     assert review["data"]["report"]["proposed_preferences"] == []
+
+
+def test_a_chat_turn_does_not_inherit_the_previous_reviews_contract_type(monkeypatch):
+    """The other direction of the test above. Only contract_review sets
+    contract_type_detected, so without a seed the checkpointer hands a review's
+    "nda" to the next chat turn in the same session, and that turn's report claims
+    a detection it never made.
+
+    Mutation: take "contract_type_detected" back out of submit_query's initial_state."""
+    research = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setattr(research, "_build_llm", lambda: _LLM(_Message(
+        "The parties are Acme and Trinetix.", 9000, 120,
+        5_900_000_000, 6_100_000_000, 1_100_000_000)))
+    monkeypatch.setattr("graph.nodes.rag_retriever.hybrid_search", lambda *a, **k: [])
+    monkeypatch.setattr("graph.nodes.llm_caller.httpx.post",
+                        lambda *a, **k: _OllamaReply("# Review Summary\nNo issues."))
+    _wire(monkeypatch, build_graph(checkpointer=MemorySaver()))
+    client = TestClient(app)
+
+    def post(request, task_type):
+        return client.post(
+            "/api/query",
+            json={"request": request, "task_type": task_type, "uploaded_text": _NDA,
+                  "session_id": "sess-both-tabs", "document_uuid": "doc-nda-1"},
+            headers={"X-User-ID": "atty-int"},
+        ).json()
+
+    review = post("Review this contract.", "contract_review")
+    chat = post("Who are the parties?", "research")
+
+    # Without this the assertion below could pass because the review never detected anything.
+    assert review["data"]["report"]["contract_type_detected"] == "nda"
+    assert chat["data"]["report"]["contract_type_detected"] == ""
