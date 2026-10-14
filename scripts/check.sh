@@ -100,4 +100,17 @@ if [ "$built_sha" != "unknown" ]; then
 fi
 rm -f "$image_log"
 
+# The VM's caddy reads ./Caddyfile at start; a directive it rejects is a pane
+# that does not load for anyone. Validate with the image the pane is built on.
+echo "==> Caddyfile validates under the pinned Caddy (clients/word/Dockerfile)"
+caddy_image="$(grep -m1 -o 'caddy:[^ ]*' clients/word/Dockerfile)"
+caddy_log="$(mktemp)"
+if ! docker run --rm -v "$REPO_ROOT/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" \
+     caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >"$caddy_log" 2>&1; then
+  cat "$caddy_log" >&2; rm -f "$caddy_log"
+  echo "FAIL: the Caddyfile does not validate under $caddy_image — the VM's caddy would not start." >&2
+  exit 1
+fi
+rm -f "$caddy_log"
+
 echo "==> all checks passed"

@@ -1,3 +1,23 @@
+# Global options (SP3, docs/superpowers/specs/2026-10-14-pane-activity-design.md).
+# A machine that rejects our certificate leaves a trace ONLY at DEBUG, from the
+# http.stdlib logger: "TLS handshake error from <ip>: … unknown certificate
+# authority". This log keeps exactly that logger, so the DEBUG noise of every
+# other module stays out. Files are 0644 so the deploy user reads them without
+# sudo (data/caddy-logs/ on the host); rolled files are gzip-compressed.
+{
+	log tls_errors {
+		output file /var/log/caddy/tls-errors.log {
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 2160h
+			mode 0644
+		}
+		format json
+		level DEBUG
+		include http.stdlib
+	}
+}
+
 {$ADDIN_ORIGIN_HOST:localhost} {
 	# Self-signed cert from Caddy's internal CA — works for localhost AND any
 	# internal hostname (an internal-only VM can't complete public ACME).
@@ -7,6 +27,18 @@
 	tls internal
 
 	encode gzip
+
+	# Every request to the site — pane loads, API calls, the ones turned away.
+	# Authorization and Cookie values are logged as REDACTED (Caddy's default).
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 2160h
+			mode 0644
+		}
+		format json
+	}
 
 	# Backend API — keep the /api prefix (backend routes are /api/*)
 	handle /api/* {

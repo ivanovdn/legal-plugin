@@ -204,6 +204,20 @@ sudo journalctl CONTAINER_NAME=legal-plugin-backend-1 --since 2026-10-01 --no-pa
 
 `sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default `SystemMaxUse` is 10% of the filesystem, capped at 4 GiB). The journal survives a reboot only on persistent storage — the default here, because `/var/log/journal` exists (checked on SRV-AGENT-01 2026-10-08).
 
+**Caddy's own files** (since SP3): `data/caddy-logs/access.log` has one JSON line per request to the site — pane loads, API calls, and requests turned away — and `tls-errors.log` keeps only the handshakes our certificate failed, which Caddy reports at DEBUG and nowhere else. A TLS failure carries an IP and no identity: it fails before any request exists. Both are readable without `sudo`. Rolled files are gzipped, so read them with `zcat -f`:
+
+```bash
+cd ~/legal-plugin
+# pane loads per UTC day, by IP and user agent (Office appends ?_host_Info=…)
+zcat -f data/caddy-logs/access*.log* | jq -r 'select(.request.uri | startswith("/taskpane.html")) | [(.ts | todate | .[0:10]), .request.client_ip, (.request.headers["User-Agent"][0] // "")] | @tsv' | sort | uniq -c
+# API requests per UTC day per attorney
+zcat -f data/caddy-logs/access*.log* | jq -r 'select(.request.uri | startswith("/api/")) | [(.ts | todate | .[0:10]), (.request.headers["X-User-Id"][0] // "-"), (.request.headers["X-User-Name"][0] // "")] | @tsv' | sort | uniq -c
+# every response that was not a success
+zcat -f data/caddy-logs/access*.log* | jq -r 'select(.status >= 400) | [(.ts | todate), .status, .request.method, .request.uri, .request.client_ip] | @tsv'
+# handshakes our certificate failed, per UTC day and IP
+zcat -f data/caddy-logs/tls-errors*.log* | jq -r '[(.ts | todate | .[0:10]), (.msg | capture("from (?<ip>[^ ]+):[0-9]+:").ip // "?"), (.msg | sub(".*: "; ""))] | @tsv' | sort | uniq -c
+```
+
 ### Working files — deploy logs and backups
 
 What we make on the VM by hand — deploy logs, backups, the exported root certificate — goes in one of two folders inside the checkout, never loose in `~` and never anywhere else in the repo:
@@ -212,6 +226,7 @@ What we make on the VM by hand — deploy logs, backups, the exported root certi
 |---|---|---|
 | `data/deploy-logs/` | One log per deploy, written by the command above: the build output and the exit status. Named `deploy-<UTC date>-<commit>.log`; a second run of the same commit that day appends. | Always — about 40 KB each. |
 | `data/backups/` | A copy of production data taken right before something that could destroy it (below). Named `<what>-<UTC date>-<reason>`, e.g. `app-db-2026-10-15-pre-sp2.sql.gz`. | Until the operation it protected is verified, then deleted — most hold contract text. The Caddy CA stays. |
+| `data/caddy-logs/` | Written by Caddy, not by hand: `access.log` (every request to the site) and `tls-errors.log` (handshakes our certificate failed). JSON lines, `0644`. | Rolled by Caddy at 10 MB, 10 kept, 90 days at most; rolled files are gzipped. |
 
 **Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build.context: .` in compose, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` is mounted into a container, so these two folders are invisible to the stack. `data/` itself belongs to root (Docker created it for that mount), so the two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`:
 
@@ -342,6 +357,14 @@ $DC exec -T app-db psql -U legal -d legal -P pager=off -c \
 ```
 
 `pane_build` and `backend_build` must both be the commit, and `office_platform` / `office_version` must name your Word. If `pane_build` is empty, the pane you asked from was opened before the deploy — close and reopen it.
+
+**Confirm Caddy's files are written and readable without sudo**, and that a rejected certificate is recorded — run the `curl` from a machine that does NOT trust the VM's CA (e.g. a Mac without `caddy-root-ca.crt`):
+
+```bash
+ls -l data/caddy-logs/                     # access.log and tls-errors.log, -rw-r--r--
+curl -s -o /dev/null https://<hostname>/   # from the untrusting machine: exit 60
+tail -1 data/caddy-logs/tls-errors.log     # "... TLS handshake error from <ip>: remote error: tls: unknown certificate authority"
+```
 
 **Confirm the backend is logging.** App records only reach the log because
 `api/main.py::configure_logging()` runs at import — uvicorn configures its own
