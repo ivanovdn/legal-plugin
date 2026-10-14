@@ -8,7 +8,7 @@ import pytest
 from psycopg.errors import UniqueViolation
 
 import memory.turn_log as turn_log
-from memory.db import get_pool
+from memory.db import get_pool, init_db
 from memory.turn_log import COLUMNS, build_turn_row, write_turn, write_turn_quietly
 
 _CLIENT = {"office_platform": "Mac", "office_version": "16.89",
@@ -32,6 +32,54 @@ def _row(**overrides):
 def test_the_row_has_exactly_the_tables_columns():
     assert set(_row()) == set(COLUMNS)
     assert len(COLUMNS) == len(set(COLUMNS))
+
+
+# turn_log's columns as first deployed (VM, 2026-10-14). Frozen: never edit this
+# list — it stands for every database created before the next column change.
+_SHIPPED_2026_10_14 = (
+    "timestamp", "turn_id", "trace_id", "kind", "session_id", "document_id",
+    "attorney_id", "user_name", "task_type", "request", "doc_chars", "doc_sha256",
+    "status", "outcome", "degradations", "error", "awaiting_review", "contract_type",
+    "contract_type_defaulted", "msa_title", "preferences_chars", "doc_kept_pct",
+    "context", "duration_ms", "llm_calls", "llm_load_ms", "llm_prompt_ms",
+    "llm_gen_ms", "tokens_in", "tokens_out", "llm_detail", "response_chars",
+    "edits_proposed", "preferences_proposed", "compaction", "office_platform",
+    "office_version", "pane_build", "backend_build", "user_agent",
+)
+
+
+def _turn_log_columns(conn) -> set[str]:
+    rows = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'turn_log' AND column_name <> 'id'"
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def test_a_database_from_the_first_deploy_gets_every_column_the_code_writes():
+    """The VM's turn_log already exists, so CREATE TABLE IF NOT EXISTS never runs
+    there again: a column added only inside the CREATE passes every test on a
+    fresh database and fails every insert in production — quietly, into the app
+    log. Rebuild the table as it shipped, start up as the VM does, and require
+    exactly COLUMNS. A new column needs an ALTER ... ADD COLUMN IF NOT EXISTS
+    (memory/db.py); a removed one needs its DROP.
+
+    Mutation: add a column to COLUMNS and to the CREATE only."""
+    with get_pool().connection() as conn:
+        conn.execute("DROP TABLE turn_log")
+        conn.execute(
+            "CREATE TABLE turn_log (id BIGSERIAL PRIMARY KEY, "
+            + ", ".join(f"{c} TEXT" for c in _SHIPPED_2026_10_14) + ")"
+        )
+    try:
+        init_db()
+        with get_pool().connection() as conn:
+            assert _turn_log_columns(conn) == set(COLUMNS)
+    finally:
+        # Every other test needs the real column types back.
+        with get_pool().connection() as conn:
+            conn.execute("DROP TABLE turn_log")
+        init_db()
 
 
 def test_a_chat_turn_takes_what_ran_from_the_final_state():
