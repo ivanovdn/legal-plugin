@@ -61,15 +61,17 @@ def test_a_full_page_says_older_turns_are_cut_off(capsys):
     like the whole story."""
     for i in range(3):
         write_turn(_turn(f"t-{i}", arrived_at=f"2026-10-09T10:0{i}:00+00:00"))
-    print_turns(recent_turns(limit=2), limit=2)
+    print_turns(recent_turns(limit=3), limit=2)
     out = capsys.readouterr().out
     assert "=== Turns (2) ===" in out
     assert "the newest 2 turns" in out and "raise --limit" in out
+    # The extra row that proved the cut is not printed.
+    assert "turn: t-0" not in out and "turn: t-1" in out and "turn: t-2" in out
 
 
 def test_a_page_with_room_to_spare_says_nothing_about_a_cut(capsys):
     write_turn(_turn("t-1"))
-    print_turns(recent_turns(limit=5), limit=5)
+    print_turns(recent_turns(limit=6), limit=5)
     out = capsys.readouterr().out
     assert "=== Turns (1) ===" in out and "turn: t-1" in out
     assert "newest" not in out and "--limit" not in out
@@ -85,6 +87,18 @@ def test_the_cli_hands_its_limit_to_the_printer(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "=== Turns (2) ===" in out and "the newest 2 turns" in out
     assert "turn: t-1" in out and "turn: t-2" in out and "turn: t-0" not in out
+
+
+def test_exactly_limit_turns_is_the_whole_story_and_says_nothing_about_a_cut(monkeypatch, capsys):
+    """A page that is full only because the history is exactly that long cut
+    nothing off; the notice would send the reader to raise --limit for nothing."""
+    for i in range(2):
+        write_turn(_turn(f"t-{i}", arrived_at=f"2026-10-09T10:0{i}:00+00:00"))
+    monkeypatch.setattr(sys, "argv", ["feedback_report", "--turns", "--limit", "2"])
+    main()
+    out = capsys.readouterr().out
+    assert "=== Turns (2) ===" in out and "turn: t-0" in out and "turn: t-1" in out
+    assert "newest" not in out and "--limit" not in out
 
 
 def test_since_filters_by_arrival_time():

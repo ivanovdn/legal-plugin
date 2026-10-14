@@ -97,12 +97,18 @@ def format_turn(t: dict) -> list[str]:
 
 
 def print_turns(rows: list[dict], limit: int) -> None:
+    """`rows` is recent_turns(limit=limit + 1): the one extra row, when it exists,
+    is the proof that older turns were cut off. It is the oldest written (lowest
+    id), not printed — a page of exactly `limit` turns cut nothing and says so."""
+    cut = len(rows) > limit
+    if cut:
+        oldest = min(row["id"] for row in rows)
+        rows = [row for row in rows if row["id"] != oldest]
     print(f"=== Turns ({len(rows)}) ===")
     print("  One entry per request to /api/query, its resume or /api/compact —")
     print("  failures included — oldest first. How to read it: docs/feedback-loop.md.")
-    # recent_turns keeps the newest `limit`, so a full page may have cut off the
-    # START of the story — and fifty rows read like the whole of it.
-    if rows and len(rows) >= limit:
+    # A cut page has lost the START of the story, and fifty rows read like the whole of it.
+    if cut:
         print(f"  Only the newest {limit} turns are shown — raise --limit for more.")
     print()
     if not rows:
@@ -133,7 +139,7 @@ def main() -> None:
 
     if args.turns:
         print_turns(recent_turns(since=since, attorney_id=args.attorney,
-                                 document_id=args.document, limit=args.limit), args.limit)
+                                 document_id=args.document, limit=args.limit + 1), args.limit)
         return
 
     rows = recent_feedback(args.limit, **f)
