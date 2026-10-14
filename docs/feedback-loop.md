@@ -109,6 +109,37 @@ FROM turn_log GROUP BY 1, 2 ORDER BY turns DESC;
 
 ---
 
+## Pane use, day by day
+
+```bash
+uv run python -m scripts.feedback_report --activity --days 7
+```
+
+One entry per attorney per UTC day:
+
+```
+  2026-10-15  A. Tester (cc91e640-…)   opens 3 · chat 2 · reviews 1 · finalize 0 · errors 1
+    waited in Word: chat 9.8s · review 96.1s   server: chat 7.2s · review 88.0s   (medians)
+    pane 1a2b3c4 · backend 1a2b3c4
+```
+
+- **opens** counts `pane_opened` — a day with opens and `chat 0 · reviews 0` is someone who looked and asked nothing, the case no turn table can show.
+- **waited in Word** is measured in the pane from pressing Send / Review to the result on screen; **server** is `turn_log.duration_ms`. The gap is reading the document out of Word, the network and Caddy.
+- Opens, waits, tabs and errors exist only from panes built after SP3 (2026-10-14); a day from an older pane shows its turns with `opens 0` and builds `—`.
+- `--document` narrows by document id, and a pane opened on a document that never got one (never reviewed or chatted) has none — leave `--document` off when counting opens.
+
+The pane's events, all `interaction_event` rows with `surface = 'pane'`:
+
+| `action` | When | `target_ref` | `detail` |
+|---|---|---|---|
+| `pane_opened` | each pane load | — | `saved` / `unsaved` / `""` |
+| `tab_viewed` | each tab switch | `findings` / `chat` / `preferences` | — |
+| `finalize_applied` / `finalize_failed` | after the in-pane confirm | — | the error, on failure |
+| `client_error` | an error the pane showed, or an uncaught one | `chat` / `review` / `compact` / `preferences` / `window` | the message |
+| `turn_waited` | a chat answer or review on screen, or failed | `chat` / `review` | milliseconds |
+
+`--turns` now shows each turn's `(waited X in Word)` and prints the session's turn-less pane events (opened, tab, Finalize, errors) between the turns. Requests that never reached the backend are in Caddy's files — [deploy-vm.md](deploy-vm.md), *Logs*.
+
 ## From a complaint to the prompt that caused it
 
 Every feedback row prints a `turn:` id and, when tracing is on, a `trace:` id.

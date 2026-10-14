@@ -486,6 +486,18 @@ steps above.
 
 ---
 
+## What the assistant records
+
+While we test, the assistant records:
+
+- the questions you ask and the reviews you run, and its answers;
+- what you do with its suggestions — applied, discarded, or failed to apply;
+- **when the task pane is opened, which tab you use, how long answers take, and any error it shows you.**
+
+None of this records the text of your document, except that an error message can quote the passage it was working on. It is used only to find what the assistant gets wrong.
+
+---
+
 ## If something goes wrong
 
 ### Both platforms
