@@ -220,7 +220,7 @@ zcat -f data/caddy-logs/tls-errors*.log* | jq -r '[(.ts | todate | .[0:10]), (.m
 
 ### Working files — deploy logs and backups
 
-What we make on the VM by hand — deploy logs, backups, the exported root certificate — goes in one of two folders inside the checkout, never loose in `~` and never anywhere else in the repo:
+What we make on the VM by hand — deploy logs, backups, the exported root certificate — goes in one of the two hand-made folders below (`data/caddy-logs/` is Caddy's, not ours), inside the checkout, never loose in `~` and never anywhere else in the repo:
 
 | Folder | Holds | Kept |
 |---|---|---|
@@ -228,7 +228,7 @@ What we make on the VM by hand — deploy logs, backups, the exported root certi
 | `data/backups/` | A copy of production data taken right before something that could destroy it (below). Named `<what>-<UTC date>-<reason>`, e.g. `app-db-2026-10-15-pre-sp2.sql.gz`. | Until the operation it protected is verified, then deleted — most hold contract text. The Caddy CA stays. |
 | `data/caddy-logs/` | Written by Caddy, not by hand: `access.log` (every request to the site) and `tls-errors.log` (handshakes our certificate failed). JSON lines, `0644`. | Rolled by Caddy at 10 MB, 10 kept, 90 days at most; rolled files are gzipped. |
 
-**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build.context: .` in compose, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` is mounted into a container, so these two folders are invisible to the stack. `data/` itself belongs to root (Docker created it for that mount), so the two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`:
+**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build.context: .` in compose, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` (into the backend) and `data/caddy-logs` (into caddy, which writes it) are mounted into containers, so `deploy-logs` and `backups` are invisible to the stack. `data/` itself belongs to root (Docker created it for those mounts), so those two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`. `data/caddy-logs/` is not made by hand: Docker creates it on the first start of caddy, owned by root, `0755`, with `0644` files, so the deploy user reads it without `sudo`:
 
 ```bash
 sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
