@@ -96,6 +96,13 @@ _STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_feedback_turn ON feedback (turn_id)",
+    # What sent the flag (SP3): the Word host and pane build from the request
+    # headers, and the backend's own build — a flag from a stale pane is then a
+    # property of its row. ALTER, not the CREATE above: the VM's table exists.
+    "ALTER TABLE feedback ADD COLUMN IF NOT EXISTS office_platform TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE feedback ADD COLUMN IF NOT EXISTS office_version TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE feedback ADD COLUMN IF NOT EXISTS pane_build TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE feedback ADD COLUMN IF NOT EXISTS backend_build TEXT NOT NULL DEFAULT ''",
     """
     CREATE TABLE IF NOT EXISTS interaction_event (
         id BIGSERIAL PRIMARY KEY,
@@ -122,6 +129,13 @@ _STATEMENTS = [
     # CREATE above because CREATE TABLE IF NOT EXISTS will not add a column to
     # a table that already exists (same pattern as audit_log.user_name).
     "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS request TEXT NOT NULL DEFAULT ''",
+    # What sent the event (SP3) — same four facts and the same reason as on
+    # feedback above. Pane lifecycle events (surface='pane') need them most: a
+    # pane_opened without its pane_build cannot show a stale pane.
+    "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS office_platform TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS office_version TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS pane_build TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS backend_build TEXT NOT NULL DEFAULT ''",
     # Add later turn_log columns with an `ALTER TABLE turn_log ADD COLUMN IF NOT
     # EXISTS …` statement BELOW its CREATE, never only inside it: CREATE TABLE IF
     # NOT EXISTS will not touch a table that already exists (the VM's), and every

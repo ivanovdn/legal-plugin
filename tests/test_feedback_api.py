@@ -11,11 +11,13 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from memory import feedback_store as fs
+from memory.db import get_pool
 
 
 @pytest.fixture
 def client(monkeypatch):
-    fake = SimpleNamespace(feedback_enabled=True, feedback_snapshot_max_chars=50)
+    fake = SimpleNamespace(feedback_enabled=True, feedback_snapshot_max_chars=50,
+                           build_sha="test-build")
     monkeypatch.setattr("api.routes.feedback.get_settings", lambda: fake)
     # raise_server_exceptions=False so a 500 arrives as a response, not a raise.
     return TestClient(app, raise_server_exceptions=False), fake
@@ -115,3 +117,28 @@ def test_events_disabled_is_still_200(client):
     r = c.post("/api/events", json={"events": [{"action": "edit_applied"}]},
                headers={"X-User-ID": "a"})
     assert r.status_code == 200 and r.json()["data"]["recorded"] == 0
+
+
+_CLIENT_HEADERS = {"X-User-ID": "atty-1", "X-Office-Platform": "Mac",
+                   "X-Office-Version": "16.113", "X-Pane-Build": "abc1234"}
+
+
+def _client_columns(table: str) -> list[tuple]:
+    with get_pool().connection() as conn:
+        return conn.execute(
+            f"SELECT office_platform, office_version, pane_build, backend_build "
+            f"FROM {table} ORDER BY id"
+        ).fetchall()
+
+
+def test_events_carry_what_sent_them(client):
+    c, _ = client
+    c.post("/api/events", json={"events": [{"surface": "pane", "action": "pane_opened"}]},
+           headers=_CLIENT_HEADERS)
+    assert _client_columns("interaction_event") == [("Mac", "16.113", "abc1234", "test-build")]
+
+
+def test_feedback_carries_what_sent_it(client):
+    c, _ = client
+    c.post("/api/feedback", json=_body(), headers=_CLIENT_HEADERS)
+    assert _client_columns("feedback") == [("Mac", "16.113", "abc1234", "test-build")]

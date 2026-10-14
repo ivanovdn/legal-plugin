@@ -46,7 +46,11 @@ class FeedbackSubmission(BaseModel):
 
 
 class InteractionEvent(BaseModel):
-    """One recorded interaction with an assistant suggestion."""
+    """One thing the attorney did in the pane: an interaction with an assistant
+    suggestion, or (surface="pane") a pane lifecycle event — pane_opened,
+    tab_viewed, finalize_applied / finalize_failed, client_error, turn_waited.
+    What sent it (Word host, pane build) comes from the request headers, not
+    from here."""
     turn_id: str = ""
     session_id: str = ""
     document_id: str = ""

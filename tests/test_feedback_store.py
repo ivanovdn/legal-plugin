@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from memory import feedback_store as fs
+from memory.db import get_pool, init_db
 
 
 def _save(**over):
@@ -238,3 +239,77 @@ def test_feedback_filters_narrow_by_document_and_attorney():
     assert len(fs.recent_feedback(document_id="doc-A")) == 1
     assert len(fs.recent_feedback(attorney_id="atty-B")) == 1
     assert len(fs.recent_feedback()) == 2
+
+
+_CLIENT = {"office_platform": "PC", "office_version": "16.0.18129", "pane_build": "p1"}
+_CLIENT_COLUMNS = {"office_platform", "office_version", "pane_build", "backend_build"}
+
+# Each table's columns as deployed on the VM before SP3 (2026-10-14). Frozen:
+# never edit — they stand for every database created before this change.
+_EVENT_COLUMNS_2026_10_14 = (
+    "timestamp", "turn_id", "session_id", "document_id", "attorney_id", "surface",
+    "action", "target_kind", "target_ref", "detail", "request",
+)
+_FEEDBACK_COLUMNS_2026_10_14 = (
+    "timestamp", "turn_id", "trace_id", "session_id", "document_id", "attorney_id",
+    "user_name", "surface", "target_kind", "target_ref", "comment", "snapshot",
+)
+
+
+def _client_columns(table: str) -> list[tuple]:
+    with get_pool().connection() as conn:
+        return conn.execute(
+            f"SELECT office_platform, office_version, pane_build, backend_build "
+            f"FROM {table} ORDER BY id"
+        ).fetchall()
+
+
+def test_record_events_stamps_what_sent_it_and_the_backend_build():
+    fs.record_events([{"surface": "pane", "action": "pane_opened"}],
+                     attorney_id="atty-1", client=_CLIENT, backend_build="b1")
+    assert _client_columns("interaction_event") == [("PC", "16.0.18129", "p1", "b1")]
+
+
+def test_save_feedback_stamps_what_sent_it_and_the_backend_build():
+    _save(client=_CLIENT, backend_build="b1")
+    assert _client_columns("feedback") == [("PC", "16.0.18129", "p1", "b1")]
+
+
+def test_a_writer_without_client_facts_records_them_empty():
+    """Chainlit and pre-SP2 panes send no client headers: unknown, not an error."""
+    fs.record_events([{"action": "edit_applied"}], attorney_id="atty-1")
+    _save()
+    assert _client_columns("interaction_event") == [("", "", "", "")]
+    assert _client_columns("feedback") == [("", "", "", "")]
+
+
+@pytest.mark.parametrize("table, shipped", [
+    ("interaction_event", _EVENT_COLUMNS_2026_10_14),
+    ("feedback", _FEEDBACK_COLUMNS_2026_10_14),
+])
+def test_a_database_from_before_sp3_gains_the_client_columns(table, shipped):
+    """The VM's tables exist, so CREATE TABLE IF NOT EXISTS never runs there
+    again: a column added only inside the CREATE fails every write in
+    production, quietly for events. Rebuild the table as it shipped, start up
+    as the VM does, and require the four new columns.
+
+    Mutation: move one client column into the CREATE and delete its ALTER."""
+    with get_pool().connection() as conn:
+        conn.execute(f"DROP TABLE {table}")
+        conn.execute(
+            f"CREATE TABLE {table} (id BIGSERIAL PRIMARY KEY, "
+            + ", ".join(f"{c} TEXT" for c in shipped) + ")"
+        )
+    try:
+        init_db()
+        with get_pool().connection() as conn:
+            got = {r[0] for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = %s AND column_name <> 'id'", (table,)
+            ).fetchall()}
+        assert got == set(shipped) | _CLIENT_COLUMNS
+    finally:
+        # Every other test needs the real column types back.
+        with get_pool().connection() as conn:
+            conn.execute(f"DROP TABLE {table}")
+        init_db()

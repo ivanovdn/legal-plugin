@@ -34,6 +34,12 @@ _TRUNCATION_MARK = "\n\n[... truncated at {n} chars ...]"
 COUNTER_ACTIONS = ("edits_proposed", "findings_rendered", "preferences_suggested")
 
 
+def _client_values(client: dict | None) -> tuple[str, str, str]:
+    """The three client facts from a ClientInfo-shaped dict; missing → ""."""
+    c = client or {}
+    return c.get("office_platform", ""), c.get("office_version", ""), c.get("pane_build", "")
+
+
 def truncate_snapshot(snapshot: dict | None, max_chars: int) -> dict | None:
     """Cap each top-level string value, marking the cut. Returns a new dict.
 
@@ -65,20 +71,24 @@ def save_feedback(
     target_ref: str,
     comment: str,
     snapshot: dict | None,
+    client: dict | None = None,
+    backend_build: str = "",
 ) -> int:
     """Insert one feedback row and return its id. Raises on any failure."""
     with get_pool().connection() as conn:
         cur = conn.execute(
             """INSERT INTO feedback
                (timestamp, turn_id, trace_id, session_id, document_id, attorney_id,
-                user_name, surface, target_kind, target_ref, comment, snapshot)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                user_name, surface, target_kind, target_ref, comment, snapshot,
+                office_platform, office_version, pane_build, backend_build)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (
                 datetime.now(timezone.utc).isoformat(),
                 turn_id, trace_id, session_id, document_id, attorney_id,
                 user_name, surface, target_kind, target_ref, comment,
                 Jsonb(snapshot) if snapshot is not None else None,
+                *_client_values(client), backend_build,
             ),
         )
         row_id = cur.fetchone()[0]
@@ -101,6 +111,8 @@ def _insert_event(
     target_ref: str,
     detail: str,
     request: str,
+    client: dict | None,
+    backend_build: str,
 ) -> None:
     """Raw insert — RAISES. The quiet policy lives in the two callers below, so
     record_events can count what actually landed instead of what it attempted."""
@@ -108,12 +120,14 @@ def _insert_event(
         conn.execute(
             """INSERT INTO interaction_event
                (timestamp, turn_id, session_id, document_id, attorney_id,
-                surface, action, target_kind, target_ref, detail, request)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                surface, action, target_kind, target_ref, detail, request,
+                office_platform, office_version, pane_build, backend_build)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 datetime.now(timezone.utc).isoformat(),
                 turn_id, session_id, document_id, attorney_id,
                 surface, action, target_kind, target_ref, detail, request,
+                *_client_values(client), backend_build,
             ),
         )
 
@@ -130,6 +144,8 @@ def record_event(
     target_ref: str = "",
     detail: str = "",
     request: str = "",
+    client: dict | None = None,
+    backend_build: str = "",
 ) -> None:
     """Insert one interaction event. NEVER raises — telemetry is not load-bearing."""
     try:
@@ -137,14 +153,19 @@ def record_event(
             turn_id=turn_id, session_id=session_id, document_id=document_id,
             attorney_id=attorney_id, surface=surface, action=action,
             target_kind=target_kind, target_ref=target_ref, detail=detail,
-            request=request,
+            request=request, client=client, backend_build=backend_build,
         )
     except Exception as e:
         logger.warning("interaction_event write failed (%s): %s", action, e)
 
 
-def record_events(events: list[dict], *, attorney_id: str) -> int:
-    """Insert a batch, returning how many actually landed. NEVER raises."""
+def record_events(
+    events: list[dict], *, attorney_id: str,
+    client: dict | None = None, backend_build: str = "",
+) -> int:
+    """Insert a batch, returning how many actually landed. NEVER raises.
+    `client` / `backend_build` describe the request that carried the batch, so
+    they are the same on every row of it."""
     written = 0
     for event in events:
         try:
@@ -159,6 +180,8 @@ def record_events(events: list[dict], *, attorney_id: str) -> int:
                 target_ref=event.get("target_ref", ""),
                 detail=event.get("detail", ""),
                 request=event.get("request", ""),
+                client=client,
+                backend_build=backend_build,
             )
             written += 1
         except Exception as e:

@@ -7,9 +7,12 @@ The two endpoints fail differently on purpose. /api/feedback surfaces a store
 failure as a 500 because the attorney was told their report sent. /api/events
 always returns 200 because a telemetry outage must be invisible in the pane.
 """
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import resolve_user_id, resolve_user_name
+from api.client_info import ClientInfo, resolve_client_info
 from api.models import ApiResponse, FeedbackSubmission, InteractionEventBatch
 from config import get_settings
 from memory.feedback_store import record_events, save_feedback, truncate_snapshot
@@ -22,6 +25,7 @@ def post_feedback(
     body: FeedbackSubmission,
     user_id: str = Depends(resolve_user_id),
     user_name: str = Depends(resolve_user_name),
+    client: ClientInfo = Depends(resolve_client_info),
 ) -> ApiResponse:
     settings = get_settings()
     if not settings.feedback_enabled:
@@ -41,6 +45,8 @@ def post_feedback(
         target_ref=body.target_ref,
         comment=body.comment,
         snapshot=truncate_snapshot(body.snapshot, settings.feedback_snapshot_max_chars),
+        client=asdict(client),
+        backend_build=settings.build_sha,
     )
     return ApiResponse(status="ok", data={"saved": True, "id": row_id})
 
@@ -49,8 +55,13 @@ def post_feedback(
 def post_events(
     body: InteractionEventBatch,
     user_id: str = Depends(resolve_user_id),
+    client: ClientInfo = Depends(resolve_client_info),
 ) -> ApiResponse:
-    if not get_settings().feedback_enabled:
+    settings = get_settings()
+    if not settings.feedback_enabled:
         return ApiResponse(status="ok", data={"recorded": 0})
-    written = record_events([e.model_dump() for e in body.events], attorney_id=user_id)
+    written = record_events(
+        [e.model_dump() for e in body.events], attorney_id=user_id,
+        client=asdict(client), backend_build=settings.build_sha,
+    )
     return ApiResponse(status="ok", data={"recorded": written})
