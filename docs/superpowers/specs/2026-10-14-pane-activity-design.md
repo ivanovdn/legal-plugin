@@ -88,7 +88,7 @@ All sent by the existing `recordEvent` path (fire-and-forget, never throws), wit
 
 | `action` | Fires | `turn_id` | Other fields |
 |---|---|---|---|
-| `pane_opened` | Once per pane load, when `App` mounts (after `Office.onReady`) | `""` | `session_id` = the pane's session; `document_id` = `resolveDocumentId()`; `detail` = `saved` \| `unsaved` (the existing `isDocumentUnsaved()` probe; `""` if the probe fails) |
+| `pane_opened` | Once per pane load, when `App` mounts (after `Office.onReady`) | `""` | `session_id` = the pane's session; `document_id` = `readDocumentId()` — read-only, `""` when the document has none; `detail` = `saved` \| `unsaved` (the existing `isDocumentUnsaved()` probe; `""` if the probe fails) |
 | `tab_viewed` | Each tab change by the attorney; the initial tab is implied by `pane_opened` | `""` | `target_ref` = `findings` \| `chat` \| `preferences` |
 | `finalize_applied` | After the in-pane confirm, when `finalizeDocument()` succeeds | `""` | — |
 | `finalize_failed` | Same, when it fails | `""` | `detail` = the error text |
@@ -99,11 +99,12 @@ All sent by the existing `recordEvent` path (fire-and-forget, never throws), wit
 
 **Pane module.** New `clients/word/src/paneEvents.ts`:
 
-- `recordPaneEvent(action: string, extra?: { turnId?; sessionId?; documentId?; targetRef?; detail? })` — builds a `TurnRef` and calls `recordEvent(turn, "pane", action, …)`.
+- `recordPaneEvent(action: string, extra?: { turnId?; targetRef?; detail? })` — builds a `TurnRef` from the pane's session (`setPaneSession`, once from `App`) and `readDocumentId()`, and calls `recordEvent(turn, "pane", action, …)`.
+- `readDocumentId(): string` (new, `docIdentity.ts`) — the stored id or `""`, **never created**. `resolveDocumentId()` mints and saves one when absent, which writes Office settings and marks the document modified: a pane that merely opened would make Word ask to save a file the attorney never changed.
 - `installErrorHandlers(sessionId: string)` — `window` `error` and `unhandledrejection` → `client_error` with `target_ref="window"`. Installed once, from `App`. **Guarded against loops:** a failure inside the reporting itself is swallowed, never re-reported.
 - `startWait(): () => number` — returns a function giving the elapsed whole milliseconds.
 
-Call sites: `App.tsx` (`pane_opened`, `tab_viewed`, the handlers), `FinalizeBar.tsx`, the `catch` blocks in `ChatTab.tsx` / `FindingsTab.tsx` / `ContextMeter.tsx`, the preferences load/save in `PreferencesTab.tsx`, and `turn_waited` in `ChatTab.send` / `FindingsTab`'s review.
+Call sites: `App.tsx` (`pane_opened`, `tab_viewed`, the handlers, and the in-pane disclosure line, which now names pane use too), `FinalizeBar.tsx`, the `catch` blocks in `ChatTab.tsx` / `FindingsTab.tsx` / `ContextMeter.tsx`, the preferences load/save in `PreferencesTab.tsx`, and `turn_waited` in `ChatTab.send` / `FindingsTab`'s review.
 
 ### The backend
 
