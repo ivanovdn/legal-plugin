@@ -192,7 +192,10 @@ def recent_turns(
                    AND e.action IN ('edit_failed', 'redline_failed')) AS failed,
                 (SELECT count(*) FROM interaction_event e WHERE e.turn_id = t.turn_id
                    AND e.action = 'edit_discarded') AS discarded,
-                (SELECT count(*) FROM feedback f WHERE f.turn_id = t.turn_id) AS flags
+                (SELECT count(*) FROM feedback f WHERE f.turn_id = t.turn_id) AS flags,
+                (SELECT max(e.detail::bigint) FROM interaction_event e
+                  WHERE e.turn_id = t.turn_id AND e.action = 'turn_waited'
+                    AND e.detail ~ '^[0-9]+$') AS waited_ms
             FROM turn_log t
             {"WHERE " + where if where else ""}
             ORDER BY t.id DESC

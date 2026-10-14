@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import sys
 
+from memory.db import get_pool
 from memory.feedback_store import record_event, save_feedback
 from memory.turn_log import build_turn_row, recent_turns, write_turn
-from scripts.feedback_report import format_turn, main, print_turns
+from scripts.feedback_report import format_pane_event, format_turn, main, print_turns
 
 
 def _turn(turn_id, **overrides):
@@ -168,3 +169,73 @@ def test_recent_turns_counts_each_turns_own_events_by_kind():
     t1, t2 = recent_turns()
     assert (t1["turn_id"], t1["applied"], t1["failed"], t1["discarded"], t1["flags"]) == ("t-1", 3, 2, 0, 0)
     assert (t2["turn_id"], t2["applied"], t2["failed"], t2["discarded"], t2["flags"]) == ("t-2", 0, 1, 2, 1)
+
+
+def _pane_row(ts, action, *, session_id="s-1", turn_id="", target_ref="", detail=""):
+    """A pane event at a chosen time — record_events always stamps now()."""
+    with get_pool().connection() as conn:
+        conn.execute(
+            "INSERT INTO interaction_event (timestamp, turn_id, session_id, document_id, "
+            "attorney_id, surface, action, target_ref, detail) "
+            "VALUES (%s, %s, %s, 'doc-1', 'atty-1', 'pane', %s, %s, %s)",
+            (ts, turn_id, session_id, action, target_ref, detail),
+        )
+
+
+def test_each_turn_shows_the_wait_its_own_turn_waited_recorded():
+    """Mutation: join turn_waited on session_id instead of turn_id."""
+    write_turn(_turn("t-1", arrived_at="2026-10-09T10:00:00+00:00"))
+    write_turn(_turn("t-2", arrived_at="2026-10-09T10:05:00+00:00"))
+    _pane_row("2026-10-09T10:00:20+00:00", "turn_waited", turn_id="t-1",
+              target_ref="chat", detail="9800")
+    _pane_row("2026-10-09T10:05:20+00:00", "turn_waited", turn_id="t-2",
+              target_ref="chat", detail="not-a-number")
+    first, second = recent_turns()
+    assert (first["waited_ms"], second["waited_ms"]) == (9800, None)
+    assert "13.1s total (waited 9.8s in Word)" in _text(first)
+    assert "waited" not in _text(second)
+
+
+def test_the_timeline_puts_this_sessions_pane_events_between_its_turns(monkeypatch, capsys):
+    write_turn(_turn("t-1", arrived_at="2026-10-09T10:00:00+00:00"))
+    write_turn(_turn("t-2", arrived_at="2026-10-09T10:05:00+00:00"))
+    _pane_row("2026-10-09T09:59:00+00:00", "pane_opened", detail="saved")
+    _pane_row("2026-10-09T10:02:00+00:00", "tab_viewed", target_ref="preferences")
+    _pane_row("2026-10-09T10:03:00+00:00", "pane_opened", session_id="s-other", detail="saved")
+    _pane_row("2026-10-09T10:00:20+00:00", "turn_waited", turn_id="t-1",
+              target_ref="chat", detail="9800")
+    monkeypatch.setattr(sys, "argv", ["feedback_report", "--turns"])
+    main()
+    out = capsys.readouterr().out
+    opened = out.index("· pane opened (saved)")
+    first = out.index("turn: t-1")
+    tab = out.index("· tab: preferences")
+    second = out.index("turn: t-2")
+    assert opened < first < tab < second
+    assert out.count("pane opened") == 1          # the other session's open is not here
+    assert "turn_waited" not in out               # a wait shows on its turn, not as a line
+    assert "=== Turns (2) ===" in out             # pane lines are not counted as turns
+
+
+def test_each_pane_event_reads_as_one_line():
+    e = {"timestamp": "2026-10-09T10:02:00+00:00", "target_ref": "", "detail": ""}
+    assert format_pane_event({**e, "action": "pane_opened", "detail": "unsaved"}) == \
+        "  2026-10-09T10:02:00  · pane opened (unsaved)"
+    assert format_pane_event({**e, "action": "pane_opened"}).endswith("(save state unknown)")
+    assert format_pane_event({**e, "action": "finalize_failed", "detail": "x" * 300}) == \
+        "  2026-10-09T10:02:00  · finalize failed: " + "x" * 120
+    assert format_pane_event({**e, "action": "client_error", "target_ref": "compact",
+                              "detail": "Backend returned 502"}).endswith(
+        "· error in compact: Backend returned 502")
+
+
+def test_the_feedback_summary_leaves_pane_activity_to_activity(monkeypatch, capsys):
+    record_event(turn_id="", session_id="s-1", document_id="doc-1", attorney_id="atty-1",
+                 surface="pane", action="pane_opened")
+    record_event(turn_id="t-1", session_id="s-1", document_id="doc-1", attorney_id="atty-1",
+                 surface="chat", action="edit_applied")
+    monkeypatch.setattr(sys, "argv", ["feedback_report"])
+    main()
+    out = capsys.readouterr().out
+    assert "=== Per-item actions (1) ===" in out
+    assert "pane_opened" not in out and "--activity" in out

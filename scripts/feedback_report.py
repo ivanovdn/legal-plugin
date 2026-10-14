@@ -146,8 +146,9 @@ def format_turn(t: dict) -> list[str]:
     lines = [f"  {t['timestamp'][:19]}  {who}  {t['kind']}:{task}  {t['outcome']}{codes}"]
     if t["error"]:
         lines.append(f"    error: {t['error'][:160]}")
+    waited = f" (waited {_secs(t['waited_ms'])} in Word)" if t["waited_ms"] is not None else ""
     lines.append(
-        f"    {_secs(t['duration_ms'])} total · {t['llm_calls']} model call(s): "
+        f"    {_secs(t['duration_ms'])} total{waited} · {t['llm_calls']} model call(s): "
         f"load {_secs(t['llm_load_ms'])} · prompt {_secs(t['llm_prompt_ms'])} · "
         f"gen {_secs(t['llm_gen_ms'])} · {t['tokens_in']}→{t['tokens_out']} tokens"
     )
@@ -179,17 +180,32 @@ def format_turn(t: dict) -> list[str]:
     return lines
 
 
-def print_turns(rows: list[dict], limit: int) -> None:
+def format_pane_event(e: dict) -> str:
+    """A pane event that belongs to no turn, as one timeline line."""
+    what = {
+        "pane_opened": f"pane opened ({e['detail'] or 'save state unknown'})",
+        "tab_viewed": f"tab: {e['target_ref']}",
+        "finalize_applied": "finalize applied",
+        "finalize_failed": f"finalize failed: {e['detail'][:120]}",
+        "client_error": f"error in {e['target_ref'] or 'pane'}: {e['detail'][:120]}",
+    }.get(e["action"], e["action"])
+    return f"  {e['timestamp'][:19]}  · {what}"
+
+
+def print_turns(rows: list[dict], limit: int, pane_events: list[dict] = ()) -> None:
     """`rows` is recent_turns(limit=limit + 1): the one extra row, when it exists,
     is the proof that older turns were cut off. It is the oldest written (lowest
-    id), not printed — a page of exactly `limit` turns cut nothing and says so."""
+    id), not printed — a page of exactly `limit` turns cut nothing and says so.
+    `pane_events` (no turn, same sessions) are printed between the turns by time;
+    on a cut page only those from the first shown turn on."""
     cut = len(rows) > limit
     if cut:
         oldest = min(row["id"] for row in rows)
         rows = [row for row in rows if row["id"] != oldest]
     print(f"=== Turns ({len(rows)}) ===")
     print("  One entry per request to /api/query, its resume or /api/compact —")
-    print("  failures included — oldest first. How to read it: docs/feedback-loop.md.")
+    print("  failures included — oldest first, with what the attorney did in the")
+    print("  pane in between. How to read it: docs/feedback-loop.md.")
     # A cut page has lost the START of the story, and fifty rows read like the whole of it.
     if cut:
         print(f"  Only the newest {limit} turns are shown — raise --limit for more.")
@@ -197,9 +213,15 @@ def print_turns(rows: list[dict], limit: int) -> None:
     if not rows:
         print("  (none yet)\n")
         return
-    for row in rows:
-        print("\n".join(format_turn(row)))
-        print()
+    start = rows[0]["timestamp"] if cut else ""
+    entries = [(r["timestamp"], True, format_turn(r)) for r in rows] + [
+        (e["timestamp"], False, [format_pane_event(e)])
+        for e in pane_events if e["timestamp"] >= start
+    ]
+    for _, is_turn, lines in sorted(entries, key=lambda x: (x[0], x[1])):
+        print("\n".join(lines))
+        if is_turn:
+            print()
 
 
 def main() -> None:
@@ -227,8 +249,11 @@ def main() -> None:
         ))
         return
     if args.turns:
-        print_turns(recent_turns(since=since, attorney_id=args.attorney,
-                                 document_id=args.document, limit=args.limit + 1), args.limit)
+        rows = recent_turns(since=since, attorney_id=args.attorney,
+                            document_id=args.document, limit=args.limit + 1)
+        sessions = sorted({r["session_id"] for r in rows if r["session_id"]})
+        events = pane_events(session_ids=sessions, without_turn=True) if sessions else []
+        print_turns(rows, args.limit, events)
         return
 
     rows = recent_feedback(args.limit, **f)
@@ -270,11 +295,13 @@ def main() -> None:
                   f"turns={t['turns']:<6} total={t['total']:>6}")
         print()
 
-    item_counts = [c for c in event_counts(**f) if c["action"] not in COUNTER_ACTIONS]
+    item_counts = [c for c in event_counts(**f)
+                   if c["action"] not in COUNTER_ACTIONS and c["surface"] != "pane"]
     print(f"=== Per-item actions ({sum(c['count'] for c in item_counts)}) ===")
     print("  One row per Apply/Discard/failure/jump-not-found — an item, not a")
     print("  turn. These are the numerators; the counters above are the")
-    print("  denominators, and the two must not be divided across sections.\n")
+    print("  denominators, and the two must not be divided across sections.")
+    print("  Pane activity (opens, tabs, errors, waits) is under --activity, not here.\n")
     if not item_counts:
         print("  (none yet)\n")
     else:
