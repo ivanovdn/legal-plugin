@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getPreferences, savePreferences } from "../preferences";
 import { resolveAttorneyName, setAttorneyName } from "../attorneyIdentity";
+import { reportClientError } from "../paneEvents";
 
 interface Props {
   markdown: string;
@@ -25,6 +26,7 @@ export default function PreferencesTab({ markdown, setMarkdown, loaded, setLoade
         setLoaded(true);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        reportClientError("preferences", e);
       }
     })();
   }, [loaded, setMarkdown, setLoaded]);
@@ -38,6 +40,7 @@ export default function PreferencesTab({ markdown, setMarkdown, loaded, setLoade
       setStatus("Saved.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      reportClientError("preferences", e);
     } finally {
       setBusy(false);
     }

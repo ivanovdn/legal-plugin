@@ -8,6 +8,7 @@ import FeedbackPanel from "./components/FeedbackPanel";
 import { buildSnapshot, onFlagRequested, requestFlag, EMPTY_TURN, type FlagTarget } from "./feedback";
 import { readBody } from "./word";
 import { isDocumentUnsaved, resolveDocumentId } from "./docIdentity";
+import { installErrorHandlers, recordPaneEvent, setPaneSession } from "./paneEvents";
 import type { ReviewSummary } from "./parser";
 import ContextMeter from "./components/ContextMeter";
 import { type ContextBreakdown } from "./contextGauge";
@@ -25,6 +26,21 @@ export default function App() {
       : `addin-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   const [tab, setTab] = useState<TabKey>("findings");
+  // SP3: the pane's own lifecycle. One pane_opened per load — saved or not, read
+  // WITHOUT minting a document id (that would mark the document modified).
+  useEffect(() => {
+    setPaneSession(sessionId);
+    installErrorHandlers(window);
+    isDocumentUnsaved()
+      .then((u) => (u ? "unsaved" : "saved"))
+      .catch(() => "")
+      .then((saved) => recordPaneEvent("pane_opened", { detail: saved }));
+  }, [sessionId]);
+
+  const changeTab = (next: TabKey) => {
+    if (next !== tab) recordPaneEvent("tab_viewed", { targetRef: next });
+    setTab(next);
+  };
   // All persistent tab state is lifted here so toggling tabs doesn't reset it.
   const [findingsResult, setFindingsResult] = useState<ReviewSummary | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -144,8 +160,9 @@ export default function App() {
           Send feedback
         </button>
         <p className="disclosure">
-          During testing, your use of the assistant's suggestions is recorded so we
-          can measure what it gets wrong.
+          During testing, the assistant records when this pane is opened, which tab you
+          use, how long answers take, errors it shows you, and what you do with its
+          suggestions — so we can measure what it gets wrong.
         </p>
       </header>
       {/* Deliberately NOT the amber .status.warning used for memory_degraded.
@@ -168,7 +185,7 @@ export default function App() {
         liveDocChars={liveDocChars}
         docTruncated={docTruncated}
       />
-      <Tabs active={tab} onChange={setTab} />
+      <Tabs active={tab} onChange={changeTab} />
       {/* Both tabs always mounted; visibility toggled via CSS so state persists. */}
       <div className={`tab-pane ${tab === "findings" ? "" : "hidden"}`}>
         <FindingsTab

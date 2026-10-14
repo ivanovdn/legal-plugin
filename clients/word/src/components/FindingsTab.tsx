@@ -15,6 +15,7 @@ import { resolveDocumentId } from "../docIdentity";
 import { truncationNotice } from "../contextNotice";
 import type { ContextBreakdown } from "../contextGauge";
 import FindingCard from "./FindingCard";
+import { recordPaneEvent, reportClientError, startWait } from "../paneEvents";
 
 type Status =
   | { kind: "idle" }
@@ -50,23 +51,33 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
   // displayed rationale attached to it), not a precedent to follow here.
   const onReview = async () => {
     setPersistError(null);
+    // SP3: the wait as the attorney feels it — from pressing Review, before Word is read.
+    const elapsed = startWait();
+    let sent = false;
+    let turnId = "";
+    const fail = (message: string) => {
+      setStatus({ kind: "error", message });
+      reportClientError("review", message, turnId);
+    };
     try {
       setStatus({ kind: "reading" });
       const text = await readBody();
       if (!text || text.trim().length < 20) {
-        setStatus({ kind: "error", message: "Document is empty or too short to review." });
+        fail("Document is empty or too short to review.");
         return;
       }
       setStatus({ kind: "reviewing", charCount: text.length });
+      sent = true;
       const res = await submitReview(text, sessionId);
+      turnId = res.data?.turn_id ?? "";
       if (res.status === "error") {
-        setStatus({ kind: "error", message: (res.errors ?? ["unknown error"])[0] });
+        fail((res.errors ?? ["unknown error"])[0]);
         return;
       }
       const reportText =
         res.data?.report?.response ?? res.data?.interrupt_payload?.llm_response ?? "";
       if (!reportText) {
-        setStatus({ kind: "error", message: "Backend returned no review text." });
+        fail("Backend returned no review text.");
         return;
       }
       setRawResponse(reportText);
@@ -101,7 +112,9 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
       if (rpe) setPersistError(rpe);
       setStatus({ kind: "idle" });
     } catch (e) {
-      setStatus({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (sent) recordPaneEvent("turn_waited", { turnId, targetRef: "review", detail: String(elapsed()) });
     }
   };
 

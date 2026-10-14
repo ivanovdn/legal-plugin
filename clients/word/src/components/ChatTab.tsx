@@ -14,6 +14,7 @@ import { truncationNotice } from "../contextNotice";
 import type { ContextBreakdown } from "../contextGauge";
 import EditProposalCard from "./EditProposalCard";
 import PreferenceSuggestionCard from "./PreferenceSuggestionCard";
+import { recordPaneEvent, reportClientError, startWait } from "../paneEvents";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -73,11 +74,19 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
     setError(null);
     setMessages((m) => [...m, { role: "user", content: question }]);
     setBusy(true);
+    // SP3: the wait as the attorney feels it — from Send, before Word is read.
+    const elapsed = startWait();
+    let sent = false;
+    let turnId = "";
     try {
       const docText = await readBody();
+      sent = true;
       const res = await chatQuery(question, docText, sessionId);
+      turnId = res.data?.turn_id ?? "";
       if (res.status === "error") {
-        setError((res.errors ?? ["unknown error"])[0]);
+        const message = (res.errors ?? ["unknown error"])[0];
+        setError(message);
+        reportClientError("chat", message, turnId);
         setMemoryDegraded(false);
         setTruncated(null);
         return;
@@ -149,7 +158,9 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      reportClientError("chat", e, turnId);
     } finally {
+      if (sent) recordPaneEvent("turn_waited", { turnId, targetRef: "chat", detail: String(elapsed()) });
       setBusy(false);
     }
   };

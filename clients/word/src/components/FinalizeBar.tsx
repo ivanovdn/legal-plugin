@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { finalizeDocument } from "../word";
+import { recordPaneEvent } from "../paneEvents";
 
 // Document-level "produce a clean copy" action. Accepting tracked changes is
 // destructive and not limited to the assistant's edits, so it's gated behind
@@ -19,8 +20,13 @@ export default function FinalizeBar() {
   const onFinalize = async () => {
     setStatus({ kind: "running" });
     const res = await finalizeDocument();
-    if (res.ok) setStatus({ kind: "done", count: res.value });
-    else setStatus({ kind: "error", message: res.error });
+    if (res.ok) {
+      setStatus({ kind: "done", count: res.value });
+      recordPaneEvent("finalize_applied");
+    } else {
+      setStatus({ kind: "error", message: res.error });
+      recordPaneEvent("finalize_failed", { detail: res.error });
+    }
   };
 
   return (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { compactConversation } from "../api";
 import { resolveDocumentId } from "../docIdentity";
+import { reportClientError } from "../paneEvents";
 import {
   NEVER_COMPACTED,
   PART_LABELS,
@@ -219,6 +220,7 @@ export default function ContextMeter({ breakdown, liveDocChars, docTruncated }: 
         if (automatic) setDisarmed(true);
       }
     } catch (e) {
+      reportClientError("compact", e);
       setFailure({
         shownFor: latestBreakdown.current,
         message: e instanceof Error ? e.message : String(e),
