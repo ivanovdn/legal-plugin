@@ -71,3 +71,19 @@ def test_refresh_ttl_does_nothing_when_checkpointer_disabled(monkeypatch):
         refresh_ttl("abc")
 
     mock_redis_cls.assert_not_called()
+
+
+def test_the_startup_log_line_names_the_redis_host_but_never_its_password(monkeypatch, caplog):
+    """The line goes to journald on the VM; the URL carries the Redis password."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("REDIS_URL", "redis://:hunter2secret@redis:6379")
+    get_settings.cache_clear()
+    fake_cm = MagicMock()
+    fake_cm.__enter__.return_value = MagicMock()
+
+    with patch("graph.checkpointer.RedisSaver") as mock_saver_cls, caplog.at_level("INFO"):
+        mock_saver_cls.from_conn_string.return_value = fake_cm
+        build_checkpointer()
+
+    assert "redis:6379" in caplog.text
+    assert "hunter2secret" not in caplog.text

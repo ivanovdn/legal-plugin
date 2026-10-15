@@ -29,7 +29,9 @@ def build_checkpointer():
         cm = RedisSaver.from_conn_string(settings.redis_url)
         saver = cm.__enter__()
         saver.setup()
-        logger.info("Redis checkpointer initialized at %s", settings.redis_url)
+        # Host and port only — the URL carries the Redis password.
+        url = urlparse(settings.redis_url)
+        logger.info("Redis checkpointer initialized at %s:%s", url.hostname, url.port or 6379)
         return saver
     except Exception as e:
         logger.warning("Checkpointer unavailable (%s) — running without memory", e)
