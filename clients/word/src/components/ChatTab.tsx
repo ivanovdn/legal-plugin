@@ -15,6 +15,7 @@ import type { ContextBreakdown } from "../contextGauge";
 import EditProposalCard from "./EditProposalCard";
 import PreferenceSuggestionCard from "./PreferenceSuggestionCard";
 import { recordPaneEvent, reportClientError, startWait } from "../paneEvents";
+import { useElapsedSeconds, waitMessage } from "../waitMessage";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -59,6 +60,7 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [memoryDegraded, setMemoryDegraded] = useState(false);
+  const waited = useElapsedSeconds(busy);
   const [truncated, setTruncated] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -233,7 +235,7 @@ export default function ChatTab({ sessionId, messages, setMessages, onPreference
         {busy && (
           <div className="chat-msg chat-assistant">
             <div className="chat-role">Assistant</div>
-            <div className="chat-content chat-thinking">Thinking… (30–60 s)</div>
+            <div className="chat-content chat-thinking">{waitMessage("chat", waited)}</div>
           </div>
         )}
       </div>

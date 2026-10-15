@@ -16,6 +16,7 @@ import { truncationNotice } from "../contextNotice";
 import type { ContextBreakdown } from "../contextGauge";
 import FindingCard from "./FindingCard";
 import { recordPaneEvent, reportClientError, startWait } from "../paneEvents";
+import { useElapsedSeconds, waitMessage } from "../waitMessage";
 
 type Status =
   | { kind: "idle" }
@@ -35,6 +36,8 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
   const [rawResponse, setRawResponse] = useState<string>("");
   const [persistError, setPersistError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState<string | null>(null);
+  // Set only where `truncated` is, so it always describes the review on screen.
+  const [memoryDegraded, setMemoryDegraded] = useState(false);
   const [turn, setTurn] = useState<TurnRef>(EMPTY_TURN);
 
   // The three early returns inside onReview() below (short document / backend
@@ -92,6 +95,7 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
       }
       setResult(parsed);
       setTruncated(truncationNotice(res.data?.report?.context_truncated));
+      setMemoryDegraded(Boolean(res.data?.memory_degraded));
       // contract_review never assembles a chat context, so it has no breakdown to
       // report. Pushing null here would blank the shared header counter after every
       // review — a frozen real measurement beats a blank one, which is the same rule
@@ -119,6 +123,7 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
   };
 
   const busy = status.kind === "reading" || status.kind === "reviewing";
+  const waited = useElapsedSeconds(status.kind === "reviewing");
 
   return (
     <div className="tab-content">
@@ -128,15 +133,17 @@ export default function FindingsTab({ sessionId, result, setResult, onBreakdown 
 
       {status.kind === "reading" && <div className="status">Reading document…</div>}
       {status.kind === "reviewing" && (
-        <div className="status">
-          Sending {status.charCount.toLocaleString()} characters to the backend… this may take 30–60
-          seconds.
-        </div>
+        <div className="status">{waitMessage("review", waited, status.charCount)}</div>
       )}
       {status.kind === "error" && <div className="status error">Error: {status.message}</div>}
       {truncated && (
         <div className="context-truncated" role="alert">
           ⚠ <strong>Part of this document was not sent</strong> — {truncated} Treat this review as incomplete.
+        </div>
+      )}
+      {memoryDegraded && (
+        <div className="status warning" role="alert">
+          ⚠ <strong>Memory unavailable this turn</strong> — this review may not be remembered.
         </div>
       )}
       {persistError && (
