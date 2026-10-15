@@ -67,10 +67,12 @@ The data alone — without asking the attorney — must answer, per document:
 | `moment` | When |
 |---|---|
 | `pane_open` | The pane mounts. Catches everything changed while it was closed. |
-| `idle` | 30 s after the last `Office.EventType.DocumentSelectionChanged` — the event fires as the attorney types or moves around. Sent only if the payload differs from the last one this pane sent. |
+| `idle` | 30 s after the last change notification. Sent only if the payload differs from the last one this pane sent. |
 | `finalize` | Just before `acceptAll()`, when Finalize is used. |
 
-`pane_open` and `finalize` always send — the moment itself is information. The backend also stores each turn's document text (`source='turn'`). Not polling: nothing runs while nothing happens. **If `DocumentSelectionChanged` does not fire inside our pane on Word for Mac** (plan Task 1 checks this by sideload before anything is built on it), the fallback is a poll every 2 minutes while `document.visibilityState === "visible"`, still sending only on change.
+`pane_open` and `finalize` always send — the moment itself is information. The backend also stores each turn's document text (`source='turn'`).
+
+**The change notification comes from two events, either of which restarts the 30 s timer:** Word's `onParagraphChanged` (WordApi 1.5 — `App.tsx` already registers it for the live document size, where it is noted as firing per keystroke) and the shared Office API's `DocumentSelectionChanged` (fires as the attorney types or moves around). Neither is recorded anywhere as verified inside our pane on Word for Mac, so the design depends on neither: whichever fires drives the capture, and the end-to-end sideload confirms an idle capture lands after typing. **Only when neither registers** does a poll every 2 minutes while `document.visibilityState === "visible"` stand in, still sending only on change. Not polling otherwise: nothing runs while nothing happens.
 
 ### D4 — A capture holds both views and the tracked changes
 
@@ -115,14 +117,20 @@ No automatic expiry. A deletion command removes one document's or one attorney's
 ```ts
 type Moment = "pane_open" | "idle" | "finalize";
 type TrackedChange = { type: string; author: string; date: string; text: string };
-type DocumentReading = { current: string; original: string; tracked: TrackedChange[] };
+// tracked === null: the tracked changes could not be read (sent as tracked_total -1)
+type DocumentReading = { current: string; original: string; tracked: TrackedChange[] | null };
 
 createDocumentCapture(deps: {
   readDocumentId: () => string;               // docIdentity.readDocumentId
   readDocument: () => Promise<DocumentReading>; // one Word.run, below
   send: (body: object) => Promise<{ recorded: number; enabled: boolean }>;
-  sessionId: () => string;
-}): { capture(moment: Moment): Promise<void> }  // never throws
+  sessionId: string;
+  schedule?: (fn: () => void, ms: number) => unknown;   // the debounce timer; setTimeout by default
+  cancel?: (handle: unknown) => void;                    // clearTimeout by default
+}): {
+  capture(moment: Moment): Promise<void>;  // never throws
+  noteChange(): void;                      // (re)starts the 30 s idle timer
+}
 ```
 
 `capture`:
@@ -138,7 +146,7 @@ createDocumentCapture(deps: {
 
 **Wiring.**
 
-- `App.tsx`: create the capture once; after mount call `capture("pane_open")`; register the `DocumentSelectionChanged` handler with a 30 s debounce → `capture("idle")`.
+- `App.tsx`: once, after mount, `installDocumentCapture(sessionId)` — creates the capture, calls `capture("pane_open")`, and registers both change events (D3) with a 30 s debounce → `capture("idle")`, or the 2-minute poll when neither registers.
 - `FinalizeBar.tsx`: after the in-pane confirm, `await Promise.race([capture("finalize"), 3 s timeout])`, then `finalizeDocument()` as today. A throw or timeout in the capture never stops Finalize.
 - `feedback.ts`: `recordEvent`'s `extra` gains `applied?: Applied`, each string capped at **20,000** chars.
 - `EditProposalCard.tsx`, on `edit_applied`: `applied = { action, target_text, new_text, proposed_text, position }` — `target_text` is `target_text`, or `anchor_text` for an insert; `new_text` is the text actually applied (`draftText`); `proposed_text` is the model's `new_text`, only when it differs; `position` only for an insert.
@@ -195,11 +203,11 @@ Both new tables go on `tests/conftest.py`'s hardcoded TRUNCATE list.
 - Re-applies every cap server-side (the pane is not trusted to have).
 - Always `200 {"recorded": 0|1, "enabled": bool}`; a store failure is `recorded: 0`. `document_capture_enabled=False` → `{"recorded": 0, "enabled": false}`, nothing written.
 
-**Per-turn version.** `finish_turn` adds `save_version_quietly(document_id, doc_text, attorney_id, "turn")` to the same after-response background work as the `turn_log` write (and runs it synchronously on raising exits, like the row). Skipped when `document_id` or `doc_text` is empty — resume and compaction carry no document text, and Chainlit sends no document UUID.
+**Per-turn version.** `finish_turn` adds `save_version_quietly(document_id, doc_text, attorney_id, "turn")` to the same after-response background work as the `turn_log` write (and runs it synchronously on raising exits, like the row). Skipped when `document_id` or `doc_text` is empty — resume and compaction carry no document text, and Chainlit sends no document UUID — and when `document_capture_enabled` is off.
 
 **Events.** `InteractionEvent` gains `applied: dict | None = None`; `_insert_event` writes it, re-capping each string at 20,000 chars.
 
-**Config.** `document_capture_enabled: bool = True` — on `RECORDED` in `api/runtime_facts.py` (`test_every_setting_is_classified_exactly_once` enforces it). Caps are module constants.
+**Config.** `document_capture_enabled: bool = True` — off means no copies at all: the endpoint records nothing and the turns store no text. On `RECORDED` in `api/runtime_facts.py` (`test_every_setting_is_classified_exactly_once` enforces it). Caps are module constants.
 
 ### Reading it
 
@@ -215,9 +223,9 @@ document 4f1c…  A. Tester · 2026-10-16 09:12 → 2026-10-18 14:02
               closest now: "…the fees paid in the 6 months preceding the claim"
     reverted  delete   "Non-solicitation. For 24 months…"
   tracked changes at the last capture: 14 — Jane Smith 9 (6 ins, 3 del) · Counterparty LLP 5 (5 ins)
-  paragraphs changed since the first text: 11 — 4 contain an applied edit · 7 not suggested
+  paragraphs changed since the first text: 11 — 4 explained by an applied edit · 7 not suggested
     + "The Supplier shall indemnify the Client against…"            not suggested
-    ~ "Either party may terminate on 30 days' notice…"               not suggested
+    - "Either party may terminate on 90 days' notice…"               not suggested
 ```
 
 **Verdicts** — against the last observation after the event's timestamp (both server clocks, ISO UTC, so a string comparison orders them); all comparisons normalised (D8):
@@ -229,9 +237,9 @@ document 4f1c…  A. Tester · 2026-10-16 09:12 → 2026-10-18 14:02
 | `delete` | `target_text` absent | `target_text` present | — |
 | `redline` | `new_text` present | `new_text` absent, every anchor line present | otherwise |
 
-No observation after the event → `no later capture`. `altered` prints the last text's paragraph most similar to `new_text` (`difflib`, display only). `replace_all` is `kept` when at least one occurrence is present.
+No observation after the event → `no later capture`. `altered` prints the last text's paragraph sharing the most words with `new_text` (word-set overlap, display only — difflib's ratio against every paragraph of a 2,000-paragraph contract takes tens of seconds). `replace_all` is `kept` when at least one occurrence is present.
 
-**Changed paragraphs** — `splitlines()` of the first stored text and the last observation, empty lines dropped, normalised, aligned with `difflib.SequenceMatcher`: inserted `+`, deleted `-`, replaced `~`. A paragraph is the assistant's when its new form contains an applied `new_text` or its old form contains an applied deletion's `target_text`; otherwise `not suggested`. An applied edit the attorney then reworded leaves its paragraph `not suggested` — the rewording is the attorney's change, and the edit's own verdict says `altered`.
+**Changed paragraphs** — `splitlines()` of the first stored text and the last observation, empty lines dropped, normalised, aligned with `difflib.SequenceMatcher`: a paragraph only in the last text is `+`, only in the first is `-` — a reworded paragraph is one of each. A `+` is the assistant's when it contains an applied `new_text`; a `-` when it contains what an applied replacement, deletion or redline took out (its `target_text`; an insert's target is only its anchor); otherwise `not suggested`. Old and new are never paired into one line: a clause typed where an applied deletion was would inherit the deletion's label. An applied edit the attorney then reworded leaves its paragraph `not suggested` — the rewording is the attorney's change, and the edit's own verdict says `altered`.
 
 **Pure functions** in new `scripts/document_changes.py` — `normalize`, `edit_verdict`, `closest_paragraph`, `changed_paragraphs`, `build_document_changes`, `format_document_changes` — unit-tested on their own; `feedback_report` only fetches and prints.
 
@@ -289,9 +297,8 @@ No observation after the event → `no later capture`. `altered` prints the last
 ### Other checks
 
 - `scripts/check.sh` green; `EXPECTED_PASS_COUNT` raised by exactly the new pane assertions.
-- **Plan Task 1, sideload (Word for Mac), before anything is built on it:** `DocumentSelectionChanged` fires inside our pane while typing; `getTrackedChanges()` items load `type`/`author`/`date`/`text`; `getReviewedText(original)` returns the rejected view. A failure of the first switches D3 to its fallback poll.
-- **End to end, local sideload:** ask a question on a scratch NDA; apply an edit, reword it by hand, pause → `altered`; apply another, reject its tracked insertion → `reverted`; apply a third and leave it → `kept`; type a new clause by hand → `not suggested`; Finalize → a `finalize` capture; `--changes` and `--turns` read all of it back; the disclosure line shows.
-- **Windows:** unverified — no Windows machine. `DocumentSelectionChanged` is the shared Office API, but the spec does not claim it was tested there.
+- **End to end, local sideload** — also the first sight of three Word facts nothing else can check: an idle capture lands after typing (D3's events), `getTrackedChanges()` items load `type`/`author`/`date`/`text`, and `getReviewedText(original)` returns the rejected view: ask a question on a scratch NDA; apply an edit, reword it by hand, pause → `altered`; apply another, reject its tracked insertion → `reverted`; apply a third and leave it → `kept`; type a new clause by hand → `not suggested`; Finalize → a `finalize` capture; `--changes` and `--turns` read all of it back; the disclosure line shows.
+- **Windows:** unverified — no Windows machine. Both events exist there, but the spec does not claim either was tested there.
 
 ---
 
