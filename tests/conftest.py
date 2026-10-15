@@ -56,6 +56,18 @@ def _clean_tables(_pg_container):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_model_server(monkeypatch):
+    """Every turn reads the model server's digest and version
+    (api/runtime_facts.py). No test may reach a real Ollama for that — patched
+    where the handlers resolve it; tests/test_runtime_facts.py drives the real
+    function with httpx faked."""
+    monkeypatch.setattr(
+        "api.turn_record.ollama_facts",
+        lambda base_url, model: {"model_digest": "", "ollama_version": ""},
+    )
+
+
 _span_exporter = InMemorySpanExporter()
 
 

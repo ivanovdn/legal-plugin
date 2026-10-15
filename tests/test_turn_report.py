@@ -19,6 +19,9 @@ def _turn(turn_id, **overrides):
         client={"office_platform": "Mac", "office_version": "16.89",
                 "pane_build": "abc1234", "user_agent": "ua"},
         backend_build="abc1234",
+        runtime={"settings": {"llm_model": "qwen3.6:latest", "ollama_num_ctx": 131072,
+                              "ollama_think_review": True, "build_sha": "abc1234"},
+                 "model_digest": "a" * 64, "ollama_version": "0.12.3"},
     )
     args.update(overrides)
     return build_turn_row(**args)
@@ -254,3 +257,54 @@ def test_a_wait_without_a_turn_reads_as_a_wait_with_no_answer():
     assert format_pane_event({**e, "detail": "9800"}) == \
         "  2026-10-09T10:02:00  · waited 9.8s in chat with no answer"
     assert format_pane_event({**e, "detail": "x"}).endswith("· waited in chat with no answer")
+
+
+def _runtime(digest="a" * 64, **settings):
+    base = {"llm_model": "qwen3.6:latest", "ollama_num_ctx": 131072,
+            "ollama_think_review": True, "build_sha": "abc1234"}
+    return {"settings": {**base, **settings}, "model_digest": digest, "ollama_version": "0.12.3"}
+
+
+def _shown(row, previous=None) -> str:
+    full = {**row, "applied": 0, "failed": 0, "discarded": 0, "flags": 0, "waited_ms": None}
+    prev = None if previous is None else {**previous}
+    return "\n".join(format_turn(full, prev))
+
+
+def test_a_turn_names_the_model_it_ran_on():
+    text = _shown(_turn("t-1"))
+    assert "    model qwen3.6:latest aaaaaaaaaaaa · ollama 0.12.3" in text
+
+
+def test_a_settings_change_since_the_previous_turn_is_flagged_by_name():
+    """build_sha is left out: the backend build already says a deploy happened."""
+    before = _turn("t-1")
+    after = _turn("t-2", runtime=_runtime(ollama_think_review=False, build_sha="def5678"))
+    text = _shown(after, before)
+    assert "⚠ settings changed: ollama_think_review True→False" in text
+    assert "build_sha" not in text
+    assert "settings changed" not in _shown(_turn("t-3"), before)
+
+
+def test_new_model_weights_since_the_previous_turn_are_flagged():
+    """Same name, new weights — a pull on the shared server, no deploy of ours."""
+    text = _shown(_turn("t-2", runtime=_runtime(digest="b" * 64)), _turn("t-1"))
+    assert "⚠ model weights changed: aaaaaaaaaaaa→bbbbbbbbbbbb" in text
+
+
+def test_a_row_from_before_settings_were_recorded_compares_with_nothing():
+    old = _turn("t-1", runtime={})
+    text = _shown(_turn("t-2"), old)
+    assert "changed" not in text
+    assert "    model " not in _shown(old)
+
+
+def test_the_first_turn_on_a_cut_page_is_compared_with_the_turn_before_it(capsys):
+    """The extra row fetched to prove the cut is exactly that turn's predecessor."""
+    write_turn(_turn("t-1", arrived_at="2026-10-09T09:00:00+00:00"))
+    write_turn(_turn("t-2", arrived_at="2026-10-09T10:00:00+00:00",
+                     runtime=_runtime(ollama_num_ctx=65536)))
+    print_turns(recent_turns(limit=2), limit=1)
+    out = capsys.readouterr().out
+    assert "t-1" not in out
+    assert "⚠ settings changed: ollama_num_ctx 131072→65536" in out

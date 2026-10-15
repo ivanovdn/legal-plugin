@@ -190,6 +190,12 @@ _STATEMENTS = [
         user_agent TEXT NOT NULL DEFAULT ''
     )
     """,
+    # What the turn ran with beyond the code (2026-10-15, api/runtime_facts.py):
+    # the VM's settings minus credentials, and the model weights and Ollama
+    # version on the inference server — each can change without a deploy.
+    "ALTER TABLE turn_log ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE turn_log ADD COLUMN IF NOT EXISTS model_digest TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE turn_log ADD COLUMN IF NOT EXISTS ollama_version TEXT NOT NULL DEFAULT ''",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_log_turn ON turn_log (turn_id)",
     "CREATE INDEX IF NOT EXISTS idx_turn_log_attorney ON turn_log (attorney_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_turn_log_doc ON turn_log (document_id, id)",

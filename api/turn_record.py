@@ -9,6 +9,7 @@ write it now.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
 from dataclasses import asdict
@@ -17,8 +18,10 @@ from datetime import datetime, timezone
 from fastapi import BackgroundTasks
 
 from api.client_info import ClientInfo
+from api.runtime_facts import ollama_facts, settings_snapshot
 from config import get_settings
 from memory.turn_log import build_turn_row, write_turn_quietly
+from observability.log_context import set_log_turn
 from observability.spans import (
     current_trace_id, degradations, set_outcome, set_trace_attributes, turn_facts,
 )
@@ -41,7 +44,9 @@ def start_turn(
 ) -> dict:
     """What is known when the request arrives. Call first thing inside the
     handler's root span; it also stamps the client facts on the trace."""
-    backend_build = get_settings().build_sha
+    set_log_turn(turn_id)
+    settings = get_settings()
+    backend_build = settings.build_sha
     set_trace_attributes(metadata={
         "turn_id": turn_id,
         "office.platform": client.office_platform,
@@ -57,6 +62,11 @@ def start_turn(
         "attorney_id": attorney_id, "user_name": user_name,
         "session_id": session_id, "document_id": document_id,
         "task_type": task_type, "request": request, "doc_text": doc_text,
+        # What this turn runs with beyond the code, read as it arrives. Cached
+        # for a minute (api/runtime_facts.py), so a model pulled on the server
+        # shows up on turns up to a minute later.
+        "runtime": {"settings": settings_snapshot(settings),
+                    **ollama_facts(settings.ollama_base_url, settings.llm_model)},
     }
 
 
@@ -90,6 +100,7 @@ def finish_turn(
             api_error=api_error, awaiting_review=awaiting_review,
             facts=turn_facts(), result=result, compaction=compaction,
             client=turn["client"], backend_build=turn["backend_build"],
+            runtime=turn["runtime"],
         )
     except Exception:
         logger.exception(
@@ -98,6 +109,8 @@ def finish_turn(
         )
         return
     if background_tasks is not None:
-        background_tasks.add_task(write_turn_quietly, row)
+        # Background tasks run in the request task's context, not this
+        # thread's: carry this one so a failed write still logs [turn=<id>].
+        background_tasks.add_task(contextvars.copy_context().run, write_turn_quietly, row)
     else:
         write_turn_quietly(row)

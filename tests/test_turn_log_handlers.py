@@ -7,6 +7,7 @@ supplies what FastAPI would inject and runs the background tasks afterwards.
 """
 from __future__ import annotations
 
+import contextvars
 import importlib
 import json
 import logging
@@ -26,8 +27,10 @@ import memory.turn_log as turn_log
 from api.client_info import ClientInfo
 from api.main import app
 from api.models import CompactRequest, QueryRequest, ResumeRequest
+from config import get_settings
 from graph.graph import build_graph
 from memory.db import get_pool
+from observability.log_context import TurnIdFilter
 from tests.conftest import call_handler, spans_by_name
 
 
@@ -197,6 +200,57 @@ def test_the_client_facts_reach_the_row_and_the_trace(monkeypatch):
     metadata = json.loads(spans_by_name("query:auto")[0].attributes["metadata"])
     assert (metadata["office.platform"], metadata["pane.build"]) == ("Mac", "abc1234")
     assert metadata["backend.build"] == "dev" and metadata["turn_id"] == row["turn_id"]
+
+
+def test_the_settings_and_the_model_reach_the_row(monkeypatch):
+    """Mutation: drop `runtime` from start_turn's dict, or stop passing it on."""
+    seen = []
+    monkeypatch.setattr(turn_record, "ollama_facts", lambda base_url, model: (
+        seen.append((base_url, model)) or {"model_digest": "aaa111", "ollama_version": "0.12.3"}))
+    monkeypatch.setenv("OLLAMA_THINK_REVIEW", "true")
+    get_settings.cache_clear()
+    _submit(monkeypatch, **SUBMIT_EXITS["ok"])
+    get_settings.cache_clear()
+    (row,) = _rows()
+    assert (row["model_digest"], row["ollama_version"]) == ("aaa111", "0.12.3")
+    assert row["settings"]["ollama_think_review"] is True
+    assert "ollama_num_ctx" in row["settings"] and "database_url" not in row["settings"]
+    assert len(seen) == 1
+
+
+def test_starting_a_turn_puts_its_id_on_the_log_lines_that_follow():
+    """Mutation: drop set_log_turn from start_turn."""
+    def inside():
+        turn = turn_record.start_turn(kind="query", turn_id="4b81dc16-bf95-463f", client=ClientInfo())
+        record = logging.LogRecord("graph", logging.INFO, __file__, 1, "x", None, None)
+        TurnIdFilter().filter(record)
+        return turn, record.turn
+    _, stamped = contextvars.copy_context().run(inside)
+    assert stamped == "4b81dc16"
+
+
+def test_the_write_after_the_response_still_logs_under_its_turn(monkeypatch):
+    """Background tasks run in the request task's context, not the handler
+    thread's, so without carrying the context a failed write logs [turn=-].
+    Mutation: add_task(write_turn_quietly, row) without the copied context."""
+    seen = []
+
+    def fake_write(row):
+        record = logging.LogRecord("memory", logging.ERROR, __file__, 1, "x", None, None)
+        TurnIdFilter().filter(record)
+        seen.append(record.turn)
+
+    monkeypatch.setattr(turn_record, "write_turn_quietly", fake_write)
+    tasks = BackgroundTasks()
+
+    def handler():
+        turn = turn_record.start_turn(kind="query", turn_id="9c1e2f3a-0000", client=ClientInfo())
+        turn_record.finish_turn(turn, outcome="ok", status="ok", background_tasks=tasks)
+
+    contextvars.copy_context().run(handler)
+    for task in tasks.tasks:
+        contextvars.copy_context().run(task.func, *task.args, **task.kwargs)
+    assert seen == ["9c1e2f3a"]
 
 
 def test_over_http_the_headers_become_the_row(monkeypatch):

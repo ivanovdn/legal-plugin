@@ -35,8 +35,9 @@ COLUMNS: tuple[str, ...] = (
     "tokens_in", "tokens_out", "llm_detail",
     "response_chars", "edits_proposed", "preferences_proposed", "compaction",
     "office_platform", "office_version", "pane_build", "backend_build", "user_agent",
+    "settings", "model_digest", "ollama_version",
 )
-_JSON_COLUMNS = frozenset({"degradations", "context", "llm_detail", "compaction"})
+_JSON_COLUMNS = frozenset({"degradations", "context", "llm_detail", "compaction", "settings"})
 
 _REQUEST_CAP = 2000
 _ERROR_CAP = 2000
@@ -84,6 +85,7 @@ def build_turn_row(
     compaction: dict | None,
     client: dict,
     backend_build: str,
+    runtime: dict,
 ) -> dict[str, Any]:
     """One turn_log row. Pure: no I/O, no settings, no clock.
 
@@ -91,7 +93,9 @@ def build_turn_row(
     graph raised, a resume found no session, a compaction). Where it exists it
     wins over the request for document_id (intake resolves the preamble-hash
     fallback) and task_type (what actually ran). `facts` is
-    observability.spans.turn_facts(); `client` holds ClientInfo's four fields.
+    observability.spans.turn_facts(); `client` holds ClientInfo's four fields;
+    `runtime` is what api/runtime_facts.py read when the request arrived —
+    `settings`, `model_digest`, `ollama_version` (any may be absent).
     """
     state = result or {}
     calls = [dict(call) for call in facts.get("llm_detail") or []]
@@ -141,6 +145,9 @@ def build_turn_row(
         "pane_build": client.get("pane_build", ""),
         "backend_build": backend_build,
         "user_agent": client.get("user_agent", ""),
+        "settings": runtime.get("settings") or {},
+        "model_digest": runtime.get("model_digest", ""),
+        "ollama_version": runtime.get("ollama_version", ""),
     }
 
 

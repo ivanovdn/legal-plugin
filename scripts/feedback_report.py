@@ -138,9 +138,39 @@ def print_activity(rows: list[dict]) -> None:
         print()
 
 
-def format_turn(t: dict) -> list[str]:
+# Shown already as "backend <build>" — a deploy is not news as a settings change.
+_SETTINGS_NOT_COMPARED = frozenset({"build_sha"})
+_DIGEST_SHOWN = 12
+
+
+def _runtime_lines(t: dict, previous: dict | None) -> list[str]:
+    """What the turn ran on, and what changed since the turn before it. A row
+    from before settings were recorded (settings {}) shows and compares nothing."""
+    settings = t.get("settings") or {}
+    if not settings and not t.get("model_digest"):
+        return []
+    digest = (t.get("model_digest") or "")[:_DIGEST_SHOWN]
+    lines = [f"    model {settings.get('llm_model') or '?'} {digest or '—'} · "
+             f"ollama {t.get('ollama_version') or '—'}"]
+    before = (previous or {}).get("settings") or {}
+    if before:
+        changed = [
+            f"{key} {before.get(key)}→{settings.get(key)}"
+            for key in sorted(set(before) | set(settings))
+            if key not in _SETTINGS_NOT_COMPARED and before.get(key) != settings.get(key)
+        ]
+        if changed:
+            lines.append(f"    ⚠ settings changed: {', '.join(changed)}")
+    old_digest = ((previous or {}).get("model_digest") or "")[:_DIGEST_SHOWN]
+    if old_digest and digest and old_digest != digest:
+        lines.append(f"    ⚠ model weights changed: {old_digest}→{digest}")
+    return lines
+
+
+def format_turn(t: dict, previous: dict | None = None) -> list[str]:
     """One turn as the timeline prints it: what happened, where the time went,
-    what grounded it, what the attorney did with it, what sent it, and the
+    what grounded it, what the attorney did with it, what sent it, what it ran
+    on (and what changed since `previous`, the turn printed before it), and the
     question with the ids to look it up by."""
     task = t["task_type"] or t["kind"]
     codes = f" [{', '.join(t['degradations'])}]" if t["degradations"] else ""
@@ -175,6 +205,7 @@ def format_turn(t: dict) -> list[str]:
     lines.append(
         f"    {sender} · pane {t['pane_build'] or '—'} · backend {t['backend_build']}{stale}"
     )
+    lines.extend(_runtime_lines(t, previous))
     if t["request"]:
         lines.append(f"    asked: {t['request'][:100]}")
     trace = f"  trace: {t['trace_id']}" if t["trace_id"] else ""
@@ -203,10 +234,13 @@ def print_turns(rows: list[dict], limit: int, pane_events: list[dict] = ()) -> N
     is the proof that older turns were cut off. It is the oldest written (lowest
     id), not printed — a page of exactly `limit` turns cut nothing and says so.
     `pane_events` (no turn, same sessions) are printed between the turns by time;
-    on a cut page only those from the first shown turn on."""
+    on a cut page only those from the first shown turn on. The unprinted row
+    still serves as the first shown turn's predecessor for change markers."""
     cut = len(rows) > limit
+    before_page = None
     if cut:
         oldest = min(row["id"] for row in rows)
+        before_page = next(row for row in rows if row["id"] == oldest)
         rows = [row for row in rows if row["id"] != oldest]
     print(f"=== Turns ({len(rows)}) ===")
     print("  One entry per request to /api/query, its resume or /api/compact —")
@@ -220,7 +254,8 @@ def print_turns(rows: list[dict], limit: int, pane_events: list[dict] = ()) -> N
         print("  (none yet)\n")
         return
     start = rows[0]["timestamp"] if cut else ""
-    entries = [(r["timestamp"], True, format_turn(r)) for r in rows] + [
+    entries = [(r["timestamp"], True, format_turn(r, prev))
+               for prev, r in zip([before_page, *rows], rows)] + [
         (e["timestamp"], False, [format_pane_event(e)])
         for e in pane_events if e["timestamp"] >= start
     ]

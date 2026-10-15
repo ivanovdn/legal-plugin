@@ -3,6 +3,7 @@
 
 from unittest.mock import patch, MagicMock
 import httpx
+import pytest
 
 from config import get_settings
 from graph.nodes.history_appender import history_appender
@@ -168,6 +169,22 @@ def test_llm_caller_sends_context_and_request(monkeypatch):
     assert result["llm_response"] != ""
     call_body = mock_post.call_args[1]["json"]
     assert call_body["options"]["temperature"] == 0.0
+
+
+@pytest.mark.parametrize("think", [True, False])
+def test_llm_caller_sends_review_thinking_explicitly(monkeypatch, think):
+    """Unsent, `think` falls to Ollama's default — which an Ollama or model
+    update can flip without anything in this repo changing. Mutation: drop the
+    field from the payload, or hardcode it."""
+    monkeypatch.setenv("OLLAMA_THINK_REVIEW", str(think).lower())
+    get_settings.cache_clear()
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "review"}}
+    with patch("graph.nodes.llm_caller.httpx.post", return_value=fake_response) as mock_post:
+        llm_caller(_make_state(request="review this", retrieved_chunks=[]))
+    get_settings.cache_clear()
+    assert mock_post.call_args[1]["json"]["think"] is think
 
 
 def test_llm_caller_handles_no_chunks(monkeypatch):

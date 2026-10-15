@@ -89,6 +89,18 @@ class Settings(BaseSettings):
     # truncated answer instead of a multi-minute stall.
     ollama_num_predict_chat: int = 2048
     ollama_num_predict_review: int = 8192
+    # Whether a contract review reasons before answering. Sent explicitly so an
+    # Ollama or model update cannot change it silently — until 2026-10-15 the
+    # review sent no `think` field and ran on Ollama's default, which for
+    # qwen3.6 is ON. Measured 2026-10-14 (Oct 9 NDA + SOW replayed on Spark):
+    # off is ~2x faster with longer reviews, not clearly better or worse — so
+    # the default keeps what ran. Recorded on every turn_log row (settings).
+    # Needs a thinking-capable LLM_MODEL: Ollama may refuse `think: true` for a
+    # model without that capability, failing every review while chat still
+    # works — set OLLAMA_THINK_REVIEW=false for such a model. (Checked locally
+    # 2026-10-15 on Ollama 0.40.4: for qwen3.6, sending true and omitting the
+    # field give the same content and the same `thinking` text.)
+    ollama_think_review: bool = True
     # Derived from a 30s turn ceiling, not chosen. Measured on Spark 2026-08-21
     # (qwen3.6: prefill 1,397 tok/s, generation 51.4 tok/s):
     #     answer   400 tok / 51.4 tok/s        =   7.8s

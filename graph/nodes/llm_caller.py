@@ -150,6 +150,8 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
                 "model": settings.llm_model,
                 "messages": messages,
                 "stream": False,
+                # Explicit, never Ollama's default — see config.ollama_think_review.
+                "think": settings.ollama_think_review,
                 "options": {
                     "temperature": 0.0,
                     "num_ctx": settings.ollama_num_ctx,

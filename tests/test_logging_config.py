@@ -104,3 +104,37 @@ def test_uvicorn_records_are_not_duplicated():
     combined = proc.stderr + proc.stdout
     assert "MARKER-APP" in combined, "app logging lost when uvicorn configures first"
     assert combined.count("MARKER-UVICORN") == 1, "uvicorn's own records are duplicated"
+
+
+# Overlapping turns interleave in the backend log; the turn id on every line is
+# what separates them (`grep <first 8 of turn_id>`). Subprocess for the same
+# reason as above: under pytest the format and filter are caplog's, not ours.
+_EMIT_WITH_TURN = (
+    "import api.main, logging, threading\n"
+    "from observability.log_context import set_log_turn\n"
+    "log = logging.getLogger('graph.nodes.llm_caller')\n"
+    "log.info('MARKER-OUTSIDE')\n"
+    "def turn():\n"
+    "    set_log_turn('4b81dc16-bf95-463f-8a83-18755d1815ed')\n"
+    "    log.info('MARKER-INSIDE')\n"
+    "t = threading.Thread(target=turn); t.start(); t.join()\n"
+    "log.info('MARKER-AFTER')\n"
+)
+
+
+def _line(stderr: str, marker: str) -> str:
+    return next(line for line in stderr.splitlines() if marker in line)
+
+
+def test_a_line_logged_inside_a_turn_names_the_turn():
+    proc = _run(_EMIT_WITH_TURN)
+    assert proc.returncode == 0, proc.stderr
+    assert "[turn=4b81dc16]" in _line(proc.stderr, "MARKER-INSIDE")
+
+
+def test_a_line_outside_any_turn_says_so():
+    """Including one logged after a turn on another thread: the id lives in the
+    turn's own context, never on a shared global."""
+    proc = _run(_EMIT_WITH_TURN)
+    assert "[turn=-]" in _line(proc.stderr, "MARKER-OUTSIDE")
+    assert "[turn=-]" in _line(proc.stderr, "MARKER-AFTER")

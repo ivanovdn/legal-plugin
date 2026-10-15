@@ -18,7 +18,7 @@ def _turn(turn_id, **overrides):
         api_error="", awaiting_review=False, facts={}, result=None, compaction=None,
         client={"office_platform": "Mac", "office_version": "16.89",
                 "pane_build": "abc1234", "user_agent": "ua"},
-        backend_build="abc1234",
+        backend_build="abc1234", runtime={},
     )
     args.update(overrides)
     return build_turn_row(**args)

@@ -24,6 +24,8 @@ def _row(**overrides):
         doc_text="STATEMENT OF WORK", status="ok", outcome="ok", degradations=[],
         api_error="", awaiting_review=False, facts={}, result=None, compaction=None,
         client=_CLIENT, backend_build="abc1234",
+        runtime={"settings": {"ollama_num_ctx": 131072, "ollama_think_review": True},
+                 "model_digest": "aaa111", "ollama_version": "0.12.3"},
     )
     args.update(overrides)
     return build_turn_row(**args)
@@ -138,6 +140,18 @@ def test_a_compaction_row_keeps_the_result_and_no_document():
     assert (row["doc_chars"], row["doc_sha256"]) == (0, "")
 
 
+def test_the_row_records_the_settings_and_the_model_it_ran_with():
+    row = _row()
+    assert row["settings"] == {"ollama_num_ctx": 131072, "ollama_think_review": True}
+    assert row["model_digest"] == "aaa111"
+    assert row["ollama_version"] == "0.12.3"
+
+
+def test_a_turn_with_no_runtime_facts_records_empty_ones():
+    row = _row(runtime={})
+    assert (row["settings"], row["model_digest"], row["ollama_version"]) == ({}, "", "")
+
+
 def test_the_fingerprint_is_the_size_and_sha256_of_the_text():
     row = _row(doc_text="abc")
     assert row["doc_chars"] == 3
@@ -193,6 +207,15 @@ def test_a_written_row_reads_back_with_its_json_columns_intact():
     assert got[0] == ["context_truncated"]
     assert got[1][0]["name"] == "doc_chat"
     assert got[2] == {"pct": 61} and got[3] is None and got[4] is None
+
+
+def test_the_settings_read_back_as_json():
+    write_turn(_row())
+    with get_pool().connection() as conn:
+        got = conn.execute(
+            "SELECT settings, model_digest, ollama_version FROM turn_log WHERE turn_id = 't-1'"
+        ).fetchone()
+    assert got == ({"ollama_num_ctx": 131072, "ollama_think_review": True}, "aaa111", "0.12.3")
 
 
 def test_turn_id_is_unique():

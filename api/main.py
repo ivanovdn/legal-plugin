@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from memory.db import init_db
+from observability.log_context import TurnIdFilter
 from observability.otel import init_observability
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,14 @@ def configure_logging() -> None:
         level = "INFO"
     logging.basicConfig(
         level=level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s [turn=%(turn)s]: %(message)s",
     )
+    # The filter goes on the handler, not a logger: records from every module
+    # propagate to it, and it must stamp `turn` before the format above reads it.
+    # Under pytest basicConfig no-ops, and the filter only adds an attribute.
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(f, TurnIdFilter) for f in handler.filters):
+            handler.addFilter(TurnIdFilter())
 
 
 configure_logging()

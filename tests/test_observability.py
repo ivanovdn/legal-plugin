@@ -397,7 +397,7 @@ def test_llm_caller_flags_review_input_over_headroom(monkeypatch):
     # num_ctx 1000 - num_predict_review 500 = 500 tokens * 4.0 chars = 2000 chars headroom
     monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
         llm_model="m", ollama_base_url="http://x", ollama_num_ctx=1000,
-        ollama_num_predict_chat=100, ollama_num_predict_review=500,
+        ollama_num_predict_chat=100, ollama_num_predict_review=500, ollama_think_review=True,
         est_chars_per_token=4.0,
     ))
     state = {"request": "x" * 5000, "task_type": "contract_review", "retrieved_chunks": []}
@@ -423,7 +423,7 @@ def test_llm_caller_does_not_flag_review_within_headroom(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
     monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
         llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
-        ollama_num_predict_chat=2048, ollama_num_predict_review=8192,
+        ollama_num_predict_chat=2048, ollama_num_predict_review=8192, ollama_think_review=True,
         est_chars_per_token=4.89,
     ))
     state = {"request": "short request", "task_type": "contract_review", "retrieved_chunks": []}
@@ -451,7 +451,7 @@ def test_llm_caller_clears_stale_context_truncated_flag(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
     monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
         llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
-        ollama_num_predict_chat=2048, ollama_num_predict_review=8192,
+        ollama_num_predict_chat=2048, ollama_num_predict_review=8192, ollama_think_review=True,
         est_chars_per_token=4.89,
     ))
     state = {
