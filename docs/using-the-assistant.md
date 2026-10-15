@@ -14,9 +14,11 @@ Three tabs: **Findings**, **Chat**, **Preferences**.
 
 ### Findings
 
-**Review this contract** reads the open document and triages it. Expect **30–60
-seconds** — the model runs on our own hardware, so it's slower than the chat
-assistants you're used to, and it is thinking about your whole contract.
+**Review this contract** reads the open document and triages it. Expect **about
+1½ minutes** — the pane counts the time as it goes. The model runs on our own
+hardware, shared with another team, so it's slower than the chat assistants
+you're used to, and it is thinking about your whole contract. If it says
+**Still working**, it is waiting its turn on that shared server, not broken.
 
 You'll get a summary, a **Red and Missing Context** card (the blocking items),
 per-clause findings, and **Business Questions**. On each finding:

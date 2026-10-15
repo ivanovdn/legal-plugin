@@ -40,7 +40,7 @@ fine — which is exactly the state the feature was built to leave.
 | span `status_code = ERROR` on a **node** | `llm_caller`, `db.*`, … | where it broke |
 | `degradation.reason` / `.detail` | attributes of the **failed** span | which of the 8 failure codes, and the exception class |
 | `degradation` **event** | on whichever span recorded it | a degradation — carries `.reason`, `.announced`, `.detail` |
-| `announced=true` | degradation event | the attorney was *meant* to be told — a banner only if that tab renders it (see below) |
+| `announced=true` | degradation event | the attorney was told — `memory_degraded` paints a banner on both tabs since 2026-10-15 (before that, Chat only — see below) |
 | `announced=false` | degradation event | **class 3** — silently worse, nobody told |
 
 Two spans going ERROR on a failed turn is intended, not duplication: the node
@@ -112,7 +112,7 @@ since been pasted and run exactly as published — 2026-09-17.** The drill
 be hunted for in a UI.
 
 **Only three fields in the payload can ever become a visible warning:**
-`memory_degraded` (top level, rendered by **`ChatTab.tsx` only**),
+`memory_degraded` (top level, rendered by **both tabs** — the Findings tab only since 2026-10-15),
 `report.context_truncated` (both tabs) and `report.review_persist_error`
 (findings tab). Nothing else in the payload paints anything — but the Chat tab
 also derives **one warning from the reply text itself**: `promisedEditMissing`
@@ -237,10 +237,10 @@ Verified back at `200` with all five models 24 s after the drill started.
 **Expect:** `app.outcome=degraded`, `audit_write_failed` with `announced=true`,
 both `db.*` spans ERROR, and the turn still answers.
 
-**Do not expect a banner.** `announced=true` records what the system *intends*
-to tell the attorney; it does not promise that a given tab paints it. This is a
-`contract_review` turn and `memory_degraded` renders only in the chat tab — see
-the result.
+**Expect the amber banner on the Findings tab** ("Memory unavailable this
+turn — this review may not be remembered"), since 2026-10-15. Before that
+`memory_degraded` rendered only in the chat tab, so this drill showed no banner
+for it — the 2026-09-16 result below records that, and is why the fix exists.
 
 ```bash
 docker compose stop app-db
@@ -284,7 +284,7 @@ The drill still **passes**, on what it actually demonstrates: `app.outcome`
 carrying Postgres's own message, and the turn answering in 102.8 s. What it
 *additionally* demonstrates is the second follow-up in
 [docs/wiki.md](wiki.md#follow-ups--roadmap) — the "announced" promise is kept on
-one surface only. That gap was found during the same review and, it turns out,
+one surface only (closed 2026-10-15: the Findings tab now paints the banner). That gap was found during the same review and, it turns out,
 reached into this document and produced a drill whose stated expectation was the
 opposite of what it proved.
 
@@ -320,8 +320,8 @@ Healthy 4 s after start.
 ## Drill 3 — Redis down
 
 **Expect:** `app.outcome=degraded`, `checkpointer_unavailable` with
-`announced=true`, and the turn still answers. **No banner** — same reason as
-drill 2, and this is a `contract_review` turn too.
+`announced=true`, and the turn still answers. The Findings tab shows the amber
+memory banner, as in drill 2 (before 2026-10-15 it showed none).
 
 > **Run this against Phoenix. Not Langfuse.** `docker compose stop redis` also
 > takes **Langfuse ingestion** down — they share the Redis container. You would
