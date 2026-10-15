@@ -57,7 +57,7 @@ Set:
 | `OLLAMA_BASE_URL` | `http://172.20.0.22:11434` |
 | `ADDIN_ORIGIN_HOST` | `<hostname>` — the internal DNS name the add-in will be served from (Bucket B decides the real value; `localhost` works for a local dry run) |
 | `APP_DB_PASSWORD` | must equal the `app-db` container's `POSTGRES_PASSWORD` |
-| `LLM_MODEL` / `EMBEDDING_MODEL` / `QDRANT_VECTOR_DIM` | must match what Spark serves **and** what the Qdrant collection was built with — a mismatch on the embedding model/dim silently breaks retrieval |
+| `LLM_MODEL` / `EMBEDDING_MODEL` / `QDRANT_VECTOR_DIM` | must match what Spark serves **and** what the Qdrant collection was built with — a mismatch on the embedding model/dim silently breaks retrieval. Reviews send `think` from `OLLAMA_THINK_REVIEW` (default `true`): set it to `false` if `LLM_MODEL` is ever a model without thinking support, which Ollama may refuse a `think: true` request for — every review would fail while chat kept working |
 
 `OTEL_EXPORTER_OTLP_HEADERS` is already left unset in `.env.remote.example` — the VM's tracing backend is the dedicated Phoenix service (Step 4), which needs no auth header. Only set it if you deliberately point the VM backend at a Langfuse instance instead.
 
@@ -201,6 +201,8 @@ The image is pinned (`15.2.0`) because the database in the volume carries that v
 ```bash
 sudo journalctl CONTAINER_NAME=legal-plugin-backend-1 --since 2026-10-01 --no-pager
 ```
+
+Every app line carries the turn it belongs to — `[turn=4b81dc16]`, the first 8 characters of its `turn_id` (`[turn=-]` outside a request) — so one turn reads back on its own even when turns overlap: `$DC logs backend | grep 'turn=4b81dc16'`, or the same `grep` on the `journalctl` output above.
 
 `sudo` because the deploy user is not in `systemd-journal`; `sudo usermod -aG systemd-journal $USER` (then log in again) drops it. Retention is journald's own (`journalctl --disk-usage`; default `SystemMaxUse` is 10% of the filesystem, capped at 4 GiB). The journal survives a reboot only on persistent storage — the default here, because `/var/log/journal` exists (checked on SRV-AGENT-01 2026-10-08).
 

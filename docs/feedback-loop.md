@@ -69,12 +69,29 @@ generation, tokens) · what grounded it (playbook, MSA, how much of the document
 was sent) · what the attorney did with it (edits applied / failed / discarded,
 flags — applied and failed also count the Findings tab's redlines) · what sent
 it (Word platform and version, pane build, backend build — `⚠ stale pane` when
-the two builds differ) · the question, the `turn_id`, and the `trace_id` to open
-in Phoenix.
+the two builds differ) · what it ran on (`model <name> <digest> · ollama <version>`,
+then `⚠ settings changed: <setting> old→new` or `⚠ model weights changed` when
+that differs from the turn printed before it) · the question, the `turn_id`, and
+the `trace_id` to open in Phoenix.
+
+**What a turn ran on** (since 2026-10-15): every row keeps the backend's settings
+in `settings` (JSON — everything in `.env` except credentials), and the model
+server's `model_digest` (the exact weights behind e.g. `qwen3.6:latest`) and
+`ollama_version` (read at most once a minute, so a model pulled on the server
+appears on turns up to a minute later). Neither is covered by `backend_build`: `.env` changes on a
+restart, and Spark's model can be re-pulled by the other team sharing it. Rows
+from before then have `{}` and empty strings, and are compared with nothing.
+Read the backend log for one turn with the first 8 characters of its `turn_id`:
+`$DC logs backend | grep 'turn=4b81dc16'` (every app log line carries it).
 
 Ready queries — paste into `$DC exec -T app-db psql -U legal -d legal -P pager=off`:
 
 ```sql
+-- When a setting or the model changed, and what each turn ran with
+SELECT timestamp, task_type, settings->>'ollama_think_review' AS think,
+       settings->>'ollama_num_ctx' AS num_ctx, left(model_digest, 12) AS model, ollama_version
+FROM turn_log ORDER BY id DESC LIMIT 20;
+
 -- Attorneys whose Word still runs an older pane than the backend
 SELECT attorney_id, max(timestamp) AS last_seen, pane_build, backend_build
 FROM turn_log WHERE pane_build <> '' AND pane_build <> backend_build
