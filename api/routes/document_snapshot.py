@@ -16,6 +16,7 @@ from api.client_info import ClientInfo, resolve_client_info
 from api.models import ApiResponse, DocumentSnapshot
 from config import get_settings
 from memory.document_store import save_snapshot
+from memory.fingerprint import fingerprint
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -40,7 +41,15 @@ def post_document_snapshot(
         )
     except Exception as e:  # noqa: BLE001 — telemetry's own failure (class 4): nobody to tell
         # The type only: Postgres quotes offending input — contract text — in some messages.
-        logger.warning("document snapshot not recorded (%s) — document %s, moment %s",
-                       type(e).__name__, body.document_id, body.moment)
+        # The hash and size of each view say which texts the lost capture held (both may
+        # already be stored as versions) and match turn_log's doc_sha256.
+        current_chars, current_sha = fingerprint(body.current_text)
+        original_chars, original_sha = fingerprint(body.original_text)
+        logger.warning(
+            "document snapshot not recorded (%s) — document %s, moment %s, "
+            "current sha256 %s, %d chars, original sha256 %s, %d chars; text not logged",
+            type(e).__name__, body.document_id, body.moment,
+            current_sha, current_chars, original_sha, original_chars,
+        )
         return ApiResponse(status="ok", data={"recorded": 0, "enabled": True})
     return ApiResponse(status="ok", data={"recorded": 1, "enabled": True})

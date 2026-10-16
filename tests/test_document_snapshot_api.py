@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from memory.db import get_pool
+from memory.fingerprint import fingerprint
 
 
 @pytest.fixture
@@ -56,7 +57,8 @@ def test_a_capture_is_recorded_with_who_and_what_sent_it(client):
 
 
 def test_a_store_failure_is_quiet_and_keeps_the_text_out_of_the_log(client, monkeypatch, caplog):
-    """Review Focus 2. Mutation: let the exception through (a 500), or log str(e)."""
+    """Review Focus 2. Mutation: let the exception through (a 500), log str(e), or drop
+    the hashes and sizes that say which texts the lost capture held."""
     c, _ = client
 
     def boom(**_kw):
@@ -67,6 +69,12 @@ def test_a_store_failure_is_quiet_and_keeps_the_text_out_of_the_log(client, monk
         r = c.post("/api/document-snapshot", json=_body(), headers={"X-User-ID": "atty-1"})
     assert r.status_code == 200 and r.json()["data"] == {"recorded": 0, "enabled": True}
     assert "doc-1" in caplog.text and "RuntimeError" in caplog.text and "Acme" not in caplog.text
+    # What identifies the lost texts: the hash turn_log records and the version rows are
+    # keyed by, with its size, each under its own label (a swap would point at the wrong one).
+    current_chars, current_sha = fingerprint("NDA with Acme Ltd")
+    original_chars, original_sha = fingerprint("NDA with [__]")
+    assert f"current sha256 {current_sha}, {current_chars} chars" in caplog.text
+    assert f"original sha256 {original_sha}, {original_chars} chars" in caplog.text
 
 
 def test_switched_off_it_records_nothing_and_tells_the_pane(client):
