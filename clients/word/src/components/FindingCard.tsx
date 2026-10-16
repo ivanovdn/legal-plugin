@@ -70,7 +70,8 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
       setRedline({ kind: "done", message: "Applied ✓ — see Track Changes" });
       recordEvent(turn, "findings", "redline_applied", {
         targetRef: finding.issueId || finding.clause,
-        applied: { action: "redline", target_text: anchors.join("\n"), new_text: finding.redline },
+        // anchors[0] is what acceptRedline checked its match against; the rest are only search fallbacks.
+        applied: { action: "redline", target_text: anchors[0], new_text: finding.redline },
       });
     } else {
       // A failed redline apply is always a genuine error (acceptRedline never

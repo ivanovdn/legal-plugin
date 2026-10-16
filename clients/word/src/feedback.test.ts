@@ -125,9 +125,16 @@ pass(!("applied" in lastEvent), "an event with no applied text sends none");
 
 const huge = "x".repeat(APPLIED_TEXT_CAP + 10);
 const capped = capApplied({ action: "insert", target_text: huge, new_text: huge, proposed_text: huge, position: "after" });
+// Two things capApplied passing cannot show: the literal pins the number (the server's cap,
+// memory/feedback_store.py — the constant alone is on both sides of every comparison), and the
+// event leg pins that recordEvent applies the cap at all.
+recordEvent(TURN, "chat", "edit_applied", { applied: { action: "replace", target_text: huge, new_text: "y" } });
+const sentApplied = lastEvent.applied as { target_text: string } | undefined;
 pass(
-  capped.target_text.length === APPLIED_TEXT_CAP && capped.new_text.length === APPLIED_TEXT_CAP &&
-    capped.proposed_text?.length === APPLIED_TEXT_CAP && capped.position === "after",
+  APPLIED_TEXT_CAP === 20_000 &&
+    capped.target_text.length === APPLIED_TEXT_CAP && capped.new_text.length === APPLIED_TEXT_CAP &&
+    capped.proposed_text?.length === APPLIED_TEXT_CAP && capped.position === "after" &&
+    sentApplied?.target_text.length === APPLIED_TEXT_CAP,
   "each applied field is capped at 20,000 characters",
 );
 

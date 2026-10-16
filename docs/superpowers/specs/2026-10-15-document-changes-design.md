@@ -150,7 +150,7 @@ createDocumentCapture(deps: {
 - `FinalizeBar.tsx`: after the in-pane confirm, `await Promise.race([capture("finalize"), 3 s timeout])`, then `finalizeDocument()` as today. A throw or timeout in the capture never stops Finalize.
 - `feedback.ts`: `recordEvent`'s `extra` gains `applied?: Applied`, each string capped at **20,000** chars.
 - `EditProposalCard.tsx`, on `edit_applied`: `applied = { action, target_text, new_text, proposed_text, position }` — `target_text` is `target_text`, or `anchor_text` for an insert; `new_text` is the text actually applied (`draftText`); `proposed_text` is the model's `new_text`, only when it differs; `position` only for an insert.
-- `FindingCard.tsx`, on `redline_applied`: `applied = { action: "redline", target_text: <anchors joined by "\n">, new_text: <redline> }`.
+- `FindingCard.tsx`, on `redline_applied`: `applied = { action: "redline", target_text: anchors[0], new_text: <redline> }` — `anchors[0]` is the clause text the redline replaced: the text `acceptRedline` validates its match against. The other anchors are only search fallbacks (clause names, the Issue prose); recording them would make a rejected redline read `altered` and let a clause name claim unrelated paragraphs.
 - The disclosure line in `App.tsx` (below).
 
 ### The backend
