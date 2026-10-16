@@ -2,6 +2,8 @@
 attorney's copies go, everything else stays, and it says what it does not touch."""
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import memory.document_store as ds
@@ -34,6 +36,22 @@ def _left(doc: str) -> tuple[int, int, int, int]:
                "AND applied IS NOT NULL", doc),
         _count("SELECT count(*) FROM interaction_event WHERE document_id = %s", doc),
     )
+
+
+def _shown(out: str, label: str) -> str:
+    """What the 'Not touched' line for one label shows, from its first value on."""
+    match = re.search(rf"^  {re.escape(label)}\s+(.*)$", out, flags=re.MULTILINE)
+    assert match, f"no 'Not touched' line for {label!r} in:\n{out}"
+    return match.group(1)
+
+
+def _audit_row(user: str) -> None:
+    """One audit_log row with the NOT NULL columns that have no default."""
+    with get_pool().connection() as conn:
+        conn.execute(
+            "INSERT INTO audit_log (timestamp, session_id, user_id, skill_name, task_type, "
+            "request_summary) VALUES (%s, %s, %s, %s, %s, %s)",
+            ("2026-10-16T09:00:00+00:00", "s", user, "legal_research", "research", "who signs?"))
 
 
 def test_a_dry_run_counts_and_deletes_nothing():
@@ -81,3 +99,34 @@ def test_the_command_deletes_with_yes(capsys):
     assert "Deleted for attorney atty-1:" in out
     assert "review_store" in out and "n/a (keyed by document only)" in out
     assert _left("doc-1") == (0, 0, 0, 1)
+
+
+def test_the_command_counts_the_event_text_it_leaves(capsys):
+    """interaction_event keeps the short excerpts an Apply, a failure and a
+    question carry. One row per field here, so each branch of the rule is
+    pinned: dropping any one of target_ref, detail or request makes this 2, not
+    3. The other document's excerpt is not counted."""
+    _seed()
+    record_events([
+        {"document_id": "doc-1", "action": "edit_applied", "target_ref": "old clause"},
+        {"document_id": "doc-1", "action": "edit_failed", "detail": "Couldn't find \"old\""},
+        {"document_id": "doc-1", "action": "edits_proposed", "request": "who signs?"},
+    ], attorney_id="atty-1")
+    record_events([{"document_id": "doc-2", "action": "edit_applied", "target_ref": "other"}],
+                  attorney_id="atty-2")
+    main(["--document", "doc-1"])
+    assert _shown(capsys.readouterr().out, "interaction_event (text excerpts)").split()[0] == "3"
+
+
+def test_the_command_says_the_audit_log_is_not_keyed_by_document(capsys):
+    _seed()
+    main(["--document", "doc-1"])
+    assert _shown(capsys.readouterr().out, "audit_log").startswith("n/a (not keyed by document)")
+
+
+def test_the_attorney_scope_counts_its_audit_log_rows(capsys):
+    _seed()
+    _audit_row("atty-1")
+    _audit_row("atty-2")
+    main(["--attorney", "atty-1"])
+    assert _shown(capsys.readouterr().out, "audit_log").split()[0] == "1"

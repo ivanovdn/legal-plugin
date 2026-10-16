@@ -247,7 +247,7 @@ No observation after the event → `no later capture`. `altered` prints the last
 
 ### Deleting it
 
-`python -m scripts.delete_document_data --document <id> | --attorney <id> [--yes]`. Without `--yes` it prints what it would delete and deletes nothing. With it: the versions, the snapshots, and `applied` set to NULL on the matching events. `--document` matches `document_id` on all three; `--attorney` matches their `attorney_id` columns — a version belongs to whoever first sent it. Either way it then prints what it does **not** touch for that scope: `review_store`, `conversation_store`, `feedback` snapshots, the `turn_log` questions, Phoenix traces, and the nightly dumps (kept up to 14 days) — so nobody mistakes it for a full erasure.
+`python -m scripts.delete_document_data --document <id> | --attorney <id> [--yes]`. Without `--yes` it prints what it would delete and deletes nothing. With it: the versions, the snapshots, and `applied` set to NULL on the matching events. `--document` matches `document_id` on all three; `--attorney` matches their `attorney_id` columns — a version belongs to whoever first sent it. Either way it then prints what it does **not** touch for that scope: `review_store`, `conversation_store`, `feedback` snapshots, the `turn_log` questions, `interaction_event`'s short text excerpts (the target excerpt on an Apply, the error messages that quote it, the attorney's question), `audit_log`'s request summaries, Phoenix traces, and the nightly dumps (kept up to 14 days) — so nobody mistakes it for a full erasure.
 
 ### Disclosure
 

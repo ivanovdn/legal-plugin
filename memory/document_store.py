@@ -217,7 +217,8 @@ def delete_document_data(*, document_id: str = "", attorney_id: str = "",
                          dry_run: bool = True) -> dict[str, int]:
     """SP4's copies for one document or one attorney: counted, and deleted
     unless dry_run. `applied` is set to NULL rather than the event deleted —
-    the Apply still happened; only its text goes. A version belongs to whoever
+    the Apply still happened; only the applied text goes, and the event's short
+    excerpts (target_ref, detail, request) stay. A version belongs to whoever
     first sent it."""
     column, value = _scope(document_id, attorney_id)
     counts_sql = {
@@ -241,7 +242,8 @@ def delete_document_data(*, document_id: str = "", attorney_id: str = "",
 def untouched_counts(*, document_id: str = "", attorney_id: str = "") -> dict[str, int | None]:
     """What delete_document_data leaves for the same scope — it is not a full
     erasure. None: that table cannot be scoped this way (reviews are keyed by
-    document only)."""
+    document only, the audit log by attorney only). interaction_event counts the
+    rows that still hold a short excerpt in target_ref, detail or request."""
     column, value = _scope(document_id, attorney_id)
     out: dict[str, int | None] = {}
     with get_pool().connection() as conn:
@@ -252,4 +254,12 @@ def untouched_counts(*, document_id: str = "", attorney_id: str = "") -> dict[st
                 continue
             out[table] = conn.execute(
                 f"SELECT count(*) FROM {table} WHERE {column} = %s", (value,)).fetchone()[0]
+        out["interaction_event (text excerpts)"] = conn.execute(
+            f"SELECT count(*) FROM interaction_event WHERE {column} = %s "
+            "AND (target_ref <> '' OR detail <> '' OR request <> '')", (value,)).fetchone()[0]
+        if column == "document_id":
+            out["audit_log"] = None
+        else:
+            out["audit_log"] = conn.execute(
+                "SELECT count(*) FROM audit_log WHERE user_id = %s", (value,)).fetchone()[0]
     return out
