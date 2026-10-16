@@ -136,16 +136,38 @@ def documents_with_copies(*, since: str = "", attorney_id: str = "", document_id
 def observations(document_id: str) -> list[dict]:
     """Every sighting of the document's text — its turns and its captures —
     oldest first. Sightings, not versions, give the order: a document that goes
-    A → B → A has two versions and three sightings, the last of them A."""
+    A → B → A has two versions and three sightings, the last of them A.
+
+    A row with no name of its own — every capture, and a turn that came without
+    one — carries its attorney's latest non-empty `user_name`: the newest turn
+    that has one, as feedback_report --activity names an attorney, failing that
+    the newest flag. So a document the pane saw and the model never did is still
+    named. Each attorney's name is looked up once, not once per row."""
     sql = """
-        SELECT timestamp, 'turn' AS kind, doc_sha256 AS sha256, turn_id, session_id,
-               attorney_id, user_name, NULL::jsonb AS tracked_changes, 0 AS tracked_total
-          FROM turn_log WHERE document_id = %s AND doc_sha256 <> ''
-        UNION ALL
-        SELECT timestamp, moment, current_sha256, '', session_id,
-               attorney_id, '', tracked_changes, tracked_total
-          FROM document_snapshot WHERE document_id = %s
-        ORDER BY timestamp
+        WITH seen AS (
+            SELECT timestamp, 'turn' AS kind, doc_sha256 AS sha256, turn_id, session_id,
+                   attorney_id, user_name, NULL::jsonb AS tracked_changes, 0 AS tracked_total
+              FROM turn_log WHERE document_id = %s AND doc_sha256 <> ''
+            UNION ALL
+            SELECT timestamp, moment, current_sha256, '', session_id,
+                   attorney_id, '', tracked_changes, tracked_total
+              FROM document_snapshot WHERE document_id = %s
+        ), named AS (
+            SELECT a.attorney_id,
+                   COALESCE(
+                       (SELECT t.user_name FROM turn_log t
+                         WHERE t.attorney_id = a.attorney_id AND t.user_name <> ''
+                         ORDER BY t.timestamp DESC, t.id DESC LIMIT 1),
+                       (SELECT f.user_name FROM feedback f
+                         WHERE f.attorney_id = a.attorney_id AND f.user_name <> ''
+                         ORDER BY f.timestamp DESC, f.id DESC LIMIT 1)) AS user_name
+              FROM (SELECT DISTINCT attorney_id FROM seen WHERE user_name = '') a
+        )
+        SELECT s.timestamp, s.kind, s.sha256, s.turn_id, s.session_id, s.attorney_id,
+               COALESCE(NULLIF(s.user_name, ''), n.user_name, '') AS user_name,
+               s.tracked_changes, s.tracked_total
+          FROM seen s LEFT JOIN named n ON n.attorney_id = s.attorney_id
+         ORDER BY s.timestamp
     """
     with get_pool().connection() as conn:
         cur = conn.execute(sql, (document_id, document_id))
