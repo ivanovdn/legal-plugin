@@ -72,6 +72,12 @@ class InteractionEvent(BaseModel):
         "Makes 'did we propose edits on a factual question?' answerable in SQL "
         "instead of one manual trace lookup per turn.",
     )
+    applied: dict | None = Field(
+        None,
+        description="SP4: on edit_applied / redline_applied, what went into the document — "
+        "action, target_text, new_text, and proposed_text when the attorney edited the "
+        "model's wording first. Capped server-side.",
+    )
 
 
 class InteractionEventBatch(BaseModel):

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from psycopg.types.json import Jsonb
 
 from memory.db import get_pool
+from memory.fingerprint import storable
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,18 @@ _TRUNCATION_MARK = "\n\n[... truncated at {n} chars ...]"
 # "12 edits_proposed, 19 edit_applied" misreads as a 158% apply rate instead
 # of 19-of-37 — counter_totals() below exists to keep the two separate.
 COUNTER_ACTIONS = ("edits_proposed", "findings_rendered", "preferences_suggested")
+
+# What an Apply put into the document (SP4, spec 2026-10-15 D7): only these
+# keys, each string capped; anything else a client sends is dropped.
+_APPLIED_KEYS = ("action", "target_text", "new_text", "proposed_text", "position")
+APPLIED_TEXT_CAP = 20_000
+
+
+def cap_applied(applied: dict | None) -> dict | None:
+    if not applied:
+        return None
+    return {key: storable(str(applied[key]))[:APPLIED_TEXT_CAP]
+            for key in _APPLIED_KEYS if applied.get(key) is not None}
 
 
 def _client_values(client: dict | None) -> tuple[str, str, str]:
@@ -113,21 +126,24 @@ def _insert_event(
     request: str,
     client: dict | None,
     backend_build: str,
+    applied: dict | None,
 ) -> None:
     """Raw insert — RAISES. The quiet policy lives in the two callers below, so
     record_events can count what actually landed instead of what it attempted."""
+    capped = cap_applied(applied)
     with get_pool().connection() as conn:
         conn.execute(
             """INSERT INTO interaction_event
                (timestamp, turn_id, session_id, document_id, attorney_id,
                 surface, action, target_kind, target_ref, detail, request,
-                office_platform, office_version, pane_build, backend_build)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                office_platform, office_version, pane_build, backend_build, applied)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 datetime.now(timezone.utc).isoformat(),
                 turn_id, session_id, document_id, attorney_id,
                 surface, action, target_kind, target_ref, detail, request,
                 *_client_values(client), backend_build,
+                Jsonb(capped) if capped is not None else None,
             ),
         )
 
@@ -146,6 +162,7 @@ def record_event(
     request: str = "",
     client: dict | None = None,
     backend_build: str = "",
+    applied: dict | None = None,
 ) -> None:
     """Insert one interaction event. NEVER raises — telemetry is not load-bearing."""
     try:
@@ -154,6 +171,7 @@ def record_event(
             attorney_id=attorney_id, surface=surface, action=action,
             target_kind=target_kind, target_ref=target_ref, detail=detail,
             request=request, client=client, backend_build=backend_build,
+            applied=applied,
         )
     except Exception as e:
         logger.warning("interaction_event write failed (%s): %s", action, e)
@@ -182,6 +200,7 @@ def record_events(
                 request=event.get("request", ""),
                 client=client,
                 backend_build=backend_build,
+                applied=event.get("applied"),
             )
             written += 1
         except Exception as e:

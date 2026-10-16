@@ -137,6 +137,9 @@ _STATEMENTS = [
     "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS office_version TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS pane_build TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS backend_build TEXT NOT NULL DEFAULT ''",
+    # The full text an Apply put into the document, and the model's own wording
+    # when the attorney edited the card first (SP4) — NULL on every other action.
+    "ALTER TABLE interaction_event ADD COLUMN IF NOT EXISTS applied JSONB",
     # Add later turn_log columns with an `ALTER TABLE turn_log ADD COLUMN IF NOT
     # EXISTS …` statement BELOW its CREATE, never only inside it: CREATE TABLE IF
     # NOT EXISTS will not touch a table that already exists (the VM's), and every

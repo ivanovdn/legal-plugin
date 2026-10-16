@@ -283,17 +283,9 @@ def test_a_writer_without_client_facts_records_them_empty():
     assert _client_columns("feedback") == [("", "", "", "")]
 
 
-@pytest.mark.parametrize("table, shipped", [
-    ("interaction_event", _EVENT_COLUMNS_2026_10_14),
-    ("feedback", _FEEDBACK_COLUMNS_2026_10_14),
-])
-def test_a_database_from_before_sp3_gains_the_client_columns(table, shipped):
-    """The VM's tables exist, so CREATE TABLE IF NOT EXISTS never runs there
-    again: a column added only inside the CREATE fails every write in
-    production, quietly for events. Rebuild the table as it shipped, start up
-    as the VM does, and require the four new columns.
-
-    Mutation: move one client column into the CREATE and delete its ALTER."""
+def _columns_after_upgrade(table: str, shipped: tuple[str, ...]) -> set[str]:
+    """Rebuild `table` as it shipped (every column TEXT), start up as the VM
+    does, and return the columns it then has — restoring the real table after."""
     with get_pool().connection() as conn:
         conn.execute(f"DROP TABLE {table}")
         conn.execute(
@@ -303,13 +295,67 @@ def test_a_database_from_before_sp3_gains_the_client_columns(table, shipped):
     try:
         init_db()
         with get_pool().connection() as conn:
-            got = {r[0] for r in conn.execute(
+            return {r[0] for r in conn.execute(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = %s AND column_name <> 'id'", (table,)
             ).fetchall()}
-        assert got == set(shipped) | _CLIENT_COLUMNS
     finally:
         # Every other test needs the real column types back.
         with get_pool().connection() as conn:
             conn.execute(f"DROP TABLE {table}")
         init_db()
+
+
+@pytest.mark.parametrize("table, shipped, added", [
+    ("interaction_event", _EVENT_COLUMNS_2026_10_14, _CLIENT_COLUMNS | {"applied"}),
+    ("feedback", _FEEDBACK_COLUMNS_2026_10_14, _CLIENT_COLUMNS),
+])
+def test_a_database_from_before_sp3_gains_the_client_columns(table, shipped, added):
+    """The VM's tables exist, so CREATE TABLE IF NOT EXISTS never runs there
+    again: a column added only inside the CREATE fails every write in
+    production, quietly for events. Rebuild the table as it shipped, start up
+    as the VM does, and require the new columns.
+
+    Mutation: move one client column into the CREATE and delete its ALTER."""
+    assert _columns_after_upgrade(table, shipped) == set(shipped) | added
+
+
+# interaction_event as deployed on 2026-10-15 — after SP3, before SP4. Frozen:
+# never edit — it stands for every database created before this change.
+_EVENT_COLUMNS_2026_10_15 = _EVENT_COLUMNS_2026_10_14 + (
+    "office_platform", "office_version", "pane_build", "backend_build")
+
+
+def test_a_database_from_before_sp4_gains_the_applied_column():
+    """Mutation: put `applied` in interaction_event's CREATE only."""
+    assert _columns_after_upgrade("interaction_event", _EVENT_COLUMNS_2026_10_15) == \
+        set(_EVENT_COLUMNS_2026_10_15) | {"applied"}
+
+
+def _applied_column() -> list:
+    with get_pool().connection() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT applied FROM interaction_event ORDER BY id").fetchall()]
+
+
+def test_an_apply_keeps_the_full_text_it_put_in():
+    """SP4 D7. Mutation: drop `applied` from _insert_event's INSERT."""
+    applied = {"action": "replace", "target_text": "the Seller", "new_text": "Acme Ltd " * 40,
+               "proposed_text": "Acme Limited"}
+    fs.record_events([{"action": "edit_applied", "applied": applied}], attorney_id="atty-1")
+    assert _applied_column() == [applied]
+
+
+def test_the_applied_text_is_capped_and_unknown_keys_are_dropped():
+    """A client-controlled payload gets a bound. Mutation: store it as sent."""
+    huge = "x" * (fs.APPLIED_TEXT_CAP + 5)
+    fs.record_events([{"action": "edit_applied",
+                       "applied": {"action": "replace", "new_text": huge, "extra": "?"}}],
+                     attorney_id="atty-1")
+    (stored,) = _applied_column()
+    assert len(stored["new_text"]) == fs.APPLIED_TEXT_CAP and "extra" not in stored
+
+
+def test_an_event_without_applied_text_stores_null():
+    fs.record_events([{"action": "edit_discarded"}], attorney_id="atty-1")
+    assert _applied_column() == [None]

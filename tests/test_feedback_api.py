@@ -142,3 +142,15 @@ def test_feedback_carries_what_sent_it(client):
     c, _ = client
     c.post("/api/feedback", json=_body(), headers=_CLIENT_HEADERS)
     assert _client_columns("feedback") == [("Mac", "16.113", "abc1234", "test-build")]
+
+
+def test_events_carry_the_full_applied_text(client):
+    """Mutation: drop `applied` from InteractionEvent — pydantic then ignores it."""
+    c, _ = client
+    applied = {"action": "insert", "target_text": "4. Term", "new_text": "4.1 Renewal is automatic.",
+               "position": "after"}
+    c.post("/api/events", json={"events": [
+        {"surface": "chat", "action": "edit_applied", "applied": applied}]},
+        headers={"X-User-ID": "atty-1"})
+    with get_pool().connection() as conn:
+        assert conn.execute("SELECT applied FROM interaction_event").fetchone()[0] == applied
