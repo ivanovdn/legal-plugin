@@ -359,3 +359,12 @@ def test_the_applied_text_is_capped_and_unknown_keys_are_dropped():
 def test_an_event_without_applied_text_stores_null():
     fs.record_events([{"action": "edit_discarded"}], attorney_id="atty-1")
     assert _applied_column() == [None]
+
+
+def test_an_applied_payload_with_no_known_keys_stores_null():
+    """Nothing survives the key filter, so there was no edit to keep: NULL, not {}.
+    A reader that selects `applied IS NOT NULL` would print {} as an edit with
+    empty fields. Mutation: return `capped` instead of `capped or None`."""
+    fs.record_events([{"action": "edit_applied", "applied": {"foo": "x", "new_text": None}}],
+                     attorney_id="atty-1")
+    assert _applied_column() == [None]

@@ -43,8 +43,11 @@ APPLIED_TEXT_CAP = 20_000
 def cap_applied(applied: dict | None) -> dict | None:
     if not applied:
         return None
-    return {key: storable(str(applied[key]))[:APPLIED_TEXT_CAP]
-            for key in _APPLIED_KEYS if applied.get(key) is not None}
+    capped = {key: storable(str(applied[key]))[:APPLIED_TEXT_CAP]
+              for key in _APPLIED_KEYS if applied.get(key) is not None}
+    # Nothing survived the key filter, so there is no edit to keep. NULL, not {}:
+    # a reader selecting `applied IS NOT NULL` would print {} as an edit.
+    return capped or None
 
 
 def _client_values(client: dict | None) -> tuple[str, str, str]:
