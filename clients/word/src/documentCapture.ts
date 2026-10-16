@@ -117,15 +117,16 @@ export function createDocumentCapture(deps: CaptureDeps): DocumentCapture {
 
   async function capture(moment: Moment): Promise<void> {
     if (stopped) return;
-    if (running) {
-      // One read at a time; Finalize alone waits, so its moment is not lost.
-      if (moment !== "finalize") return;
-      await running;
-      if (stopped) return;
-    }
+    // One capture at a time, except Finalize, which never queues behind one: its read has to be
+    // issued before acceptAll() runs, and a capture still in flight can outlast Finalize's wait. A
+    // Finalize read queued behind it would be issued after the accept and record the accepted
+    // document, still labelled "finalize". Overlapping reads are harmless: they only read.
+    if (running && moment !== "finalize") return;
     const mine = run(moment);
     running = mine;
     await mine;
+    // Only the latest run clears the slot: an older capture finishing after Finalize took it
+    // must not free it.
     if (running === mine) running = null;
   }
 

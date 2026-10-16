@@ -71,6 +71,8 @@ export async function readDocumentForCapture(): Promise<DocumentReading> {
 }
 
 function isoDate(value: unknown): string {
+  // new Date(null) is the epoch, a valid date: without this an absent date would be invented as 1970.
+  if (value == null) return "";
   try {
     const d = new Date(value as string | number | Date);
     return Number.isNaN(d.getTime()) ? "" : d.toISOString();

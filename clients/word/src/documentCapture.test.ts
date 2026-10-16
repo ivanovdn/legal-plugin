@@ -12,6 +12,7 @@ import {
   type SnapshotReply,
 } from "./documentCapture";
 import { pass } from "./testAssert";
+import { readDocumentForCapture } from "./word";
 
 const READING: DocumentReading = {
   current: "NDA with Acme Ltd",
@@ -67,6 +68,37 @@ function harness(opts: {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** A Word whose run() hands readDocumentForCapture a context over `items`; returns the uninstall.
+ *  The second sync() is the tracked-change load, which some Words reject. Not eval/wordFake.ts, which
+ *  models the matcher's slice of Office.js and has none of these reads. */
+function stubWord(items: unknown[], opts: { secondSyncFails?: boolean } = {}): () => void {
+  const ChangeTrackingVersion = { original: "Original", current: "Current" } as const satisfies Record<
+    string,
+    `${Word.ChangeTrackingVersion}`
+  >;
+  let syncs = 0;
+  (globalThis as Record<string, unknown>).Word = {
+    ChangeTrackingVersion,
+    run: <T>(callback: (context: unknown) => Promise<T>): Promise<T> =>
+      callback({
+        document: {
+          body: {
+            getReviewedText: (version: string) => ({
+              value: version === ChangeTrackingVersion.current ? READING.current : READING.original,
+            }),
+            getTrackedChanges: () => ({ load: () => {}, items }),
+          },
+        },
+        sync: async () => {
+          if (++syncs === 2 && opts.secondSyncFails) throw new Error("WordApi 1.6 is not supported");
+        },
+      }),
+  };
+  return () => {
+    delete (globalThis as Record<string, unknown>).Word;
+  };
+}
+
 {
   const h = harness();
   await h.capture.capture("pane_open");
@@ -120,12 +152,71 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
         : Promise.resolve({ ...READING, current: "finalized" }),
   });
   const idle = h.capture.capture("idle");
-  const fin = h.capture.capture("finalize");
+  let finalized = false;
+  const fin = h.capture.capture("finalize").then(() => { finalized = true; });
+  await tick();
+  // The idle read is still pending, and Finalize has already completed with its own body.
+  const sentWhileReading = h.sent.map((b) => `${b.moment}:${b.current_text}`).join(",");
+  const finalizedWhileReading = finalized;
   release(READING);
   await idle;
   await fin;
-  pass(h.sent.map((b) => b.moment).join(",") === "idle,finalize",
-    "Finalize waits for a capture already reading, then sends its own");
+  pass(
+    finalizedWhileReading && sentWhileReading === "finalize:finalized" &&
+      h.sent.map((b) => b.moment).join(",") === "finalize,idle",
+    "Finalize does not wait for a capture already reading: it sends its own at once, the other still sends after",
+  );
+}
+
+{
+  // An idle capture's send stalls. Finalize's wait runs out, acceptAll() runs, and only then does the
+  // stalled send come back. The finalize body must still be the document as it was BEFORE the accept.
+  const accepted: DocumentReading = { current: READING.current, original: READING.current, tracked: [] };
+  let reading = READING;
+  let releaseSend: (r: SnapshotReply) => void = () => {};
+  let sends = 0;
+  const h = harness({
+    read: () => Promise.resolve(reading),
+    reply: () =>
+      ++sends === 1
+        ? new Promise<SnapshotReply>((resolve) => { releaseSend = resolve; })
+        : Promise.resolve({ recorded: 1, enabled: true }),
+  });
+  const timers = fakeTimers();
+  const idle = h.capture.capture("idle");
+  await tick();
+  const finalizing = captureBeforeFinalize(h.capture, 3000, timers.schedule);
+  timers.fire();
+  await finalizing;
+  reading = accepted;
+  releaseSend({ recorded: 1, enabled: true });
+  await idle;
+  await tick();
+  const finals = h.sent.filter((b) => b.moment === "finalize");
+  pass(
+    finals.length === 1 && finals[0].original_text === READING.original &&
+      finals[0].current_text === READING.current && finals[0].tracked_changes.length === 1 &&
+      finals[0].tracked_total === 1,
+    "a capture stuck past Finalize's wait cannot make Finalize record the document after the accept",
+  );
+}
+
+{
+  // Finalize took the slot while an older capture was still reading. When the older one finishes first it
+  // must not free the slot, or an idle capture would overlap the Finalize read that is still going.
+  const releases: Array<(r: DocumentReading) => void> = [];
+  const h = harness({ read: () => new Promise<DocumentReading>((resolve) => { releases.push(resolve); }) });
+  const idle = h.capture.capture("idle");
+  const fin = h.capture.capture("finalize");
+  releases[0](READING);
+  await idle;
+  const later = h.capture.capture("idle");
+  const readsWhileFinalizeReads = h.reads();
+  releases.forEach((release) => release(READING));
+  await fin;
+  await later;
+  pass(readsWhileFinalizeReads === 2,
+    "an older capture finishing while Finalize is still reading does not free the slot for another");
 }
 
 {
@@ -195,6 +286,46 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
   const b = h.sent[0];
   pass(b.tracked_total === -1 && b.tracked_changes.length === 0 && b.current_text === READING.current,
     "a Word that cannot read tracked changes still sends both texts, with tracked_total -1");
+}
+
+{
+  // The reader itself: a Word that rejects the tracked-change load must not lose the two texts.
+  const restore = stubWord([], { secondSyncFails: true });
+  let reading: DocumentReading | null = null;
+  try {
+    reading = await readDocumentForCapture();
+  } catch {
+    reading = null;
+  } finally {
+    restore();
+  }
+  pass(
+    reading !== null && reading.current === READING.current && reading.original === READING.original &&
+      reading.tracked === null,
+    "a Word that fails the tracked-change load still returns both texts, with tracked null",
+  );
+}
+
+{
+  // The server declares every tracked-change field a plain str: one null makes the whole capture a 422.
+  const restore = stubWord([
+    { type: 3, author: null, date: null, text: null },
+    { type: "Added", author: "Jane Smith", date: new Date("2026-10-16T09:00:00Z"), text: "Acme Ltd" },
+  ]);
+  let tracked: DocumentReading["tracked"] = null;
+  try {
+    tracked = (await readDocumentForCapture()).tracked;
+  } catch {
+    tracked = null;
+  } finally {
+    restore();
+  }
+  pass(
+    tracked !== null && tracked.length === 2 &&
+      tracked.every((c) => [c.type, c.author, c.date, c.text].every((v) => typeof v === "string")) &&
+      tracked[0].date === "" && tracked[1].date === "2026-10-16T09:00:00.000Z",
+    "every field of every tracked change comes back a string, and a null date is \"\" not 1970",
+  );
 }
 
 {
