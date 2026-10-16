@@ -579,3 +579,67 @@ def test_a_chat_turn_does_not_inherit_the_previous_reviews_contract_type(monkeyp
     # Without this the assertion below could pass because the review never detected anything.
     assert review["data"]["report"]["contract_type_detected"] == "nda"
     assert chat["data"]["report"]["contract_type_detected"] == ""
+
+
+def _versions() -> list[dict]:
+    with get_pool().connection() as conn:
+        cur = conn.execute(
+            "SELECT document_id, sha256, text, source, attorney_id FROM document_version")
+        names = [column.name for column in cur.description]
+        return [dict(zip(names, values)) for values in cur.fetchall()]
+
+
+def _word_turn(monkeypatch):
+    _wire(monkeypatch, _Graph(invoke=_clean))
+    return call_handler(
+        q.submit_query,
+        QueryRequest(request="who signs?", uploaded_text="MUTUAL NDA", document_uuid="doc-uuid-1"),
+        user_id="atty-1", user_name="A. Tester",
+    )
+
+
+def test_a_word_turn_stores_the_text_it_was_sent_under_its_rows_hash(monkeypatch):
+    """SP4: a turn's doc_sha256 finds its text. Mutation: drop the version write
+    from finish_turn."""
+    _word_turn(monkeypatch)
+    (row,) = _rows()
+    assert _versions() == [{"document_id": "doc-uuid-1", "sha256": row["doc_sha256"],
+                            "text": "MUTUAL NDA", "source": "turn", "attorney_id": "atty-1"}]
+
+
+def test_a_turn_without_a_document_uuid_stores_no_text(monkeypatch):
+    """Chainlit sends no UUID (spec D5). Mutation: drop the document_id guard."""
+    _submit(monkeypatch, **SUBMIT_EXITS["ok"])
+    assert len(_rows()) == 1 and _versions() == []
+
+
+def test_capture_switched_off_stores_no_text(monkeypatch):
+    """Mutation: ignore document_capture_enabled in finish_turn."""
+    monkeypatch.setenv("DOCUMENT_CAPTURE_ENABLED", "false")
+    get_settings.cache_clear()
+    _word_turn(monkeypatch)
+    get_settings.cache_clear()
+    assert len(_rows()) == 1 and _versions() == []
+
+
+def test_a_failed_version_write_changes_nothing_the_attorney_sees(monkeypatch):
+    """Quiet (D6): the attorney has their answer and the turn its row.
+    Mutation: call save_version (which raises) instead of save_version_quietly."""
+    def boom():
+        raise RuntimeError("pool timeout")
+
+    monkeypatch.setattr("memory.document_store.get_pool", boom)
+    resp = _word_turn(monkeypatch)
+    assert resp.status == "ok" and len(_rows()) == 1 and _versions() == []
+
+
+def test_a_resume_stores_no_text(monkeypatch):
+    """Only /api/query submits store a version. A resume re-reads the checkpointed
+    run, whose document_id for Chainlit is intake's preamble hash, not a UUID the
+    client sent. Mutation: drop the kind check from _turn_document."""
+    _resume(monkeypatch, RESUME_EXITS["ok"])
+    (row,) = _rows()
+    # The resume turn did carry an id and a text; without this the empty store
+    # below could be an empty input rather than the kind check.
+    assert (row["document_id"], row["doc_chars"]) == ("doc-9", len("MASTER SERVICES AGREEMENT"))
+    assert _versions() == []

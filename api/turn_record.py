@@ -20,6 +20,7 @@ from fastapi import BackgroundTasks
 from api.client_info import ClientInfo
 from api.runtime_facts import ollama_facts, settings_snapshot
 from config import get_settings
+from memory.document_store import save_version_quietly
 from memory.turn_log import build_turn_row, write_turn_quietly
 from observability.log_context import set_log_turn
 from observability.spans import (
@@ -70,6 +71,26 @@ def start_turn(
     }
 
 
+def _turn_document(turn: dict) -> dict | None:
+    """SP4: the text a pane turn was sent, keyed by the request's document UUID.
+    Only /api/query submits qualify: Chainlit sends no UUID, a resume (Chainlit
+    only) carries the checkpoint's resolved id rather than one the client sent,
+    and compaction carries no text."""
+    if not (turn["kind"] == "query" and turn["document_id"] and turn["doc_text"]
+            and get_settings().document_capture_enabled):
+        return None
+    return {"document_id": turn["document_id"], "text": turn["doc_text"],
+            "attorney_id": turn["attorney_id"], "source": "turn"}
+
+
+def _record_quietly(row: dict, document: dict | None) -> None:
+    """Everything a turn leaves behind after the response: its turn_log row and,
+    for a pane turn, its document's text. Neither can raise."""
+    write_turn_quietly(row)
+    if document is not None:
+        save_version_quietly(**document)
+
+
 def finish_turn(
     turn: dict,
     *,
@@ -102,6 +123,7 @@ def finish_turn(
             client=turn["client"], backend_build=turn["backend_build"],
             runtime=turn["runtime"],
         )
+        document = _turn_document(turn)
     except Exception:
         logger.exception(
             "[turn_log] could not build the row for turn %s — the response is unaffected",
@@ -111,6 +133,6 @@ def finish_turn(
     if background_tasks is not None:
         # Background tasks run in the request task's context, not this
         # thread's: carry this one so a failed write still logs [turn=<id>].
-        background_tasks.add_task(contextvars.copy_context().run, write_turn_quietly, row)
+        background_tasks.add_task(contextvars.copy_context().run, _record_quietly, row, document)
     else:
-        write_turn_quietly(row)
+        _record_quietly(row, document)

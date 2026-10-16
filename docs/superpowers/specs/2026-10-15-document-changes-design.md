@@ -203,7 +203,7 @@ Both new tables go on `tests/conftest.py`'s hardcoded TRUNCATE list.
 - Re-applies every cap server-side (the pane is not trusted to have).
 - Always `200 {"recorded": 0|1, "enabled": bool}`; a store failure is `recorded: 0`. `document_capture_enabled=False` → `{"recorded": 0, "enabled": false}`, nothing written.
 
-**Per-turn version.** `finish_turn` adds `save_version_quietly(document_id, doc_text, attorney_id, "turn")` to the same after-response background work as the `turn_log` write (and runs it synchronously on raising exits, like the row). Skipped when `document_id` or `doc_text` is empty — resume and compaction carry no document text, and Chainlit sends no document UUID — and when `document_capture_enabled` is off.
+**Per-turn version.** `finish_turn` adds `save_version_quietly(document_id, doc_text, attorney_id, "turn")` to the same after-response background work as the `turn_log` write (and runs it synchronously on raising exits, like the row). Only `/api/query` submits with a document UUID and text store a version — Chainlit sends no UUID, a resume carries the checkpoint's resolved id instead of one the client sent, compaction carries no text — and none when `document_capture_enabled` is off.
 
 **Events.** `InteractionEvent` gains `applied: dict | None = None`; `_insert_event` writes it, re-capping each string at 20,000 chars.
 
