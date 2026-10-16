@@ -6,6 +6,7 @@
     uv run python -m scripts.feedback_report --attorney <id> --document <id>
     uv run python -m scripts.feedback_report --turns --attorney <id> --days 2
     uv run python -m scripts.feedback_report --activity --days 7
+    uv run python -m scripts.feedback_report --changes --document <id>
 
 Feedback nobody reads is worse than none — it costs the attorney something and
 returns nothing. This is the whole reporting story; there is deliberately no UI.
@@ -25,6 +26,7 @@ from statistics import median
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from memory import document_store
 from memory.db import init_db
 from memory.feedback_store import (
     COUNTER_ACTIONS,
@@ -35,6 +37,7 @@ from memory.feedback_store import (
     recent_feedback,
 )
 from memory.turn_log import recent_turns, turn_summaries
+from scripts.document_changes import build_document_changes, format_document_changes
 
 
 def _parse_args() -> argparse.Namespace:
@@ -52,6 +55,11 @@ def _parse_args() -> argparse.Namespace:
                    help="print the turn timeline (turn_log) instead of the feedback summary")
     p.add_argument("--activity", action="store_true",
                    help="print one line per attorney per day: pane use beside the turns")
+    p.add_argument("--changes", action="store_true",
+                   help="print, per document, what became of each applied edit and what else "
+                        "changed (SP4)")
+    p.add_argument("--full", action="store_true",
+                   help="with --changes: whole texts and every changed paragraph, not excerpts")
     return p.parse_args()
 
 
@@ -229,13 +237,46 @@ def format_pane_event(e: dict) -> str:
     return f"  {e['timestamp'][:19]}  · {what}"
 
 
-def print_turns(rows: list[dict], limit: int, pane_events: list[dict] = ()) -> None:
+def format_capture(c: dict, previous_sha: str | None) -> str:
+    """A pane capture (SP4) as one timeline line. `previous_sha` is the text last
+    seen of the same document on this page; None if none was."""
+    if previous_sha is None:
+        change = "first text on this page"
+    elif c["current_sha256"] == previous_sha:
+        change = "text unchanged"
+    else:
+        change = "text changed"
+    total = c["tracked_total"]
+    tracked = ("tracked changes unreadable" if total < 0
+               else f"{total} tracked change{'' if total == 1 else 's'}")
+    return f"  {c['timestamp'][:19]}  · capture {c['moment']}: {change}, {tracked}"
+
+
+def print_changes(blocks: list[dict], *, full: bool) -> None:
+    n = len(blocks)
+    print(f"=== Document changes ({n} document{'' if n == 1 else 's'}) ===")
+    print("  Per document: what became of each applied edit, the tracked changes at the")
+    print("  last capture, and the paragraphs changed since the first stored text.")
+    print("  How to read it: docs/feedback-loop.md.")
+    print()
+    if not blocks:
+        print("  (none yet)\n")
+        return
+    for d in blocks:
+        print("\n".join(format_document_changes(d, full=full)))
+        print()
+
+
+def print_turns(rows: list[dict], limit: int, pane_events: list[dict] = (),
+                captures: list[dict] = ()) -> None:
     """`rows` is recent_turns(limit=limit + 1): the one extra row, when it exists,
     is the proof that older turns were cut off. It is the oldest written (lowest
     id), not printed — a page of exactly `limit` turns cut nothing and says so.
-    `pane_events` (no turn, same sessions) are printed between the turns by time;
-    on a cut page only those from the first shown turn on. The unprinted row
-    still serves as the first shown turn's predecessor for change markers."""
+    `pane_events` (no turn, same sessions) and `captures` (SP4, same sessions)
+    are printed between the turns by time; on a cut page only those from the
+    first shown turn on. A capture says whether the text changed since the
+    document was last seen on this page. The unprinted row still serves as the
+    first shown turn's predecessor for change markers."""
     cut = len(rows) > limit
     before_page = None
     if cut:
@@ -254,15 +295,22 @@ def print_turns(rows: list[dict], limit: int, pane_events: list[dict] = ()) -> N
         print("  (none yet)\n")
         return
     start = rows[0]["timestamp"] if cut else ""
-    entries = [(r["timestamp"], True, format_turn(r, prev))
-               for prev, r in zip([before_page, *rows], rows)] + [
-        (e["timestamp"], False, [format_pane_event(e)])
-        for e in pane_events if e["timestamp"] >= start
-    ]
-    for _, is_turn, lines in sorted(entries, key=lambda x: (x[0], x[1])):
-        print("\n".join(lines))
-        if is_turn:
+    entries = [(r["timestamp"], 1, "turn", (prev, r)) for prev, r in zip([before_page, *rows], rows)]
+    entries += [(e["timestamp"], 0, "pane", e) for e in pane_events if e["timestamp"] >= start]
+    entries += [(c["timestamp"], 0, "capture", c) for c in captures if c["timestamp"] >= start]
+    last_seen: dict[str, str] = {}
+    for _, _, kind, item in sorted(entries, key=lambda x: (x[0], x[1])):
+        if kind == "turn":
+            prev, row = item
+            print("\n".join(format_turn(row, prev)))
             print()
+            if row["doc_sha256"]:
+                last_seen[row["document_id"]] = row["doc_sha256"]
+        elif kind == "pane":
+            print(format_pane_event(item))
+        else:
+            print(format_capture(item, last_seen.get(item["document_id"])))
+            last_seen[item["document_id"]] = item["current_sha256"]
 
 
 def main() -> None:
@@ -294,7 +342,18 @@ def main() -> None:
                             document_id=args.document, limit=args.limit + 1)
         sessions = sorted({r["session_id"] for r in rows if r["session_id"]})
         events = pane_events(session_ids=sessions, without_turn=True) if sessions else []
-        print_turns(rows, args.limit, events)
+        captures = document_store.captures_for_sessions(sessions) if sessions else []
+        print_turns(rows, args.limit, events, captures)
+        return
+    if args.changes:
+        ids = document_store.documents_with_copies(
+            since=since, attorney_id=args.attorney, document_id=args.document, limit=args.limit)
+        print_changes([
+            build_document_changes(doc, document_store.observations(doc),
+                                   document_store.versions(doc),
+                                   document_store.applied_events(doc))
+            for doc in ids
+        ], full=args.full)
         return
 
     rows = recent_feedback(args.limit, **f)

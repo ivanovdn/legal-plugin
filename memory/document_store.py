@@ -101,3 +101,84 @@ def save_snapshot(*, attorney_id: str, session_id: str, document_id: str, moment
              client.get("office_platform", ""), client.get("office_version", ""),
              client.get("pane_build", ""), backend_build),
         )
+
+
+def documents_with_copies(*, since: str = "", attorney_id: str = "", document_id: str = "",
+                          limit: int = 50) -> list[str]:
+    """The documents with SP4 data in scope — at least one stored text or
+    capture — the newest `limit` by last activity, oldest of them first."""
+    clauses: list[str] = []
+    params: list = []
+    if since:
+        clauses.append("ts >= %s")
+        params.append(since)
+    if attorney_id:
+        clauses.append("attorney_id = %s")
+        params.append(attorney_id)
+    if document_id:
+        clauses.append("document_id = %s")
+        params.append(document_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"""
+        SELECT document_id FROM (
+            SELECT document_id, max(ts) AS last FROM (
+                SELECT document_id, attorney_id, first_seen AS ts FROM document_version
+                UNION ALL
+                SELECT document_id, attorney_id, timestamp AS ts FROM document_snapshot
+            ) seen {where}
+            GROUP BY document_id ORDER BY last DESC LIMIT %s
+        ) newest ORDER BY last
+    """
+    with get_pool().connection() as conn:
+        return [row[0] for row in conn.execute(sql, [*params, limit]).fetchall()]
+
+
+def observations(document_id: str) -> list[dict]:
+    """Every sighting of the document's text — its turns and its captures —
+    oldest first. Sightings, not versions, give the order: a document that goes
+    A → B → A has two versions and three sightings, the last of them A."""
+    sql = """
+        SELECT timestamp, 'turn' AS kind, doc_sha256 AS sha256, turn_id, session_id,
+               attorney_id, user_name, NULL::jsonb AS tracked_changes, 0 AS tracked_total
+          FROM turn_log WHERE document_id = %s AND doc_sha256 <> ''
+        UNION ALL
+        SELECT timestamp, moment, current_sha256, '', session_id,
+               attorney_id, '', tracked_changes, tracked_total
+          FROM document_snapshot WHERE document_id = %s
+        ORDER BY timestamp
+    """
+    with get_pool().connection() as conn:
+        cur = conn.execute(sql, (document_id, document_id))
+        names = [column.name for column in cur.description]
+        return [dict(zip(names, values)) for values in cur.fetchall()]
+
+
+def versions(document_id: str) -> dict[str, dict]:
+    """sha256 → the stored text of each version of the document."""
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT sha256, text, chars, truncated, first_seen, source "
+            "FROM document_version WHERE document_id = %s", (document_id,)).fetchall()
+    return {r[0]: {"text": r[1], "chars": r[2], "truncated": r[3], "first_seen": r[4],
+                   "source": r[5]} for r in rows}
+
+
+def applied_events(document_id: str) -> list[dict]:
+    """The document's Apply events that carry their text, oldest first."""
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, turn_id, action, applied FROM interaction_event "
+            "WHERE document_id = %s AND applied IS NOT NULL ORDER BY timestamp, id",
+            (document_id,)).fetchall()
+    return [{"timestamp": r[0], "turn_id": r[1], "action": r[2], "applied": r[3]} for r in rows]
+
+
+def captures_for_sessions(session_ids: list[str]) -> list[dict]:
+    """The captures made in these pane sessions, oldest first — for --turns."""
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, session_id, document_id, moment, current_sha256, tracked_total "
+            "FROM document_snapshot WHERE session_id = ANY(%s) ORDER BY timestamp, id",
+            (list(session_ids),)).fetchall()
+    keys = ("timestamp", "session_id", "document_id", "moment", "current_sha256", "tracked_total")
+    return [dict(zip(keys, r)) for r in rows]
