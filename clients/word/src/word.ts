@@ -4,6 +4,7 @@
 // All Word manipulation happens inside Word.run so the context object is
 // scoped correctly and context.sync() is awaited before returning data.
 
+import type { DocumentReading, TrackedChange } from "./documentCapture";
 import { normalizeForSearch } from "./normalize";
 import type { EditProposal } from "./parseEditBlocks";
 
@@ -39,6 +40,43 @@ export async function readBody(): Promise<string> {
     await context.sync();
     return reviewed.value;
   });
+}
+
+/** SP4: both views of the document and its tracked changes, in one Word.run.
+ *  The tracked changes come in their own sync: on a Word without them
+ *  (WordApi 1.6) the texts still come back, with tracked = null. */
+export async function readDocumentForCapture(): Promise<DocumentReading> {
+  if (!isWordAvailable()) throw new Error("Word is not available");
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const current = body.getReviewedText(Word.ChangeTrackingVersion.current);
+    const original = body.getReviewedText(Word.ChangeTrackingVersion.original);
+    await context.sync();
+    let tracked: TrackedChange[] | null = null;
+    try {
+      const changes = body.getTrackedChanges();
+      changes.load("items/type,items/author,items/date,items/text");
+      await context.sync();
+      tracked = changes.items.map((c) => ({
+        type: String(c.type),
+        author: c.author ?? "",
+        date: isoDate(c.date),
+        text: c.text ?? "",
+      }));
+    } catch {
+      tracked = null;
+    }
+    return { current: current.value, original: original.value, tracked };
+  });
+}
+
+function isoDate(value: unknown): string {
+  try {
+    const d = new Date(value as string | number | Date);
+    return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+  } catch {
+    return "";
+  }
 }
 
 /**
