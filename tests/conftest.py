@@ -46,13 +46,19 @@ def _pg_container():
         os.environ.pop("DATABASE_URL", None)
 
 
+# Every store table init_db() creates. The truncate below names them all, and
+# tests/test_db.py checks this list against the database: a new table missing
+# here fails there instead of carrying rows from one test into the next.
+STORE_TABLES = (
+    "audit_log", "review_store", "conversation_store", "conversation_summary",
+    "feedback", "interaction_event", "turn_log", "document_version", "document_snapshot",
+)
+
+
 @pytest.fixture(autouse=True)
 def _clean_tables(_pg_container):
     with db.get_pool().connection() as conn:
-        conn.execute(
-            "TRUNCATE audit_log, review_store, conversation_store, "
-            "conversation_summary, feedback, interaction_event, turn_log RESTART IDENTITY"
-        )
+        conn.execute(f"TRUNCATE {', '.join(STORE_TABLES)} RESTART IDENTITY")
     yield
 
 

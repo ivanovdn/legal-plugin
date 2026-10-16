@@ -10,7 +10,6 @@ must never break a turn. A failed write puts the whole row in the log instead.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from typing import Any
@@ -19,6 +18,7 @@ from psycopg.types.json import Jsonb
 
 from memory.db import get_pool
 from memory.feedback_store import _filters
+from memory.fingerprint import fingerprint, storable
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +41,6 @@ _JSON_COLUMNS = frozenset({"degradations", "context", "llm_detail", "compaction"
 
 _REQUEST_CAP = 2000
 _ERROR_CAP = 2000
-
-
-def _fingerprint(text: str) -> tuple[int, str]:
-    """(chars, hex SHA-256 of the UTF-8 text): the document without the document.
-    surrogatepass, because broken UTF-16 from Word reaches Python as lone
-    surrogates that plain UTF-8 refuses to encode."""
-    if not text:
-        return 0, ""
-    return len(text), hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-
-
-def _storable(text: str) -> str:
-    """Free text Postgres can store: a lone surrogate becomes '?'."""
-    return (text or "").encode("utf-8", "replace").decode("utf-8")
 
 
 def _total(calls: list[dict], key: str) -> int:
@@ -99,7 +85,7 @@ def build_turn_row(
     """
     state = result or {}
     calls = [dict(call) for call in facts.get("llm_detail") or []]
-    doc_chars, doc_sha256 = _fingerprint(doc_text)
+    doc_chars, doc_sha256 = fingerprint(doc_text)
     truncated = state.get("context_truncated")
     return {
         "timestamp": arrived_at,
@@ -111,7 +97,7 @@ def build_turn_row(
         "attorney_id": attorney_id,
         "user_name": user_name,
         "task_type": state.get("task_type") or task_type,
-        "request": _storable(request)[:_REQUEST_CAP],
+        "request": storable(request)[:_REQUEST_CAP],
         "doc_chars": doc_chars,
         "doc_sha256": doc_sha256,
         "status": status,
@@ -120,7 +106,7 @@ def build_turn_row(
         # The first failure the turn recorded says what broke; the API's own
         # error text is the fallback for exits that never called mark_failed
         # (a resume whose session had expired).
-        "error": _storable(facts.get("error") or api_error)[:_ERROR_CAP],
+        "error": storable(facts.get("error") or api_error)[:_ERROR_CAP],
         "awaiting_review": bool(awaiting_review),
         "contract_type": facts.get("contract_type", ""),
         "contract_type_defaulted": bool(facts.get("contract_type_defaulted", False)),

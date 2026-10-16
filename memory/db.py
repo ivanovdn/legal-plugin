@@ -1,6 +1,7 @@
 # memory/db.py
 """Postgres connection pool for the relational stores (audit, review,
-conversation, conversation_summary, feedback, interaction_event, turn_log).
+conversation, conversation_summary, feedback, interaction_event, turn_log,
+document_version, document_snapshot).
 
 One app-wide psycopg pool built from config.database_url. Connections are
 autocommit — the stores issue single-statement writes/reads, so no explicit
@@ -199,6 +200,45 @@ _STATEMENTS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_turn_log_turn ON turn_log (turn_id)",
     "CREATE INDEX IF NOT EXISTS idx_turn_log_attorney ON turn_log (attorney_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_turn_log_doc ON turn_log (document_id, id)",
+    # SP4 (spec 2026-10-15): each distinct text of a document once, keyed by the
+    # SHA-256 turn_log already records (memory/fingerprint.py), so a turn finds
+    # its text; and each capture the pane made of the document as the attorney
+    # worked on it. Both hold contract text — scripts/delete_document_data.py
+    # removes them on request.
+    """
+    CREATE TABLE IF NOT EXISTS document_version (
+        document_id TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        text TEXT NOT NULL,
+        chars INTEGER NOT NULL,
+        truncated BOOLEAN NOT NULL DEFAULT FALSE,
+        first_seen TEXT NOT NULL,
+        attorney_id TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL,
+        PRIMARY KEY (document_id, sha256)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_document_version_attorney ON document_version (attorney_id)",
+    """
+    CREATE TABLE IF NOT EXISTS document_snapshot (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        attorney_id TEXT NOT NULL DEFAULT '',
+        session_id TEXT NOT NULL DEFAULT '',
+        document_id TEXT NOT NULL,
+        moment TEXT NOT NULL,
+        current_sha256 TEXT NOT NULL,
+        original_sha256 TEXT NOT NULL,
+        tracked_changes JSONB NOT NULL DEFAULT '[]',
+        tracked_total INTEGER NOT NULL DEFAULT 0,
+        office_platform TEXT NOT NULL DEFAULT '',
+        office_version TEXT NOT NULL DEFAULT '',
+        pane_build TEXT NOT NULL DEFAULT '',
+        backend_build TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_document_snapshot_doc ON document_snapshot (document_id, timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_document_snapshot_session ON document_snapshot (session_id)",
 ]
 
 
@@ -230,8 +270,9 @@ def get_pool() -> ConnectionPool:
 
 
 def init_db() -> None:
-    """Create all seven store tables + indexes if absent (audit_log, review_store,
-    conversation_store, conversation_summary, feedback, interaction_event, turn_log).
+    """Create all nine store tables + indexes if absent (audit_log, review_store,
+    conversation_store, conversation_summary, feedback, interaction_event, turn_log,
+    document_version, document_snapshot).
     Idempotent."""
     with get_pool().connection() as conn:
         for stmt in _STATEMENTS:

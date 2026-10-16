@@ -232,3 +232,11 @@ def test_a_failed_write_logs_the_whole_row_and_never_raises(monkeypatch, caplog)
     with caplog.at_level(logging.ERROR, logger="memory.turn_log"):
         write_turn_quietly(_row(turn_id="t-lost"))      # must not raise
     assert "TURN LOG WRITE FAILED" in caplog.text and "t-lost" in caplog.text
+
+
+def test_a_nul_in_the_question_does_not_lose_the_row():
+    """Postgres TEXT refuses NUL; memory/fingerprint.py's storable() drops it.
+    Mutation: storable() without the NUL replacement."""
+    row = _row(turn_id="t-nul", request="is \x00 fine?")
+    assert row["request"] == "is  fine?"
+    write_turn(row)                                     # must not raise
