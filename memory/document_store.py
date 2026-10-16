@@ -204,3 +204,52 @@ def captures_for_sessions(session_ids: list[str]) -> list[dict]:
             (list(session_ids),)).fetchall()
     keys = ("timestamp", "session_id", "document_id", "moment", "current_sha256", "tracked_total")
     return [dict(zip(keys, r)) for r in rows]
+
+
+def _scope(document_id: str, attorney_id: str) -> tuple[str, str]:
+    """The one column to delete by — never built from input, only these two."""
+    if bool(document_id) == bool(attorney_id):
+        raise ValueError("give exactly one of document_id / attorney_id")
+    return ("document_id", document_id) if document_id else ("attorney_id", attorney_id)
+
+
+def delete_document_data(*, document_id: str = "", attorney_id: str = "",
+                         dry_run: bool = True) -> dict[str, int]:
+    """SP4's copies for one document or one attorney: counted, and deleted
+    unless dry_run. `applied` is set to NULL rather than the event deleted —
+    the Apply still happened; only its text goes. A version belongs to whoever
+    first sent it."""
+    column, value = _scope(document_id, attorney_id)
+    counts_sql = {
+        "document_version": f"SELECT count(*) FROM document_version WHERE {column} = %s",
+        "document_snapshot": f"SELECT count(*) FROM document_snapshot WHERE {column} = %s",
+        "interaction_event.applied":
+            f"SELECT count(*) FROM interaction_event WHERE {column} = %s AND applied IS NOT NULL",
+    }
+    with get_pool().connection() as conn:
+        counts = {name: conn.execute(sql, (value,)).fetchone()[0]
+                  for name, sql in counts_sql.items()}
+        if not dry_run:
+            with conn.transaction():
+                conn.execute(f"DELETE FROM document_version WHERE {column} = %s", (value,))
+                conn.execute(f"DELETE FROM document_snapshot WHERE {column} = %s", (value,))
+                conn.execute(f"UPDATE interaction_event SET applied = NULL "
+                             f"WHERE {column} = %s AND applied IS NOT NULL", (value,))
+    return counts
+
+
+def untouched_counts(*, document_id: str = "", attorney_id: str = "") -> dict[str, int | None]:
+    """What delete_document_data leaves for the same scope — it is not a full
+    erasure. None: that table cannot be scoped this way (reviews are keyed by
+    document only)."""
+    column, value = _scope(document_id, attorney_id)
+    out: dict[str, int | None] = {}
+    with get_pool().connection() as conn:
+        for table in ("review_store", "conversation_store", "conversation_summary",
+                      "feedback", "turn_log"):
+            if table == "review_store" and column == "attorney_id":
+                out[table] = None
+                continue
+            out[table] = conn.execute(
+                f"SELECT count(*) FROM {table} WHERE {column} = %s", (value,)).fetchone()[0]
+    return out
