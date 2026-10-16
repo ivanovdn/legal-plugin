@@ -1,5 +1,14 @@
 // Feedback client contracts. Run with: npx tsx src/feedback.test.ts
-import { buildSnapshot, onFlagRequested, recordEvent, requestFlag, sendFeedback } from "./feedback";
+import {
+  APPLIED_TEXT_CAP,
+  appliedFromProposal,
+  buildSnapshot,
+  capApplied,
+  onFlagRequested,
+  recordEvent,
+  requestFlag,
+  sendFeedback,
+} from "./feedback";
 import { pass } from "./testAssert";
 
 // Minimal ambient type for the one Node API this file needs (detecting an
@@ -93,3 +102,50 @@ onFlagRequested(null);
 received = null;
 requestFlag(TARGET);
 pass(received === null, "requestFlag is a no-op with no handler registered");
+
+// --- SP4: the applied text -----------------------------------------------
+let lastEvent: Record<string, unknown> = {};
+(globalThis as { fetch?: unknown }).fetch = (_url: string, init: { body: string }) => {
+  lastEvent = JSON.parse(init.body).events[0];
+  return Promise.resolve({ ok: true });
+};
+recordEvent(TURN, "chat", "edit_applied", {
+  targetKind: "replace",
+  targetRef: "the Seller",
+  applied: { action: "replace", target_text: "the Seller", new_text: "Acme Ltd" },
+});
+pass(
+  JSON.stringify(lastEvent.applied) ===
+    JSON.stringify({ action: "replace", target_text: "the Seller", new_text: "Acme Ltd" }),
+  "recordEvent sends the applied text with the event",
+);
+
+recordEvent(TURN, "chat", "edit_discarded");
+pass(!("applied" in lastEvent), "an event with no applied text sends none");
+
+const huge = "x".repeat(APPLIED_TEXT_CAP + 10);
+const capped = capApplied({ action: "insert", target_text: huge, new_text: huge, proposed_text: huge, position: "after" });
+pass(
+  capped.target_text.length === APPLIED_TEXT_CAP && capped.new_text.length === APPLIED_TEXT_CAP &&
+    capped.proposed_text?.length === APPLIED_TEXT_CAP && capped.position === "after",
+  "each applied field is capped at 20,000 characters",
+);
+
+const proposal = { action: "replace" as const, target_text: "1x fees", new_text: "2x fees" };
+pass(
+  JSON.stringify(appliedFromProposal(proposal, "3x fees")) ===
+    JSON.stringify({ action: "replace", target_text: "1x fees", new_text: "3x fees", proposed_text: "2x fees" }),
+  "an Apply records the text the attorney applied, and the model's when they differ",
+);
+pass(appliedFromProposal(proposal, "2x fees").proposed_text === undefined,
+  "an Apply of the model's text as proposed records no separate proposal");
+pass(
+  JSON.stringify(appliedFromProposal({ action: "insert", anchor_text: "4. Term", new_text: "4.1 Renewal." }, "4.1 Renewal.")) ===
+    JSON.stringify({ action: "insert", target_text: "4. Term", new_text: "4.1 Renewal.", position: "after" }),
+  "an insert records its anchor as the target, and where it went",
+);
+pass(
+  JSON.stringify(appliedFromProposal({ action: "delete", target_text: "Non-solicit." }, "")) ===
+    JSON.stringify({ action: "delete", target_text: "Non-solicit.", new_text: "" }),
+  "a delete records what it took out",
+);

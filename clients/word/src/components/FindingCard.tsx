@@ -68,7 +68,10 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
     const res = await acceptRedline(anchors, finding.redline);
     if (res.ok) {
       setRedline({ kind: "done", message: "Applied ✓ — see Track Changes" });
-      recordEvent(turn, "findings", "redline_applied", { targetRef: finding.issueId || finding.clause });
+      recordEvent(turn, "findings", "redline_applied", {
+        targetRef: finding.issueId || finding.clause,
+        applied: { action: "redline", target_text: anchors.join("\n"), new_text: finding.redline },
+      });
     } else {
       // A failed redline apply is always a genuine error (acceptRedline never
       // returns notFound) — the calm pill is only for navigation (jump/comment).

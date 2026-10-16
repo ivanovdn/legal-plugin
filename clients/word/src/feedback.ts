@@ -5,6 +5,7 @@
 // or break an Apply. sendFeedback is the opposite: it throws, because the
 // attorney is watching for confirmation that their report sent.
 import { requestHeaders } from "./requestHeaders";
+import type { EditProposal } from "./parseEditBlocks";
 
 export interface TurnRef {
   turnId: string;
@@ -64,11 +65,49 @@ export async function sendFeedback(target: FlagTarget, comment: string): Promise
   }
 }
 
+/** What an Apply actually put into the document (SP4): full text, each field
+ *  capped at APPLIED_TEXT_CAP. proposed_text only when the attorney edited the
+ *  model's wording in the card first. */
+export interface AppliedEdit {
+  action: string;
+  target_text: string;
+  new_text: string;
+  proposed_text?: string;
+  position?: string;
+}
+
+export const APPLIED_TEXT_CAP = 20_000;
+
+export function capApplied(a: AppliedEdit): AppliedEdit {
+  const out: AppliedEdit = {
+    action: a.action,
+    target_text: a.target_text.slice(0, APPLIED_TEXT_CAP),
+    new_text: a.new_text.slice(0, APPLIED_TEXT_CAP),
+  };
+  if (a.proposed_text !== undefined) out.proposed_text = a.proposed_text.slice(0, APPLIED_TEXT_CAP);
+  if (a.position !== undefined) out.position = a.position;
+  return out;
+}
+
+/** The Apply payload for a chat edit card. `appliedText` is what went in — the
+ *  draft box, which the attorney may have reworded. */
+export function appliedFromProposal(p: EditProposal, appliedText: string): AppliedEdit {
+  if (p.action === "delete") return { action: "delete", target_text: p.target_text ?? "", new_text: "" };
+  const out: AppliedEdit = {
+    action: p.action,
+    target_text: (p.action === "insert" ? p.anchor_text : p.target_text) ?? "",
+    new_text: appliedText,
+  };
+  if ((p.new_text ?? "") !== appliedText) out.proposed_text = p.new_text ?? "";
+  if (p.action === "insert") out.position = p.position ?? "after";
+  return out;
+}
+
 export function recordEvent(
   turn: TurnRef,
   surface: string,
   action: string,
-  extra: { targetKind?: string; targetRef?: string; detail?: string; request?: string } = {},
+  extra: { targetKind?: string; targetRef?: string; detail?: string; request?: string; applied?: AppliedEdit } = {},
 ): void {
   try {
     void fetch("/api/events", {
@@ -86,6 +125,7 @@ export function recordEvent(
             target_ref: (extra.targetRef ?? "").slice(0, 200),
             detail: (extra.detail ?? "").slice(0, 500),
             request: (extra.request ?? "").slice(0, 500),
+            ...(extra.applied ? { applied: capApplied(extra.applied) } : {}),
           },
         ],
       }),

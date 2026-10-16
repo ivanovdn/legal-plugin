@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { EditProposal } from "../parseEditBlocks";
 import { applyEdit, goToClause } from "../word";
-import { buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
+import { appliedFromProposal, buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
 
 type Status =
   | { kind: "idle" }
@@ -58,7 +58,11 @@ export default function EditProposalCard({ proposal, turn }: { proposal: EditPro
     const ref = proposal.target_text ?? proposal.anchor_text ?? "";
     if (res.ok) {
       setStatus({ kind: "applied" });
-      recordEvent(turn, "chat", "edit_applied", { targetKind: proposal.action, targetRef: ref });
+      recordEvent(turn, "chat", "edit_applied", {
+        targetKind: proposal.action,
+        targetRef: ref,
+        applied: appliedFromProposal(proposal, draftText),
+      });
     } else {
       setStatus({ kind: "error", message: res.error });
       // The error string is the point: this is the only field measurement of
