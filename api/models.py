@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -109,3 +111,28 @@ class ApiResponse(BaseModel):
     status: str = "ok"
     data: dict | list | None = None
     errors: list[str] | None = None
+
+
+class TrackedChangeItem(BaseModel):
+    """One tracked change as Word reports it (Word.TrackedChange)."""
+    type: str = ""
+    author: str = ""
+    date: str = ""
+    text: str = ""
+    cut: bool = False
+
+
+class DocumentSnapshot(BaseModel):
+    """The pane's copy of the document at one moment (SP4, spec 2026-10-15).
+
+    attorney_id is deliberately absent — identity comes from the auth seam, the
+    same rule as FeedbackSubmission."""
+    session_id: str = ""
+    document_id: str = Field(..., min_length=1,
+                             description="The assistant's document id; the pane never captures without one")
+    moment: Literal["pane_open", "idle", "finalize"]
+    current_text: str = Field("", description="getReviewedText(current): every tracked change accepted")
+    original_text: str = Field("", description="getReviewedText(original): every tracked change rejected")
+    tracked_changes: list[TrackedChangeItem] = Field(default_factory=list)
+    tracked_total: int = Field(0, ge=-1, description="How many tracked changes Word reported "
+                               "before any cap; -1 = they could not be read")

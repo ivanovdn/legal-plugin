@@ -98,3 +98,91 @@ def test_a_failed_write_logs_what_identifies_the_text_and_never_the_text(monkeyp
         ds.save_version_quietly("doc-1", secret, attorney_id="atty-1", source="turn")
     assert "doc-1" in caplog.text and fingerprint(secret)[1] in caplog.text
     assert "RuntimeError" in caplog.text and "indemnify" not in caplog.text
+
+
+def _snapshots() -> list[dict]:
+    with get_pool().connection() as conn:
+        cur = conn.execute("SELECT * FROM document_snapshot ORDER BY id")
+        names = [column.name for column in cur.description]
+        return [dict(zip(names, values)) for values in cur.fetchall()]
+
+
+def _snap(**over):
+    kw = dict(attorney_id="atty-1", session_id="s-1", document_id="doc-1", moment="idle",
+              current_text="NDA with Acme Ltd", original_text="NDA with [__]",
+              tracked_changes=[{"type": "Added", "author": "Jane Smith",
+                                "date": "2026-10-16T09:00:00.000Z", "text": "Acme Ltd"}],
+              tracked_total=1, client={"office_platform": "Mac"}, backend_build="b1")
+    kw.update(over)
+    ds.save_snapshot(**kw)
+
+
+def test_a_snapshot_stores_both_views_and_points_at_them():
+    _snap()
+    (s,) = _snapshots()
+    assert s["current_sha256"] == fingerprint("NDA with Acme Ltd")[1]
+    assert s["original_sha256"] == fingerprint("NDA with [__]")[1]
+    assert {v["text"] for v in _versions()} == {"NDA with Acme Ltd", "NDA with [__]"}
+    assert (s["office_platform"], s["backend_build"]) == ("Mac", "b1")
+
+
+def test_tracked_changes_are_capped_and_marked_cut():
+    """Mutation: trust the pane's caps."""
+    long = {"type": "Added", "author": "A", "date": "", "text": "x" * (ds.TRACKED_TEXT_CAP + 1)}
+    _snap(tracked_changes=[long] + [{"type": "Deleted", "author": "B", "date": "", "text": "y"}]
+          * ds.TRACKED_CAP, tracked_total=ds.TRACKED_CAP + 1)
+    (s,) = _snapshots()
+    assert len(s["tracked_changes"]) == ds.TRACKED_CAP and s["tracked_total"] == ds.TRACKED_CAP + 1
+    assert len(s["tracked_changes"][0]["text"]) == ds.TRACKED_TEXT_CAP
+    assert s["tracked_changes"][0]["cut"] is True and s["tracked_changes"][1]["cut"] is False
+
+
+def test_a_total_below_what_arrived_is_raised_and_unreadable_stays_minus_one():
+    _snap(tracked_total=0)
+    _snap(tracked_changes=[], tracked_total=-1)
+    first, second = _snapshots()
+    assert first["tracked_total"] == 1
+    assert second["tracked_total"] == -1 and second["tracked_changes"] == []
+
+
+def test_a_lone_surrogate_or_a_nul_in_a_tracked_change_does_not_lose_the_capture():
+    """Review Focus 1: JSONB refuses both. Mutation: store the items without storable()."""
+    _snap(tracked_changes=[{"type": "Added", "author": "J\ud83d", "date": "", "text": "a\x00b"}])
+    (s,) = _snapshots()
+    assert (s["tracked_changes"][0]["author"], s["tracked_changes"][0]["text"]) == ("J?", "ab")
+
+
+def test_an_unreadable_capture_keeps_no_list_even_when_one_arrives():
+    """The test above sends an empty list with -1, so it cannot tell "keeps no
+    list" from "had none". Mutation: store the list whatever the total."""
+    _snap(tracked_changes=[{"type": "Added", "author": "A", "date": "", "text": "x"}],
+          tracked_total=-1)
+    (s,) = _snapshots()
+    assert s["tracked_total"] == -1 and s["tracked_changes"] == []
+
+
+def test_every_text_field_of_a_tracked_change_is_cleaned_and_bounded():
+    """Author and text are pinned above; type and date are client-controlled too.
+    Mutation: drop storable() or the bound from any one of the three fields."""
+    _snap(tracked_changes=[{"type": "T\x00" + "t" * 500, "author": "a" * 500,
+                            "date": "2026\ud83d" + "d" * 500, "text": "x"}])
+    (change,) = _snapshots()[0]["tracked_changes"]
+    assert [len(change[k]) for k in ("type", "author", "date")] == [ds._TRACKED_FIELD_CAP] * 3
+    assert change["type"].startswith("Tt") and change["date"].startswith("2026?d")
+
+
+def test_a_change_the_pane_already_cut_stays_marked_cut():
+    """The pane caps a text at the same 2,000 and says so; what arrives is no
+    longer than the cap, so only its flag tells a reader the text is partial.
+    Mutation: decide `cut` from the length alone."""
+    _snap(tracked_changes=[{"type": "Added", "author": "A", "date": "",
+                            "text": "x" * ds.TRACKED_TEXT_CAP, "cut": True}])
+    (s,) = _snapshots()
+    assert s["tracked_changes"][0]["cut"] is True
+
+
+def test_each_stored_view_names_the_attorney_who_sent_it_and_that_it_came_from_the_pane():
+    """The erase-by-attorney command finds a capture's texts by this column
+    (spec D9). Mutation: store the views without the attorney, or as a turn's."""
+    _snap()
+    assert {(v["source"], v["attorney_id"]) for v in _versions()} == {("pane", "atty-1")}
