@@ -54,6 +54,11 @@ def _verdict(applied: dict, final: str) -> str:
     if action in ("replace", "replace_all") and not new:
         # A replacement with nothing: kept while the old wording stays gone.
         return REVERTED if target and target in final else KEPT
+    if action == "replace" and new and target and new in target:
+        # The new text is part of the old: the old wording back means it was rejected.
+        if target in final:
+            return REVERTED
+        return KEPT if new in final else ALTERED
     if new and new in final:
         return KEPT
     if action in ("replace", "replace_all") and target and target in final:
@@ -73,9 +78,9 @@ def edit_verdict(applied: dict, final_text: str) -> str:
 
 def closest_paragraph_finder(text: str) -> Callable[[str], str]:
     """A function giving the paragraph of `text` sharing the most words with a
-    needle (Jaccard over word sets) — printed beside an `altered` edit; it
-    decides nothing. The word sets are built once per text, so a 2,000-paragraph
-    contract with a hundred altered edits stays fast."""
+    needle (Jaccard over word sets), or "" when none shares a word — printed
+    beside an `altered` edit; it decides nothing. The word sets are built once per
+    text, so a 2,000-paragraph contract with a hundred altered edits stays fast."""
     paras = paragraphs(text)
     words = [set(p.lower().split()) for p in paras]
 
@@ -88,27 +93,25 @@ def closest_paragraph_finder(text: str) -> Callable[[str], str]:
             union = len(mine | words[i])
             return len(mine & words[i]) / union if union else 0.0
 
-        return paras[max(range(len(paras)), key=overlap)]
+        best = max(range(len(paras)), key=overlap)
+        return paras[best] if overlap(best) > 0 else ""
 
     return closest
 
 
 def changed_paragraphs(first: str, last: str, applied: list[dict]) -> list[dict]:
     """Paragraphs only in the first text (-) or only in the last (+). A `+` is the
-    assistant's when it holds an applied text; a `-` when it holds what an
-    applied replacement, deletion or redline took out (an insert's target is
-    only its anchor). Everything else is `not suggested`. Old and new are never
-    paired into one line: a clause typed where an applied deletion was would
-    inherit the deletion's label."""
+    assistant's when it contains a paragraph of an applied new_text; a `-` when it
+    contains a paragraph of what an applied replacement, deletion or redline took
+    out (an insert's target is only its anchor). One paragraph of an applied text
+    is enough: each applied text is split into paragraphs the way the document is.
+    Everything else is `not suggested`. Old and new are never paired into one line:
+    a clause typed where an applied deletion was would inherit the deletion's
+    label."""
     old, new = paragraphs(first), paragraphs(last)
-    put_in = [t for t in (normalize(a.get("new_text", "")) for a in applied) if t]
-    taken_out: list[str] = []
-    for a in applied:
-        if a.get("action") == "insert":
-            continue
-        target = a.get("target_text", "")
-        lines = target.split("\n") if a.get("action") == "redline" else [target]
-        taken_out += [t for t in (normalize(line) for line in lines) if t]
+    put_in = [line for a in applied for line in paragraphs(a.get("new_text", ""))]
+    taken_out = [line for a in applied if a.get("action") != "insert"
+                 for line in paragraphs(a.get("target_text", ""))]
 
     out: list[dict] = []
     matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
@@ -229,9 +232,9 @@ def format_document_changes(d: dict, *, full: bool = False) -> list[str]:
     lines.append(f"  applied edits {len(d['edits'])}: "
                  + " · ".join(f"{tally.get(v, 0)} {v}" for v in VERDICTS))
     for e in d["edits"]:
-        what = f"\"{_head(e['target_text'], 40, full)}\""
+        what = f"\"{_head(normalize(e['target_text']), 40, full)}\""
         if e["action"] != "delete":
-            what += f" → \"{_tail(e['new_text'], 40, full)}\""
+            what += f" → \"{_tail(normalize(e['new_text']), 40, full)}\""
         edited = "   (edited before applying)" if e["edited"] else ""
         turn = f"   turn {e['turn_id'][:8]}" if e["turn_id"] else ""
         lines.append(f"    {e['verdict']:<17}{e['action']:<12}{what}{edited}{turn}")

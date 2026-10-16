@@ -44,6 +44,22 @@ def test_each_verdict(applied, final, verdict):
     assert edit_verdict(applied, final) == verdict
 
 
+_CONSENT = {"action": "replace", "target_text": "consent, not to be unreasonably withheld",
+            "new_text": "consent"}
+
+
+@pytest.mark.parametrize("final, verdict", [
+    ("Assignment needs the consent, not to be unreasonably withheld.", REVERTED),
+    ("Assignment needs the consent.", KEPT),
+    ("Assignment needs the approval.", ALTERED),
+], ids=["target-back", "new-only", "neither"])
+def test_a_replacement_whose_new_text_sits_inside_its_target(final, verdict):
+    """The new text is part of the old, so the old wording being back is the only
+    sign the edit was rejected. Mutation: drop the new-inside-target branch (the
+    rejected edit then reads kept)."""
+    assert edit_verdict(_CONSENT, final) == verdict
+
+
 def test_a_curled_quote_or_a_rewrapped_line_is_not_an_alteration():
     """Word curls straight quotes as you type. Mutation: compare without normalize()."""
     applied = {"action": "replace", "target_text": "Buyer", "new_text": 'the "Client" shall\npay'}
@@ -76,6 +92,32 @@ def test_changed_paragraphs_are_labelled_side_by_side():
         {"mark": "+", "text": "1. Parties: Acme Ltd", "label": "assistant"},
         {"mark": "+", "text": "2. Term: 2 years", "label": "not suggested"},
         {"mark": "+", "text": "4. Audit rights on request", "label": "not suggested"},
+    ]
+
+
+def test_each_line_of_a_multi_line_insert_is_labelled_as_the_assistants():
+    """A two-line new_text is one paragraph per line in the document, so each `+`
+    holds an applied paragraph. Mutation: hold the whole applied text as one string."""
+    first = "3. Fees\r4. Term"
+    last = "3. Fees\r4. Term\r4.1 Renewal is automatic.\r4.2 Notice is 30 days."
+    insert = {"action": "insert", "target_text": "4. Term",
+              "new_text": "4.1 Renewal is automatic.\n4.2 Notice is 30 days."}
+    assert changed_paragraphs(first, last, [insert]) == [
+        {"mark": "+", "text": "4.1 Renewal is automatic.", "label": "assistant"},
+        {"mark": "+", "text": "4.2 Notice is 30 days.", "label": "assistant"},
+    ]
+
+
+def test_each_paragraph_of_a_multi_line_deletion_is_labelled_as_the_assistants():
+    """A two-paragraph clause removed by one edit: each `-` holds an applied
+    paragraph. Mutation: hold the whole applied target as one string."""
+    first = "2. Term\r3. Non-solicit: 24 months\r4. Exclusivity: 12 months\r5. Fees"
+    last = "2. Term\r5. Fees"
+    delete = {"action": "delete",
+              "target_text": "3. Non-solicit: 24 months\n4. Exclusivity: 12 months"}
+    assert changed_paragraphs(first, last, [delete]) == [
+        {"mark": "-", "text": "3. Non-solicit: 24 months", "label": "assistant"},
+        {"mark": "-", "text": "4. Exclusivity: 12 months", "label": "assistant"},
     ]
 
 
@@ -141,6 +183,21 @@ def test_an_altered_edit_shows_the_closest_paragraph_now():
         "Liability cap: the fees paid in the 6 months preceding the claim."
 
 
+def test_an_altered_edit_with_no_shared_word_has_no_closest_paragraph():
+    """A paragraph sharing no word with the edit is not "the closest": the closest
+    is "". Mutation: drop the zero-overlap check (max then returns the first paragraph)."""
+    versions = {
+        A: {"text": "Fees: 10 days.", "truncated": False},
+        B: {"text": "NON-DISCLOSURE AGREEMENT\rGoverning law: England.", "truncated": False},
+    }
+    edit = {"action": "replace", "target_text": "the Seller", "new_text": "Acme Ltd"}
+    d = build_document_changes("doc-1", [_obs("2026-10-16T09:00:00+00:00", A, kind="turn"),
+                                         _obs("2026-10-16T09:05:00+00:00", B)],
+                               versions, [_applied(edit, turn_id="")])
+    assert d["edits"][0]["verdict"] == ALTERED
+    assert d["edits"][0]["closest"] == ""
+
+
 def test_the_block_reads_as_the_spec_shows_it():
     tracked = [{"type": "Added", "author": "Jane Smith", "text": "30"},
                {"type": "Deleted", "author": "Jane Smith", "text": "10"},
@@ -183,6 +240,21 @@ def test_excerpts_are_cut_unless_full():
     assert "x" * 39 + "…" in short and "x" * 100 not in short and "x" * 100 in full
 
 
+def test_a_line_break_in_an_applied_text_does_not_break_its_row():
+    """A line break inside an applied text would split its row on a terminal.
+    Mutation: format the raw target_text and new_text."""
+    redline = {"action": "redline", "target_text": "Cap: 1x fees\nExcluding fraud",
+               "new_text": "Cap: 2x fees\r\nExcluding fraud"}
+    d = build_document_changes("doc-1", [_obs("2026-10-16T09:00:00+00:00", A, kind="turn"),
+                                         _obs("2026-10-16T09:05:00+00:00", B)],
+                               _VERSIONS, [_applied(redline, turn_id="")])
+    for full in (False, True):
+        lines = format_document_changes(d, full=full)
+        assert not any("\n" in line or "\r" in line for line in lines)
+        assert any('"Cap: 1x fees Excluding fraud"' in line for line in lines)
+        assert any('"Cap: 2x fees Excluding fraud"' in line for line in lines)
+
+
 def test_a_long_negotiated_contract_reads_back_in_seconds():
     """Review Focus 5: 2,000 paragraphs, 100 applied edits, 60 reworded after.
     Mutation: rank every paragraph with difflib's ratio for the closest one."""
@@ -201,6 +273,6 @@ def test_a_long_negotiated_contract_reads_back_in_seconds():
     d = build_document_changes("doc-1", [_obs("2026-10-16T09:00:00+00:00", A, kind="turn"),
                                          _obs("2026-10-16T09:05:00+00:00", B)], versions, edits)
     lines = format_document_changes(d)
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < 1
     assert sum(e["verdict"] == ALTERED for e in d["edits"]) == 60
     assert "    … 180 more — --full lists them all" in lines
