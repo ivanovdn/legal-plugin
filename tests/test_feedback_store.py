@@ -3,6 +3,7 @@
 A lost feedback row is a lie to the attorney, who was told it sent. A lost
 interaction event is a rounding error in a rate. They must fail differently.
 """
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -338,6 +339,14 @@ def _applied_column() -> list:
             "SELECT applied FROM interaction_event ORDER BY id").fetchall()]
 
 
+def _applied_sql_non_null() -> int:
+    """Rows whose `applied` is an SQL value rather than NULL. psycopg reads a JSONB
+    'null' back as Python None, so _applied_column() cannot tell the two apart."""
+    with get_pool().connection() as conn:
+        return conn.execute(
+            "SELECT count(*) FROM interaction_event WHERE applied IS NOT NULL").fetchone()[0]
+
+
 def test_an_apply_keeps_the_full_text_it_put_in():
     """SP4 D7. Mutation: drop `applied` from _insert_event's INSERT."""
     applied = {"action": "replace", "target_text": "the Seller", "new_text": "Acme Ltd " * 40,
@@ -359,6 +368,7 @@ def test_the_applied_text_is_capped_and_unknown_keys_are_dropped():
 def test_an_event_without_applied_text_stores_null():
     fs.record_events([{"action": "edit_discarded"}], attorney_id="atty-1")
     assert _applied_column() == [None]
+    assert _applied_sql_non_null() == 0
 
 
 def test_an_applied_payload_with_no_known_keys_stores_null():
@@ -368,3 +378,38 @@ def test_an_applied_payload_with_no_known_keys_stores_null():
     fs.record_events([{"action": "edit_applied", "applied": {"foo": "x", "new_text": None}}],
                      attorney_id="atty-1")
     assert _applied_column() == [None]
+    assert _applied_sql_non_null() == 0
+
+
+def test_a_lone_surrogate_or_a_nul_in_applied_text_does_not_lose_the_event():
+    """Word's broken UTF-16 reaches here as NULs and lone surrogates. JSONB refuses
+    both, so an uncleaned payload fails its write and the Apply leaves no record.
+    Mutation: bypass `storable` in cap_applied."""
+    applied = {"action": "replace", "target_text": "Seller\x00 \ud800", "new_text": "Acme\udc00"}
+    assert fs.record_events([{"action": "edit_applied", "applied": applied}],
+                            attorney_id="atty-1") == 1
+    (stored,) = _applied_column()
+    for text in stored.values():
+        assert "\x00" not in text
+        text.encode("utf-8")  # raises on a lone surrogate
+    assert stored == {"action": "replace", "target_text": "Seller ?", "new_text": "Acme?"}
+
+
+def test_a_failed_event_write_logs_its_type_and_never_the_text(monkeypatch, caplog):
+    """Postgres quotes offending input in its messages, and `applied` is contract
+    text, so the failure log names the exception's type and never its message.
+    Mutation: log `e` instead of type(e).__name__."""
+    secret = "The Seller shall indemnify the Buyer"
+
+    def boom():
+        raise RuntimeError(f"invalid input syntax: {secret}")
+
+    monkeypatch.setattr(fs, "get_pool", boom)
+    with caplog.at_level(logging.WARNING, logger="memory.feedback_store"):
+        fs.record_event(turn_id="t", session_id="s", document_id="d", attorney_id="a",
+                        surface="chat", action="edit_applied",
+                        applied={"action": "replace", "new_text": secret})
+        assert fs.record_events([{"action": "edit_applied", "applied": {"new_text": secret}}],
+                                attorney_id="a") == 0
+    assert "indemnify" not in caplog.text
+    assert "RuntimeError" in caplog.text and "edit_applied" in caplog.text

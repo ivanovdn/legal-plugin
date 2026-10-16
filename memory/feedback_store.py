@@ -177,7 +177,10 @@ def record_event(
             applied=applied,
         )
     except Exception as e:
-        logger.warning("interaction_event write failed (%s): %s", action, e)
+        logger.warning(
+            "interaction_event write failed (%s) — action %s; text not logged",
+            type(e).__name__, action,
+        )
 
 
 def record_events(
@@ -207,7 +210,10 @@ def record_events(
             )
             written += 1
         except Exception as e:
-            logger.warning("interaction_event batch row failed: %s", e)
+            logger.warning(
+                "interaction_event batch row failed (%s) — action %s; text not logged",
+                type(e).__name__, event.get("action", ""),
+            )
     return written
 
 
