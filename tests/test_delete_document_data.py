@@ -63,7 +63,7 @@ def test_a_dry_run_counts_and_deletes_nothing():
 
 
 def test_deleting_one_document_keeps_its_events_and_every_other_document():
-    """The Apply still happened — only its text goes.
+    """The Apply still happened — its applied text goes; the event row and its short excerpts stay.
     Mutations: ignore the filter; delete the event instead of clearing `applied`."""
     _seed()
     ds.delete_document_data(document_id="doc-1", dry_run=False)
