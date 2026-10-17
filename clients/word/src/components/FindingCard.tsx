@@ -2,7 +2,7 @@ import { useState } from "react";
 import RiskBadge from "./RiskBadge";
 import type { Finding } from "../parser";
 import { acceptRedline, goToClause, showInDocument } from "../word";
-import { buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
+import { appliedFromRedline, buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
 
 type ActionState =
   | { kind: "idle" }
@@ -71,7 +71,7 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
       recordEvent(turn, "findings", "redline_applied", {
         targetRef: finding.issueId || finding.clause,
         // anchors[0] is what acceptRedline checked its match against; the rest are only search fallbacks.
-        applied: { action: "redline", target_text: anchors[0], new_text: finding.redline },
+        applied: appliedFromRedline(anchors, finding.redline),
       });
     } else {
       // A failed redline apply is always a genuine error (acceptRedline never

@@ -2,6 +2,7 @@
 import {
   APPLIED_TEXT_CAP,
   appliedFromProposal,
+  appliedFromRedline,
   buildSnapshot,
   capApplied,
   onFlagRequested,
@@ -155,4 +156,9 @@ pass(
   JSON.stringify(appliedFromProposal({ action: "delete", target_text: "Non-solicit." }, "")) ===
     JSON.stringify({ action: "delete", target_text: "Non-solicit.", new_text: "" }),
   "a delete records what it took out",
+);
+pass(
+  JSON.stringify(appliedFromRedline(["the exact clause", "Term", "Issue prose about it"], "the new clause")) ===
+    JSON.stringify({ action: "redline", target_text: "the exact clause", new_text: "the new clause" }),
+  "a redline records only the clause it replaced, not every anchor it could be found by",
 );

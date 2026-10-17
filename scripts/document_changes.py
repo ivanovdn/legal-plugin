@@ -105,13 +105,22 @@ def changed_paragraphs(first: str, last: str, applied: list[dict]) -> list[dict]
     contains a paragraph of what an applied replacement, deletion or redline took
     out (an insert's target is only its anchor). One paragraph of an applied text
     is enough: each applied text is split into paragraphs the way the document is.
-    Everything else is `not suggested`. Old and new are never paired into one line:
-    a clause typed where an applied deletion was would inherit the deletion's
-    label."""
+    A paragraph an edit's target and new_text share is context it left alone (the
+    pane records the card's full strings, though Word applies only the changed
+    line), so it explains neither side. Everything else is `not suggested`. Old
+    and new are never paired into one line: a clause typed where an applied
+    deletion was would inherit the deletion's label."""
     old, new = paragraphs(first), paragraphs(last)
-    put_in = [line for a in applied for line in paragraphs(a.get("new_text", ""))]
-    taken_out = [line for a in applied if a.get("action") != "insert"
-                 for line in paragraphs(a.get("target_text", ""))]
+    put_in: list[str] = []
+    taken_out: list[str] = []
+    for a in applied:
+        target, put = paragraphs(a.get("target_text", "")), paragraphs(a.get("new_text", ""))
+        if a.get("action") == "insert":   # its target is only an anchor, which it never changes
+            put_in += put
+            continue
+        context = set(target) & set(put)
+        put_in += [line for line in put if line not in context]
+        taken_out += [line for line in target if line not in context]
 
     out: list[dict] = []
     matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)

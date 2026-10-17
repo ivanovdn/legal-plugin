@@ -121,6 +121,50 @@ def test_each_paragraph_of_a_multi_line_deletion_is_labelled_as_the_assistants()
     ]
 
 
+def test_an_edits_unchanged_context_lines_explain_no_paragraph():
+    """The pane records the card's full strings, but Word applies only the one changed
+    line of a multi-line replace (simplifyMultilineReplace), so a line the target and
+    new_text share is context, not change. "4. Term" is a substring of the attorney's
+    own "14. Termination…" and must not claim it. Mutation: put every line of target_text
+    and new_text in the explained sets (both Termination rows then read `assistant`)."""
+    first = ("4. Term\r"
+             "This Agreement lasts 12 months.\r"
+             "14. Termination for convenience: either party may terminate on 30 days' notice.")
+    last = ("4. Term\r"
+            "This Agreement lasts 24 months.\r"
+            "14. Termination for convenience: either party may terminate on 60 days' written notice.")
+    edit = {"action": "replace",
+            "target_text": "4. Term\nThis Agreement lasts 12 months.",
+            "new_text": "4. Term\nThis Agreement lasts 24 months."}
+    assert changed_paragraphs(first, last, [edit]) == [
+        {"mark": "-", "text": "This Agreement lasts 12 months.", "label": "assistant"},
+        {"mark": "-", "label": "not suggested",
+         "text": "14. Termination for convenience: either party may terminate on 30 days' notice."},
+        {"mark": "+", "text": "This Agreement lasts 24 months.", "label": "assistant"},
+        {"mark": "+", "label": "not suggested",
+         "text": "14. Termination for convenience: either party may terminate on 60 days' written notice."},
+    ]
+
+
+def test_an_insert_never_takes_its_anchor_out_and_owns_every_line_it_puts_in():
+    """An insert's target is only its anchor, never text the insert changes. So the
+    anchor explains no `-` paragraph, and the shared-line rule is not applied to inserts:
+    a new_text line equal to the anchor is a real new paragraph. Mutations: put the
+    anchor in the taken-out lines (the hand-deleted "14. Termination…" row then reads
+    `assistant`); apply the shared-line rule to inserts (the repeated `+ 4. Term` then
+    reads `not suggested`)."""
+    first = "3. Fees\r4. Term\r14. Termination for convenience: 30 days' notice."
+    last = "3. Fees\r4. Term\r4. Term\r4.1 Renewal is automatic."
+    insert = {"action": "insert", "target_text": "4. Term",
+              "new_text": "4. Term\n4.1 Renewal is automatic."}
+    assert changed_paragraphs(first, last, [insert]) == [
+        {"mark": "-", "text": "14. Termination for convenience: 30 days' notice.",
+         "label": "not suggested"},
+        {"mark": "+", "text": "4. Term", "label": "assistant"},
+        {"mark": "+", "text": "4.1 Renewal is automatic.", "label": "assistant"},
+    ]
+
+
 def _obs(ts, sha, kind="idle", **over):
     o = {"timestamp": ts, "kind": kind, "sha256": sha, "attorney_id": "atty-1", "user_name": "",
          "tracked_changes": None if kind == "turn" else [], "tracked_total": 0}

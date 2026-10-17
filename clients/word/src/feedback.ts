@@ -103,6 +103,11 @@ export function appliedFromProposal(p: EditProposal, appliedText: string): Appli
   return out;
 }
 
+/** A Findings redline's Apply payload: anchors[0] only — acceptRedline checked its match against it; the rest are search fallbacks. */
+export function appliedFromRedline(anchors: string[], redline: string): AppliedEdit {
+  return { action: "redline", target_text: anchors[0] ?? "", new_text: redline };
+}
+
 export function recordEvent(
   turn: TurnRef,
   surface: string,
