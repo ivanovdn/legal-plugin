@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { finalizeDocument } from "../word";
 import { recordPaneEvent } from "../paneEvents";
+import { captureBeforeFinalize } from "../documentCapture";
 
 // Document-level "produce a clean copy" action. Accepting tracked changes is
 // destructive and not limited to the assistant's edits, so it's gated behind
@@ -19,6 +20,9 @@ export default function FinalizeBar() {
 
   const onFinalize = async () => {
     setStatus({ kind: "running" });
+    // SP4: the document as it stood before accepting — at most 3 s, and
+    // Finalize goes ahead whatever the capture does.
+    await captureBeforeFinalize();
     const res = await finalizeDocument();
     if (res.ok) {
       setStatus({ kind: "done", count: res.value });

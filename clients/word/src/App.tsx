@@ -9,6 +9,7 @@ import { buildSnapshot, onFlagRequested, requestFlag, EMPTY_TURN, type FlagTarge
 import { readBody } from "./word";
 import { isDocumentUnsaved, resolveDocumentId } from "./docIdentity";
 import { installErrorHandlers, recordPaneEvent, setPaneSession } from "./paneEvents";
+import { installDocumentCapture } from "./documentCapture";
 import type { ReviewSummary } from "./parser";
 import ContextMeter from "./components/ContextMeter";
 import { type ContextBreakdown } from "./contextGauge";
@@ -35,6 +36,14 @@ export default function App() {
       .then((u) => (u ? "unsaved" : "saved"))
       .catch(() => "")
       .then((saved) => recordPaneEvent("pane_opened", { detail: saved }));
+  }, [sessionId]);
+
+  // SP4: copies of the document as the attorney works — at open, after each
+  // pause in editing, and before Finalize (documentCapture.ts). Only documents
+  // the assistant has an id for; quiet, like the events above. Guarded inside,
+  // so a second mount (StrictMode, HMR) installs nothing twice.
+  useEffect(() => {
+    installDocumentCapture(sessionId);
   }, [sessionId]);
 
   const changeTab = (next: TabKey) => {
@@ -161,9 +170,11 @@ export default function App() {
         </button>
         <p className="disclosure">
           During testing, the assistant records your questions, its answers and the document
-          text sent with them, when this pane is opened, which tab you use, how long answers
-          take, errors it shows you, and what you do with its suggestions — so we can measure
-          what it gets wrong. Sending feedback includes the document.
+          text sent with them; while this pane is open on a document you have used it on, a
+          copy each time you pause editing, with its tracked changes and who made them; when
+          this pane is opened, which tab you use, how long answers take, errors it shows you,
+          and what you do with its suggestions — so we can measure what it gets wrong. Sending
+          feedback includes the document.
         </p>
       </header>
       {/* Deliberately NOT the amber .status.warning used for memory_degraded.
