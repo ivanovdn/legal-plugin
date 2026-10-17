@@ -315,16 +315,20 @@ Rehearsed 2026-10-09 on a scratch stack built from the same pane image, with a s
 
 ### Deleting document copies
 
-`document_version` and `document_snapshot` hold copies of contracts as attorneys edited them, and `interaction_event.applied` the text of each Apply (SP4). They are kept for the pilot; on request, for one document or one attorney:
+`document_version` and `document_snapshot` hold copies of contracts as attorneys edited them, and `interaction_event.applied` the text of each Apply (SP4). They are kept for the pilot; on request, for one document or one attorney.
+
+**First, ask the attorney to close the pane on that document and not to open it on that document again.** The file carries the assistant's document id, so opening the pane copies the document again (`pane_open`), an open pane copies it at every pause in editing, and any later question stores its text again — a deletion sticks only while the attorney does not open the pane on it again.
+
+**Find the ids** with `feedback_report` (*Read it back* in [feedback-loop.md](feedback-loop.md)). A document id opens each `--changes` block (`document <id>`; add `--attorney <id>` for one attorney's documents) and is the `doc:` line of each feedback row. An attorney id belongs to one Word install (the pane keeps it in `localStorage`), so one attorney can have several: find each by name in `--activity`, which prints `name (id)` for every attorney-day, and run `--attorney` once per id. A copy saved with Save As carries its original's document id, so `--document` deletes both files' copies.
 
 ```bash
 $DC run --rm --no-deps backend python -m scripts.delete_document_data --document <id>         # counts only
 $DC run --rm --no-deps backend python -m scripts.delete_document_data --document <id> --yes   # delete
 ```
 
-`--attorney <id>` does the same for everything one attorney sent. It is not a full erasure, and it prints what it leaves: reviews, conversations, feedback and the questions in `turn_log`; `interaction_event`'s short text excerpts (target excerpts, error messages, questions); `audit_log`'s request summaries; Phoenix traces; the nightly dumps (up to 14 days). Redis session checkpoints, which hold the document for up to a day after the last turn, expire on their own (the script does not list them).
+`--attorney <id>` does the same for everything one attorney sent. **Afterwards, re-run the same command without `--yes`:** the three counts it would delete must all be 0 — anything else was copied after the delete. It is not a full erasure, and it prints what it leaves: reviews, conversations, feedback and the questions in `turn_log`; `interaction_event`'s short text excerpts (target excerpts, error messages, questions); `audit_log`'s request summaries; Phoenix traces; the nightly dumps (up to 14 days); and the manual `app-db` dumps (`data/backups/app-db-<date>-<reason>.sql.gz`, *What else to back up* above), which never expire — they go by hand once the operation they protected is verified. Redis session checkpoints, which hold the document for up to a day after the last turn, expire on their own (the script does not list them).
 
-**Close the pane on that document first.** An open pane copies it again at the next pause in editing, and any later question stores its text again. For a deletion that sticks, the attorney stops using the assistant on that document.
+**To stop the copies for everyone instead,** set `DOCUMENT_CAPTURE_ENABLED=false` in `.env` and recreate the backend with Step 4's command. It stops the pane's captures and the turns' texts, but not the applied text on Apply events: that comes with the interaction events, which only `FEEDBACK_ENABLED=false` stops — together with every other event and written feedback.
 
 ---
 

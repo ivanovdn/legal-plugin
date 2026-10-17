@@ -207,7 +207,7 @@ Both new tables go on `tests/conftest.py`'s hardcoded TRUNCATE list.
 
 **Events.** `InteractionEvent` gains `applied: dict | None = None`; `_insert_event` writes it, re-capping each string at 20,000 chars.
 
-**Config.** `document_capture_enabled: bool = True` — off means no copies at all: the endpoint records nothing and the turns store no text. On `RECORDED` in `api/runtime_facts.py` (`test_every_setting_is_classified_exactly_once` enforces it). Caps are module constants.
+**Config.** `document_capture_enabled: bool = True` — off means no document copies: the endpoint records nothing and the turns store no text. It does not stop the applied text on Apply events: that comes with the events, which `feedback_enabled` governs. On `RECORDED` in `api/runtime_facts.py` (`test_every_setting_is_classified_exactly_once` enforces it). Caps are module constants.
 
 ### Reading it
 
@@ -234,10 +234,10 @@ document 4f1c…  A. Tester · 2026-10-16 09:12 → 2026-10-18 14:02
 |---|---|---|---|
 | `replace`, `replace_all` | `new_text` present | `new_text` absent, `target_text` present | neither |
 | `insert` | `new_text` present | — | absent |
-| `delete` | `target_text` absent | `target_text` present | — |
+| `delete` | `target_text` absent | `target_text` present | `target_text` not in the last stored text before the event |
 | `redline` | `new_text` present | `new_text` absent, every anchor line present | otherwise |
 
-No observation after the event → `no later capture`. `altered` prints the last text's paragraph sharing the most words with `new_text` (word-set overlap, display only — difflib's ratio against every paragraph of a 2,000-paragraph contract takes tens of seconds). `replace_all` is `kept` when at least one occurrence is present.
+No observation after the event → `no later capture`. `altered` prints the last text's paragraph sharing the most words with `new_text` (word-set overlap, display only — difflib's ratio against every paragraph of a 2,000-paragraph contract takes tens of seconds). `replace_all` is `kept` when at least one occurrence is present. A multi-line `replace` with as many lines as its target, differing from it on exactly one after trimming, is judged on that line pair — `simplifyMultilineReplace` applies only that line. A `delete`, or a replacement with nothing, whose target is not in the last stored text before the event reads `altered`: its absence proves nothing, since `deleteClause` removes the clause it finds even from a misquote. With no stored text before the event, the table decides.
 
 **Changed paragraphs** — `splitlines()` of the first stored text and the last observation, empty lines dropped, normalised, aligned with `difflib.SequenceMatcher`: a paragraph only in the last text is `+`, only in the first is `-` — a reworded paragraph is one of each. A `+` is the assistant's when it contains an applied `new_text`; a `-` when it contains what an applied replacement, deletion or redline took out (its `target_text`; an insert's target is only its anchor); otherwise `not suggested`. A paragraph present in both an applied edit's old and new text is context and explains nothing. Old and new are never paired into one line: a clause typed where an applied deletion was would inherit the deletion's label. An applied edit the attorney then reworded leaves its paragraph `not suggested` — the rewording is the attorney's change, and the edit's own verdict says `altered`.
 
@@ -247,7 +247,7 @@ No observation after the event → `no later capture`. `altered` prints the last
 
 ### Deleting it
 
-`python -m scripts.delete_document_data --document <id> | --attorney <id> [--yes]`. Without `--yes` it prints what it would delete and deletes nothing. With it: the versions, the snapshots, and `applied` set to NULL on the matching events. `--document` matches `document_id` on all three; `--attorney` matches their `attorney_id` columns — a version belongs to whoever first sent it. Either way it then prints what it does **not** touch for that scope: `review_store`, `conversation_store`, `feedback` snapshots, the `turn_log` questions, `interaction_event`'s short text excerpts (the target excerpt on an Apply, the error messages that quote it, the attorney's question), `audit_log`'s request summaries, Phoenix traces, and the nightly dumps (kept up to 14 days) — so nobody mistakes it for a full erasure.
+`python -m scripts.delete_document_data --document <id> | --attorney <id> [--yes]`. Without `--yes` it prints what it would delete and deletes nothing. With it: the versions, the snapshots, and `applied` set to NULL on the matching events. `--document` matches `document_id` on all three; `--attorney` matches their `attorney_id` columns — a version belongs to whoever first sent it. Either way it then prints what it does **not** touch for that scope: `review_store`, `conversation_store`, `feedback` snapshots, the `turn_log` questions, `interaction_event`'s short text excerpts (the target excerpt on an Apply, the error messages that quote it, the attorney's question), `audit_log`'s request summaries, Phoenix traces, the nightly dumps (kept up to 14 days), and the manual dumps taken before a risky deploy (`app-db-<date>-<reason>.sql.gz`, which never expire) — so nobody mistakes it for a full erasure.
 
 ### Disclosure
 
@@ -309,6 +309,7 @@ No observation after the event → `no later capture`. `altered` prints the last
 - A counterparty's second round returned in the same file shows as `not suggested`; the author counts separate it by hand.
 - Turns from before the deploy have a fingerprint and no text; the report starts from the first stored text and says how many earlier turns it skipped.
 - Finalize reads the tracked changes in a second step after the texts, so a read slower than 3 s can see them after Finalize has accepted them.
+- The document id travels in the file's settings (`docIdentity.ts`), so a contract saved with Save As as the start of the next deal carries the first one's id: both files' observations interleave under one `document_id`, the verdicts and changed paragraphs compare one file with the other, and `--document` deletion removes both.
 
 ---
 

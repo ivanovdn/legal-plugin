@@ -84,11 +84,16 @@ def test_exactly_one_scope(scope):
 
 
 def test_the_command_counts_by_default_and_names_what_it_leaves(capsys):
+    """The manual dumps taken before a risky deploy never expire, so they are named
+    beside the nightly ones. Mutation: drop the manual dumps line."""
     _seed()
     main(["--document", "doc-1"])
     out = capsys.readouterr().out
     assert "Would delete (dry run — add --yes to delete) for document doc-1:" in out
-    assert "Not touched" in out and "Phoenix" in out and "nightly" in out
+    assert "Not touched" in out and "Phoenix" in out
+    assert "kept up to 14 days" in _shown(out, "nightly dumps")
+    manual = _shown(out, "manual dumps")
+    assert "data/backups/app-db-*.sql.gz other than -nightly" in manual and "never expire" in manual
     assert _left("doc-1") == (2, 1, 1, 1)
 
 

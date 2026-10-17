@@ -60,6 +60,70 @@ def test_a_replacement_whose_new_text_sits_inside_its_target(final, verdict):
     assert edit_verdict(_CONSENT, final) == verdict
 
 
+# Clause 7 as the document words it, and as the model quoted it. deleteClause (word.ts)
+# has no completeness check, so Word deletes the real clause from the misquote.
+_CLAUSE_7 = ("7. Non-solicitation. For a period of 24 months, neither party shall "
+             "solicit the other's staff.")
+_WITH_7 = f"6. Fees.\r{_CLAUSE_7}\r8. Law."
+_WITHOUT_7 = "6. Fees.\r8. Law."
+_MISQUOTED = {"action": "delete", "target_text":
+              "7. Non-solicitation. For 24 months, neither party shall solicit the other's staff."}
+_QUOTED = {"action": "delete", "target_text": _CLAUSE_7}
+_EMPTIED = {"action": "replace", "new_text": ""}
+
+
+@pytest.mark.parametrize("applied, final, verdict", [
+    (_MISQUOTED, _WITH_7, ALTERED),
+    (_MISQUOTED, _WITHOUT_7, ALTERED),
+    (_QUOTED, _WITHOUT_7, KEPT),
+    (_QUOTED, _WITH_7, REVERTED),
+    ({**_MISQUOTED, **_EMPTIED}, _WITH_7, ALTERED),
+    ({**_MISQUOTED, **_EMPTIED}, _WITHOUT_7, ALTERED),
+    ({**_QUOTED, **_EMPTIED}, _WITHOUT_7, KEPT),
+    ({**_QUOTED, **_EMPTIED}, _WITH_7, REVERTED),
+    ({**_MISQUOTED, **_EMPTIED, "action": "replace_all"}, _WITH_7, ALTERED),
+], ids=["misquoted-delete-rejected", "misquoted-delete-kept", "delete-kept", "delete-rejected",
+        "misquoted-emptying-rejected", "misquoted-emptying-kept", "emptying-kept",
+        "emptying-rejected", "misquoted-emptying-replace-all"])
+def test_a_removal_whose_target_was_not_in_the_text_before_reads_altered(applied, final, verdict):
+    """A delete, or a replacement with nothing, is judged by its target's absence —
+    which proves nothing when the target was not word-for-word in the text before the
+    edit: the misquote is absent whether Word's deletion was kept or rejected.
+    Mutation: drop the before-text check (both misquoted removals then read kept)."""
+    assert edit_verdict(applied, final, before_text=_WITH_7) == verdict
+
+
+# The document says "4. Term"; the model's context line says "4 Term". Word applies only
+# the line that differs (simplifyMultilineReplace), so the context line is never searched.
+_TERM = {"action": "replace", "target_text": "4 Term\nThis Agreement lasts 12 months.",
+         "new_text": "4 Term\nThis Agreement lasts 24 months."}
+_TERM_KEPT = "4. Term\rThis Agreement lasts 24 months.\r5. Fees."
+_TERM_REJECTED = "4. Term\rThis Agreement lasts 12 months.\r5. Fees."
+
+
+@pytest.mark.parametrize("applied, final, verdict", [
+    (_TERM, _TERM_KEPT, KEPT),
+    (_TERM, _TERM_REJECTED, REVERTED),
+    ({**_TERM, "new_text": "4 Term \nThis Agreement lasts 24 months."}, _TERM_KEPT, KEPT),
+    ({**_TERM, "target_text": "4 Term\nconsent, not to be unreasonably withheld",
+      "new_text": "4 Term\nconsent"}, "4. Term\rconsent, not to be unreasonably withheld", REVERTED),
+    ({**_TERM, "new_text": "4. Term\nThis Agreement lasts 24 months."}, _TERM_REJECTED, ALTERED),
+    ({**_TERM, "target_text": "4 Term\nThis Agreement lasts 12 months.\nIt renews yearly."},
+     _TERM_KEPT, ALTERED),
+    ({**_TERM, "action": "replace_all"}, _TERM_KEPT, ALTERED),
+], ids=["kept", "rejected", "context-differs-only-in-spacing", "shortening-pair-rejected",
+        "two-lines-differ", "unequal-line-counts", "replace-all-is-never-narrowed"])
+def test_a_multi_line_replace_is_judged_on_the_one_line_word_applied(applied, final, verdict):
+    """With as many lines on each side and exactly one differing after trimming, a
+    `replace` is judged on that line pair, so the shortening rule applies to the pair
+    too. Otherwise — two lines differ, the counts differ, or it is a `replace_all` —
+    Word replaces the whole text, and the whole text is judged. Mutations: judge the
+    whole text always (kept and rejected both read altered); narrow on the first of
+    several differing lines; drop the equal-count or the trimming condition; narrow
+    replace_all too."""
+    assert edit_verdict(applied, final) == verdict
+
+
 def test_a_curled_quote_or_a_rewrapped_line_is_not_an_alteration():
     """Word curls straight quotes as you type. Mutation: compare without normalize()."""
     applied = {"action": "replace", "target_text": "Buyer", "new_text": 'the "Client" shall\npay'}
@@ -197,6 +261,53 @@ def test_an_edit_after_the_last_sighting_has_no_later_capture():
     d = build_document_changes("doc-1", [_obs("2026-10-16T09:00:00+00:00", A, kind="turn")],
                                _VERSIONS, [_applied(_EDIT)])
     assert d["edits"][0]["verdict"] == NO_LATER
+
+
+C, D = "c" * 64, "d" * 64
+
+
+def test_a_removal_is_judged_against_the_last_text_stored_before_it():
+    """The baseline is the last stored text before the Apply — here the proposing
+    turn's own. Neither the older draft (clause 7 still said 12 months) nor the later
+    text (the clause gone) is. Mutations: take the first stored text; take the last
+    stored text regardless of time (either way the kept deletion reads altered)."""
+    versions = {A: {"text": _WITH_7.replace("a period of 24", "a period of 12"), "truncated": False},
+                B: {"text": _WITH_7, "truncated": False},
+                C: {"text": _WITHOUT_7, "truncated": False}}
+    d = build_document_changes("doc-1", [
+        _obs("2026-10-16T08:00:00+00:00", A, kind="turn"),
+        _obs("2026-10-16T09:00:00+00:00", B, kind="turn"),
+        _obs("2026-10-16T09:05:00+00:00", C),
+    ], versions, [_applied(_QUOTED)])
+    assert d["edits"][0]["verdict"] == KEPT
+
+
+def test_a_sighting_without_a_stored_text_is_no_baseline():
+    """A turn whose version write failed has only a fingerprint, so the baseline is
+    the stored text before it: clause 7 as quoted was there, the misquote never was.
+    Mutation: take the last observation of any kind before the Apply — with no text,
+    it either reads as nothing stored (the misquote then reads kept) or as an empty
+    text (the quoted removal then reads altered)."""
+    versions = {B: {"text": _WITH_7, "truncated": False},
+                C: {"text": _WITHOUT_7, "truncated": False}}
+    d = build_document_changes("doc-1", [
+        _obs("2026-10-16T09:00:00+00:00", B, kind="turn"),
+        _obs("2026-10-16T09:00:30+00:00", D, kind="turn"),
+        _obs("2026-10-16T09:05:00+00:00", C),
+    ], versions, [_applied(_QUOTED), _applied(_MISQUOTED, ts="2026-10-16T09:02:00+00:00")])
+    assert [e["verdict"] for e in d["edits"]] == [KEPT, ALTERED]
+
+
+def test_a_removal_with_no_text_stored_before_it_keeps_the_tables_verdict():
+    """Turns from before SP4 have only a fingerprint. With no stored text from before
+    the edit, the verdict table decides: a misquoted deletion reads kept, as it did
+    before the baseline existed. Mutation: treat "nothing stored before" as an empty
+    text (the deletion then reads altered)."""
+    d = build_document_changes("doc-1", [
+        _obs("2026-10-16T08:00:00+00:00", D, kind="turn"),
+        _obs("2026-10-16T09:05:00+00:00", C),
+    ], {C: {"text": _WITH_7, "truncated": False}}, [_applied(_MISQUOTED)])
+    assert d["edits"][0]["verdict"] == KEPT
 
 
 def test_sightings_without_a_stored_text_are_counted_not_compared():

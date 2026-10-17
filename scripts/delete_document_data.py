@@ -9,8 +9,8 @@ Removes the stored texts (document_version), the pane's captures
 (document_snapshot) and the applied text on Apply events (the events stay, with
 their short excerpts). It is NOT a full erasure, and prints what it leaves:
 reviews, conversations, feedback, the questions in turn_log, the excerpts on
-interaction_event rows, the request summaries in audit_log, Phoenix traces and
-the nightly dumps.
+interaction_event rows, the request summaries in audit_log, Phoenix traces, the
+nightly dumps and the manual dumps (which never expire).
 Spec: docs/superpowers/specs/2026-10-15-document-changes-design.md, "Deleting it".
 """
 from __future__ import annotations
@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> None:
     print(_untouched_line("Phoenix traces", note="every turn's prompt, the document included"))
     print(_untouched_line("nightly dumps",
                           note="data/backups/app-db-*-nightly.sql.gz, kept up to 14 days"))
+    print(_untouched_line("manual dumps",
+                          note="data/backups/app-db-*.sql.gz other than -nightly — never expire"))
 
 
 if __name__ == "__main__":

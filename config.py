@@ -216,7 +216,10 @@ class Settings(BaseSettings):
     feedback_snapshot_max_chars: int = 200000   # per-field cap on the replay snapshot, truncation-marked
 
     # SP4 — copies of the document as the attorney works on it (spec 2026-10-15)
-    document_capture_enabled: bool = True       # False = no copies at all: /api/document-snapshot records nothing and tells the pane to stop, and turns store no text
+    # False = no document copies: /api/document-snapshot records nothing and tells the pane to
+    # stop, and turns store no text. It does NOT stop the applied text on Apply events
+    # (interaction_event.applied): that comes with the events, which feedback_enabled governs.
+    document_capture_enabled: bool = True
 
     # O365 SSO (slice 3) — dormant until sso_enabled; False = trust X-User-ID (today)
     sso_enabled: bool = False

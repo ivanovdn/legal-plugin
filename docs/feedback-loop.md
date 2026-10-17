@@ -210,12 +210,18 @@ document 4f1c…  A. Tester (cc91e640-…) · 2026-10-16 09:12 → 2026-10-18 14
 It cannot tell yet: reworded from removed (`altered` covers both); the other side's
 second round when the file comes back with our document id (it reads as `not
 suggested` — the author counts separate it); anything done while the pane was
-closed and never reopened. Turns from before SP4 have a fingerprint and no text,
-so a document's story starts at its first stored text. Deleting a document's
-copies on request: `docs/deploy-vm.md`, *Deleting document copies*.
+closed and never reopened; two files saved from one — Save As keeps the document
+id, so a contract saved as the start of the next deal carries the first one's id:
+both files' copies interleave under it, the verdicts and changed paragraphs compare
+one file with the other, and deleting that document's copies deletes both. Turns
+from before SP4 have a fingerprint and no text, so a document's story starts at its
+first stored text. Deleting a document's copies on request: `docs/deploy-vm.md`,
+*Deleting document copies*.
 
 **Limits of the verdicts.** `kept` means the applied wording appears somewhere in the document: a short applied text that also appears elsewhere ("30") reads `kept` even if this edit was rejected, and a deleted passage that recurs elsewhere reads `reverted`.
 A replace that only shortened its target ("consent, not to be unreasonably withheld" → "consent") reads `reverted` when the longer wording is back.
+A multi-line replace with as many lines as its target, differing from it on exactly one, is judged on that line, because Word applies only that line: a context line the model quoted slightly off ("4 Term" for "4. Term") does not make it `altered`.
+A delete (or a replace with nothing) whose recorded target was not word-for-word in the document before the edit reads `altered`, because its absence proves nothing: Word deletes the clause it finds even when the model misquoted it, and a misquote is absent whether the deletion was kept or rejected. "Before" is the last stored text before the Apply, normally the proposing turn's own; when none is stored, absence still reads `kept`.
 `assistant` / `not suggested` is a containment test: a short applied line can label a changed paragraph that merely contains it, and a line an edit only quoted for context (present in both its old and new text) explains nothing.
 A redline is judged against the clause text the pane validated its match against (the finding's first anchor).
 

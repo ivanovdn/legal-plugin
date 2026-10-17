@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import re
 import unicodedata
+from bisect import bisect_left
 from collections import Counter
 from typing import Callable
 
@@ -23,6 +24,7 @@ _STRAIGHTEN = str.maketrans({
     "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u00a0": " ", "\u202f": " ",
 })
 _WHITESPACE = re.compile(r"\s+")
+_LINE_BREAK = re.compile(r"\r?\n")   # how word.ts splits an edit's lines
 
 KEPT, ALTERED, REVERTED, NO_LATER = "kept", "altered", "reverted", "no later capture"
 VERDICTS = (KEPT, ALTERED, REVERTED, NO_LATER)          # the order they are counted in
@@ -42,17 +44,42 @@ def paragraphs(text: str) -> list[str]:
     return [p for p in (normalize(line) for line in (text or "").splitlines()) if p]
 
 
-def _verdict(applied: dict, final: str) -> str:
-    """edit_verdict against an already-normalised text."""
+def _line_word_applies(target: str, new: str) -> tuple[str, str]:
+    """What a `replace` put in, as the pane's simplifyMultilineReplace (word.ts) applies
+    it: when both texts are multi-line, have as many lines each and differ on exactly
+    one line after trimming, only that line pair; otherwise both texts whole."""
+    if "\n" not in target or "\n" not in new:
+        return target, new
+    old_lines, new_lines = _LINE_BREAK.split(target), _LINE_BREAK.split(new)
+    if len(old_lines) != len(new_lines):
+        return target, new
+    differ = [(o, n) for o, n in zip(old_lines, new_lines) if o.strip() != n.strip()]
+    return differ[0] if len(differ) == 1 else (target, new)
+
+
+def _never_there(target: str, before: str | None) -> bool:
+    """A removal is judged by its target's absence, which proves nothing when the
+    target was not word-for-word in the text before the edit: deleteClause (word.ts)
+    removes the clause it finds even when the model misquoted it, and a misquote is
+    absent whether the removal was kept or rejected. No text from before → False."""
+    return before is not None and target not in before
+
+
+def _verdict(applied: dict, final: str, before: str | None = None) -> str:
+    """edit_verdict against already-normalised texts."""
     action = applied.get("action", "")
-    new = normalize(applied.get("new_text", ""))
-    target = normalize(applied.get("target_text", ""))
+    target_text, new_text = applied.get("target_text", ""), applied.get("new_text", "")
+    if action == "replace":
+        target_text, new_text = _line_word_applies(target_text, new_text)
+    new, target = normalize(new_text), normalize(target_text)
     if action == "delete":
-        if not target:
+        if not target or _never_there(target, before):
             return ALTERED
         return REVERTED if target in final else KEPT
     if action in ("replace", "replace_all") and not new:
         # A replacement with nothing: kept while the old wording stays gone.
+        if _never_there(target, before):
+            return ALTERED
         return REVERTED if target and target in final else KEPT
     if action == "replace" and new and target and new in target:
         # The new text is part of the old: the old wording back means it was rejected.
@@ -70,10 +97,33 @@ def _verdict(applied: dict, final: str) -> str:
     return ALTERED
 
 
-def edit_verdict(applied: dict, final_text: str) -> str:
+def edit_verdict(applied: dict, final_text: str, before_text: str | None = None) -> str:
     """kept / reverted / altered for one applied edit against a later text (the
-    spec's verdict table). Whether there IS a later text is the caller's call."""
-    return _verdict(applied, normalize(final_text))
+    spec's verdict table). Whether there IS a later text is the caller's call.
+    before_text is the text as it stood before the edit, when one was stored: a
+    delete, or a replacement with nothing, whose target is not in it reads altered."""
+    before = None if before_text is None else normalize(before_text)
+    return _verdict(applied, normalize(final_text), before)
+
+
+def _baseline_finder(stored: list[dict], versions: dict[str, dict]) -> Callable[[str], str | None]:
+    """A function giving, for an event's timestamp, the last stored text before it,
+    normalised — normally the proposing turn's own — or None when no text was stored
+    before. `stored` is oldest first; each text is normalised once, however many
+    edits it precedes."""
+    stamps = [o["timestamp"] for o in stored]
+    normalised: dict[str, str] = {}
+
+    def before(timestamp: str) -> str | None:
+        i = bisect_left(stamps, timestamp)   # stored[:i] came strictly before the event
+        if not i:
+            return None
+        sha = stored[i - 1]["sha256"]
+        if sha not in normalised:
+            normalised[sha] = normalize(versions[sha]["text"])
+        return normalised[sha]
+
+    return before
 
 
 def closest_paragraph_finder(text: str) -> Callable[[str], str]:
@@ -154,6 +204,9 @@ def build_document_changes(document_id: str, observations: list[dict],
     versions — sha256 → {text, truncated} (memory/document_store.versions).
     applied — Apply events with their text, oldest first: timestamp, turn_id,
       applied (memory/document_store.applied_events).
+
+    Each edit is judged against the last stored text after it, and a removal also
+    against the last stored text before it (edit_verdict's before_text).
     """
     stored = [o for o in observations if o["sha256"] in versions]
     kinds = Counter(o["kind"] for o in observations)
@@ -181,10 +234,11 @@ def build_document_changes(document_id: str, observations: list[dict],
         closest = closest_paragraph_finder(final_text)
         result["paragraphs"] = changed_paragraphs(
             versions[first["sha256"]]["text"], final_text, [e["applied"] for e in applied])
+    baseline = _baseline_finder(stored, versions)
     for event in applied:
         a = event["applied"]
         if stored and stored[-1]["timestamp"] > event["timestamp"]:
-            verdict = _verdict(a, final)
+            verdict = _verdict(a, final, baseline(event["timestamp"]))
             near = closest(a.get("new_text", "")) if verdict == ALTERED else ""
         else:
             verdict, near = NO_LATER, ""
