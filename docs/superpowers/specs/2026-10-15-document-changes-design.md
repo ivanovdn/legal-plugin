@@ -136,7 +136,7 @@ createDocumentCapture(deps: {
 `capture`:
 
 1. `readDocumentId()` → `""` means return without reading.
-2. One capture at a time: a call while one is in flight returns immediately.
+2. One capture at a time: a call while one is in flight returns immediately — except `finalize`, which never waits behind a capture in flight: it reads at once, so its read is issued before `acceptAll()`.
 3. Read; cap the list at **500** tracked changes and each change's `text` at **2,000** chars (`cut: true` on a cut item), keeping `tracked_total` = the count before the cap. `date` is sent as ISO-8601.
 4. For `idle`: compare `current + "\0" + original + "\0" + JSON(tracked)` with the last payload this pane sent; equal → stop. (A string comparison — no hashing in the pane.)
 5. `send`; remember the payload; a reply with `enabled: false` stops every later capture in this pane session.
@@ -239,7 +239,7 @@ document 4f1c…  A. Tester · 2026-10-16 09:12 → 2026-10-18 14:02
 
 No observation after the event → `no later capture`. `altered` prints the last text's paragraph sharing the most words with `new_text` (word-set overlap, display only — difflib's ratio against every paragraph of a 2,000-paragraph contract takes tens of seconds). `replace_all` is `kept` when at least one occurrence is present.
 
-**Changed paragraphs** — `splitlines()` of the first stored text and the last observation, empty lines dropped, normalised, aligned with `difflib.SequenceMatcher`: a paragraph only in the last text is `+`, only in the first is `-` — a reworded paragraph is one of each. A `+` is the assistant's when it contains an applied `new_text`; a `-` when it contains what an applied replacement, deletion or redline took out (its `target_text`; an insert's target is only its anchor); otherwise `not suggested`. Old and new are never paired into one line: a clause typed where an applied deletion was would inherit the deletion's label. An applied edit the attorney then reworded leaves its paragraph `not suggested` — the rewording is the attorney's change, and the edit's own verdict says `altered`.
+**Changed paragraphs** — `splitlines()` of the first stored text and the last observation, empty lines dropped, normalised, aligned with `difflib.SequenceMatcher`: a paragraph only in the last text is `+`, only in the first is `-` — a reworded paragraph is one of each. A `+` is the assistant's when it contains an applied `new_text`; a `-` when it contains what an applied replacement, deletion or redline took out (its `target_text`; an insert's target is only its anchor); otherwise `not suggested`. A paragraph present in both an applied edit's old and new text is context and explains nothing. Old and new are never paired into one line: a clause typed where an applied deletion was would inherit the deletion's label. An applied edit the attorney then reworded leaves its paragraph `not suggested` — the rewording is the attorney's change, and the edit's own verdict says `altered`.
 
 **Pure functions** in new `scripts/document_changes.py` — `normalize`, `edit_verdict`, `closest_paragraph`, `changed_paragraphs`, `build_document_changes`, `format_document_changes` — unit-tested on their own; `feedback_report` only fetches and prints.
 
@@ -308,6 +308,7 @@ No observation after the event → `no later capture`. `altered` prints the last
 - The document id lives in the file only after the file is saved; an unsaved new document loses it on close, and a later session on it starts unlinked (an existing property of document ids).
 - A counterparty's second round returned in the same file shows as `not suggested`; the author counts separate it by hand.
 - Turns from before the deploy have a fingerprint and no text; the report starts from the first stored text and says how many earlier turns it skipped.
+- Finalize reads the tracked changes in a second step after the texts, so a read slower than 3 s can see them after Finalize has accepted them.
 
 ---
 

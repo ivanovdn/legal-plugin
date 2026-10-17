@@ -163,6 +163,62 @@ Uncaught pane errors (`window`) are de-duplicated and capped at 20 per pane load
 
 `--turns` now shows each turn's `(waited X in Word)` and prints the session's turn-less pane events (opened, tab, Finalize, errors) between the turns. Requests that never reached the backend are in Caddy's files — [deploy-vm.md](deploy-vm.md), *Logs*.
 
+## A document, before and after
+
+What the attorney did to the document itself (SP4): each turn's text; a copy when
+the pane opens, 30 s after every pause in editing, and just before Finalize — both
+views (every tracked change accepted / every one rejected) and the tracked changes
+with who made them; and the full text of every Apply.
+
+```bash
+uv run python -m scripts.feedback_report --changes --document <id>
+$DC run --rm --no-deps backend python -m scripts.feedback_report --changes --days 7   # on the VM
+```
+
+One block per document:
+
+```
+document 4f1c…  A. Tester (cc91e640-…) · 2026-10-16 09:12 → 2026-10-18 14:02
+  observations 9 (3 turns · 2 pane_open · 4 idle · 0 finalize) · 6 distinct texts
+  first stored text 2026-10-16 09:12 (turn)
+  applied edits 5: 3 kept · 1 altered · 1 reverted · 0 no later capture
+    kept             replace     "This Agreement shall be governed…" → "…laws of England and Wales"   turn 6aef53da
+    altered          replace     "Liability cap…" → "…12 months' fees"   (edited before applying)
+                     closest now: "Liability is limited to the fees paid in the 6 months preceding…"
+  tracked changes at the last capture: 14 — Jane Smith 9 (6 ins, 3 del) · Counterparty LLP 5 (5 ins)
+  paragraphs changed since the first text: 11 — 4 explained by an applied edit · 7 not suggested
+    + "The Supplier shall indemnify the Client against…"   not suggested
+```
+
+- **Applied edits** are judged against the last text seen after them: `kept` (the
+  applied wording is there), `reverted` (gone, and the original wording is back),
+  `altered` (neither — reworded or removed; `closest now` is the paragraph sharing
+  the most words with it, for you to judge), `no later capture` (nothing seen
+  since). Comparison ignores curly vs straight quotes and line wrapping.
+  `(edited before applying)` = the attorney changed the model's wording in the card.
+- **Tracked changes** are counted by the author Word shows. The assistant's edits
+  carry the attorney's own name (Office.js attributes them to the current user), so
+  the *other* names are the other side; the applied-edit list tells the assistant
+  apart from the attorney.
+- **Paragraphs changed** — `+` only in the last text, `-` only in the first (a
+  reworded paragraph is one of each); `assistant` when an applied edit explains
+  it. The `not suggested` lines are where to look for what the review missed.
+- `--full` prints whole texts and every changed paragraph (20 by default).
+- In `--turns`, each capture is a line between the turns:
+  `· capture idle: text changed, 3 tracked changes`.
+
+It cannot tell yet: reworded from removed (`altered` covers both); the other side's
+second round when the file comes back with our document id (it reads as `not
+suggested` — the author counts separate it); anything done while the pane was
+closed and never reopened. Turns from before SP4 have a fingerprint and no text,
+so a document's story starts at its first stored text. Deleting a document's
+copies on request: `docs/deploy-vm.md`, *Deleting document copies*.
+
+**Limits of the verdicts.** `kept` means the applied wording appears somewhere in the document: a short applied text that also appears elsewhere ("30") reads `kept` even if this edit was rejected, and a deleted passage that recurs elsewhere reads `reverted`.
+A replace that only shortened its target ("consent, not to be unreasonably withheld" → "consent") reads `reverted` when the longer wording is back.
+`assistant` / `not suggested` is a containment test: a short applied line can label a changed paragraph that merely contains it, and a line an edit only quoted for context (present in both its old and new text) explains nothing.
+A redline is judged against the clause text the pane validated its match against (the finding's first anchor).
+
 ## From a complaint to the prompt that caused it
 
 Every feedback row prints a `turn:` id and, when tracing is on, a `trace:` id.

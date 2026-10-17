@@ -313,6 +313,19 @@ openssl x509 -in data/backups/caddy-ca-<date>/root.crt -noout -fingerprint -sha2
 
 Rehearsed 2026-10-09 on a scratch stack built from the same pane image, with a stand-in `backend` that Caddy depends on: losing the volume and bringing Caddy back up minted a new CA that the old root no longer verified (`curl --cacert <old root.crt>` exit 60 — what every attorney's machine would see); after these steps the old root verified again (exit 0), the live root's fingerprint matched the backup's, and the stand-in backend was never restarted.
 
+### Deleting document copies
+
+`document_version` and `document_snapshot` hold copies of contracts as attorneys edited them, and `interaction_event.applied` the text of each Apply (SP4). They are kept for the pilot; on request, for one document or one attorney:
+
+```bash
+$DC run --rm --no-deps backend python -m scripts.delete_document_data --document <id>         # counts only
+$DC run --rm --no-deps backend python -m scripts.delete_document_data --document <id> --yes   # delete
+```
+
+`--attorney <id>` does the same for everything one attorney sent. It is not a full erasure, and it prints what it leaves: reviews, conversations, feedback and the questions in `turn_log`; `interaction_event`'s short text excerpts (target excerpts, error messages, questions); `audit_log`'s request summaries; Phoenix traces; the nightly dumps (up to 14 days). Redis session checkpoints, which hold the document for up to a day after the last turn, expire on their own (the script does not list them).
+
+**Close the pane on that document first.** An open pane copies it again at the next pause in editing, and any later question stores its text again. For a deletion that sticks, the attorney stops using the assistant on that document.
+
 ---
 
 ## Step 5 — Verify
