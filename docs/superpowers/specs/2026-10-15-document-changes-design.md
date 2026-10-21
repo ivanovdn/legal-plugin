@@ -84,7 +84,7 @@ Both texts go to `document_version` (`source='pane'`).
 
 ### D5 — Only documents the assistant has been used on
 
-A capture reads `readDocumentId()` at the moment it runs — never `resolveDocumentId()`, which mints an id and marks the file modified (SP3). The id is minted on the first question, review, flag or condense, so a contract that is merely open with the pane is never recorded; once the attorney asks the first question, idle captures start in that same pane session.
+A capture reads `readDocumentId()` at the moment it runs — never `resolveDocumentId()`, which mints an id and marks the file modified (SP3). The id is minted on the first question, review, flag or condense, so a contract that is merely open with the pane is never recorded; once the attorney asks the first question, idle captures start in that same pane session. The id travels in the file, so a draft the assistant was used on by whoever sent it is captured as soon as the pane opens on it — the disclosure says so.
 
 ### D6 — Quiet everywhere
 
@@ -253,12 +253,12 @@ No observation after the event → `no later capture`. `altered` prints the last
 
 **The pane's header line** (`App.tsx`) becomes:
 
-> During testing, the assistant records your questions, its answers and the document text sent with them; while this pane is open on a document you have used it on, a copy each time you pause editing, with its tracked changes and who made them; when this pane is opened, which tab you use, how long answers take, errors it shows you, and what you do with its suggestions — so we can measure what it gets wrong. Sending feedback includes the document.
+> During testing, the assistant records your questions, its answers and the document text sent with them; while this pane is open on a document the assistant has been used on — by you or by whoever sent it to you — a copy when the pane opens, each time you pause editing and before Finalize, with its tracked changes and who made them; when this pane is opened, which tab you use, how long answers take, errors it shows you, and what you do with its suggestions — so we can measure what it gets wrong. Sending feedback includes the document.
 
 **`docs/tester-setup.md`, *What the assistant records*:**
 
 - the suggestions bullet: "what you do with its suggestions — applied (with the text that was applied), discarded, or failed to apply;"
-- a new bullet: "while the task pane is open on a document you have used the assistant on: a copy of the document when you open the pane, each time you pause editing, and when you use Finalize — with its tracked changes and the name Word shows for who made each one (yours and, in a negotiated draft, the other side's). Edits made while the pane is closed are seen only when you open it again;"
+- a new bullet: "while the task pane is open on a document the assistant has been used on, by you or by whoever sent it to you: a copy of the document when you open the pane, each time you pause editing, and when you use Finalize — with its tracked changes and the name Word shows for who made each one (yours and, in a negotiated draft, the other side's). Edits made while the pane is closed are seen only when you open it again;"
 - the closing paragraph: pane events hold no document text (except an error quoting a passage); **the document copies do**. They are kept for the length of the pilot; ask and we delete them for a document or for you.
 
 ---

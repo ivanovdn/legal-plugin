@@ -170,11 +170,12 @@ export default function App() {
         </button>
         <p className="disclosure">
           During testing, the assistant records your questions, its answers and the document
-          text sent with them; while this pane is open on a document you have used it on, a
-          copy each time you pause editing, with its tracked changes and who made them; when
-          this pane is opened, which tab you use, how long answers take, errors it shows you,
-          and what you do with its suggestions — so we can measure what it gets wrong. Sending
-          feedback includes the document.
+          text sent with them; while this pane is open on a document the assistant has been
+          used on — by you or by whoever sent it to you — a copy when the pane opens, each
+          time you pause editing and before Finalize, with its tracked changes and who made
+          them; when this pane is opened, which tab you use, how long answers take, errors it
+          shows you, and what you do with its suggestions — so we can measure what it gets
+          wrong. Sending feedback includes the document.
         </p>
       </header>
       {/* Deliberately NOT the amber .status.warning used for memory_degraded.
