@@ -38,10 +38,11 @@ export default function App() {
       .then((saved) => recordPaneEvent("pane_opened", { detail: saved }));
   }, [sessionId]);
 
-  // SP4: copies of the document as the attorney works — at open, after each
-  // pause in editing, and before Finalize (documentCapture.ts). Only documents
-  // the assistant has an id for; quiet, like the events above. Guarded inside,
-  // so a second mount (StrictMode, HMR) installs nothing twice.
+  // SP4: copies of the document as the attorney works — at open, a few seconds
+  // after each Apply, after each pause in editing, and before Finalize
+  // (documentCapture.ts). Only documents the assistant has an id for; quiet,
+  // like the events above. Guarded inside, so a second mount (StrictMode, HMR)
+  // installs nothing twice.
   useEffect(() => {
     installDocumentCapture(sessionId);
   }, [sessionId]);
@@ -171,11 +172,11 @@ export default function App() {
         <p className="disclosure">
           During testing, the assistant records your questions, its answers and the document
           text sent with them; while this pane is open on a document the assistant has been
-          used on — by you or by whoever sent it to you — a copy when the pane opens, each
-          time you pause editing and before Finalize, with its tracked changes and who made
-          them; when this pane is opened, which tab you use, how long answers take, errors it
-          shows you, and what you do with its suggestions — so we can measure what it gets
-          wrong. Sending feedback includes the document.
+          used on — by you or by whoever sent it to you — a copy when the pane opens, after
+          you apply a suggestion, each time you pause editing and before Finalize, with its
+          tracked changes and who made them; when this pane is opened, which tab you use, how
+          long answers take, errors it shows you, and what you do with its suggestions — so we
+          can measure what it gets wrong. Sending feedback includes the document.
         </p>
       </header>
       {/* Deliberately NOT the amber .status.warning used for memory_degraded.

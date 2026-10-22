@@ -62,15 +62,18 @@ The data alone — without asking the attorney — must answer, per document:
 
 `memory/turn_log.py::_fingerprint` moves to `memory/fingerprint.py::fingerprint(text) -> (chars, sha256)`, used by both `turn_log` and the version store, so a turn's `doc_sha256` and its version's key cannot diverge. The SHA-256 is always of the **full** text, before any cap.
 
-### D3 — Three capture moments in the pane, plus every turn on the backend
+### D3 — Four capture moments in the pane, plus every turn on the backend
 
 | `moment` | When |
 |---|---|
 | `pane_open` | The pane mounts. Catches everything changed while it was closed. |
+| `apply` | About 5 s after an Apply (several in a row make one copy); sent only if the payload changed. Typing does not postpone it. |
 | `idle` | 30 s after the last change notification. Sent only if the payload differs from the last one this pane sent. |
 | `finalize` | Just before `acceptAll()`, when Finalize is used. |
 
 `pane_open` and `finalize` always send — the moment itself is information. The backend also stores each turn's document text (`source='turn'`).
+
+**Why `apply`:** attorneys apply an edit and then save and close the document, which closes the pane, and an idle copy waits for 30 s with no change — so without it an Apply followed by a quick close stayed at `no later capture` (found when the owner tried SP4 in Word for Mac). `noteApply()` runs on a timer of its own: Applies in a row restart it and make one copy; `noteChange()` (typing, selection) neither cancels nor postpones it, and `noteApply()` leaves the idle timer alone. After the server has said `enabled: false` it schedules nothing. An Apply followed by closing is now caught unless the pane closes within those 5 s; only that, and hand edits in the last ≤ 30 s before the pane closes, can be missed. The cost is one more stored text per burst of Applies — measured, an 85,000-character legal text takes about 38 KB on disk (Postgres compresses it), and an unchanged copy adds only a small row.
 
 **The change notification comes from two events, either of which restarts the 30 s timer:** Word's `onParagraphChanged` (WordApi 1.5 — `App.tsx` already registers it for the live document size, where it is noted as firing per keystroke) and the shared Office API's `DocumentSelectionChanged` (fires as the attorney types or moves around). Neither is recorded anywhere as verified inside our pane on Word for Mac, so the design depends on neither: whichever fires drives the capture, and the end-to-end sideload confirms an idle capture lands after typing. **Only when neither registers** does a poll every 2 minutes while `document.visibilityState === "visible"` stand in, still sending only on change. Not polling otherwise: nothing runs while nothing happens.
 
@@ -115,7 +118,7 @@ No automatic expiry. A deletion command removes one document's or one attorney's
 **New module `clients/word/src/documentCapture.ts`.** The logic takes its collaborators as parameters, so the assertion harness runs it without Word:
 
 ```ts
-type Moment = "pane_open" | "idle" | "finalize";
+type Moment = "pane_open" | "apply" | "idle" | "finalize";
 type TrackedChange = { type: string; author: string; date: string; text: string };
 // tracked === null: the tracked changes could not be read (sent as tracked_total -1)
 type DocumentReading = { current: string; original: string; tracked: TrackedChange[] | null };
@@ -130,16 +133,17 @@ createDocumentCapture(deps: {
 }): {
   capture(moment: Moment): Promise<void>;  // never throws
   noteChange(): void;                      // (re)starts the 30 s idle timer
+  noteApply(): void;                       // (re)starts the 5 s apply timer, a timer of its own
 }
 ```
 
 `capture`:
 
 1. `readDocumentId()` → `""` means return without reading.
-2. One capture at a time: a call while one is in flight returns immediately — except `finalize`, which never waits behind a capture in flight: it reads at once, so its read is issued before `acceptAll()`.
+2. One capture at a time, and what a call meets when one is in flight depends on its moment: `pane_open` and `idle` return immediately; `apply` waits for it to finish and then reads — its read has to come after the Apply, so it is never dropped; `finalize` never waits behind a capture in flight: it reads at once, so its read is issued before `acceptAll()`.
 3. Read; cap the list at **500** tracked changes and each change's `text` at **2,000** chars (`cut: true` on a cut item), keeping `tracked_total` = the count before the cap. `date` is sent as ISO-8601.
-4. For `idle`: compare `current + "\0" + original + "\0" + JSON(tracked)` with the last payload this pane sent; equal → stop. (A string comparison — no hashing in the pane.)
-5. `send`; remember the payload; a reply with `enabled: false` stops every later capture in this pane session.
+4. For `idle` and `apply`: compare `current + "\0" + original + "\0" + JSON(tracked)` with the last payload this pane sent; equal → stop. (A string comparison — no hashing in the pane.)
+5. `send`; remember the payload; a reply with `enabled: false` stops every later capture in this pane session — including an `apply` that was waiting.
 6. Any exception anywhere → swallowed.
 
 `readDocument` (in `word.ts`, next to `readBody`): one `Word.run` loading `getReviewedText(current)` and `getReviewedText(original)`, then — in its own `sync`, inside its own `try` — `getTrackedChanges()` with `items/type, items/author, items/date, items/text`. If only the tracked changes fail to load (a Word without WordApi 1.6), the capture still sends both texts, with an empty list and `tracked_total = -1`; the report prints "tracked changes unreadable" for it.
@@ -151,6 +155,7 @@ createDocumentCapture(deps: {
 - `feedback.ts`: `recordEvent`'s `extra` gains `applied?: Applied`, each string capped at **20,000** chars.
 - `EditProposalCard.tsx`, on `edit_applied`: `applied = { action, target_text, new_text, proposed_text, position }` — `target_text` is `target_text`, or `anchor_text` for an insert; `new_text` is the text actually applied (`draftText`); `proposed_text` is the model's `new_text`, only when it differs; `position` only for an insert.
 - `FindingCard.tsx`, on `redline_applied`: `applied = { action: "redline", target_text: anchors[0], new_text: <redline> }` — `anchors[0]` is the clause text the redline replaced: the text `acceptRedline` validates its match against. The other anchors are only search fallbacks (clause names, the Issue prose); recording them would make a rejected redline read `altered` and let a clause name claim unrelated paragraphs.
+- `EditProposalCard.tsx` and `FindingCard.tsx`, in the success branch right after the `edit_applied` / `redline_applied` event: `noteApplied()` — the installed capture's `noteApply()` (D3), nothing when none is installed, never throwing.
 - The disclosure line in `App.tsx` (below).
 
 ### The backend
@@ -175,7 +180,7 @@ CREATE TABLE IF NOT EXISTS document_snapshot (
     attorney_id     TEXT NOT NULL DEFAULT '',
     session_id      TEXT NOT NULL DEFAULT '',
     document_id     TEXT NOT NULL,
-    moment          TEXT NOT NULL,          -- pane_open | idle | finalize
+    moment          TEXT NOT NULL,          -- pane_open | apply | idle | finalize
     current_sha256  TEXT NOT NULL,
     original_sha256 TEXT NOT NULL,
     tracked_changes JSONB NOT NULL DEFAULT '[]',
@@ -198,7 +203,7 @@ Both new tables go on `tests/conftest.py`'s hardcoded TRUNCATE list.
 
 **Endpoint, `POST /api/document-snapshot`** (new `api/routes/document_snapshot.py`, registered in `api/main.py`):
 
-- Body (`api/models.py`, `DocumentSnapshot`): `session_id`, `document_id`, `moment` (one of the three; anything else → 422), `current_text`, `original_text`, `tracked_changes`, `tracked_total`.
+- Body (`api/models.py`, `DocumentSnapshot`): `session_id`, `document_id`, `moment` (one of the four; anything else → 422), `current_text`, `original_text`, `tracked_changes`, `tracked_total`.
 - Attorney from `resolve_user_id`, client facts from `resolve_client_info` (SP2) plus `backend_build` — never from the body.
 - Re-applies every cap server-side (the pane is not trusted to have).
 - Always `200 {"recorded": 0|1, "enabled": bool}`; a store failure is `recorded: 0`. `document_capture_enabled=False` → `{"recorded": 0, "enabled": false}`, nothing written.
@@ -215,7 +220,7 @@ Both new tables go on `tests/conftest.py`'s hardcoded TRUNCATE list.
 
 ```
 document 4f1c…  A. Tester · 2026-10-16 09:12 → 2026-10-18 14:02
-  observations 9 (3 turns · 2 pane_open · 4 idle · 0 finalize) · 6 distinct texts
+  observations 10 (3 turns · 2 pane_open · 1 apply · 4 idle · 0 finalize) · 7 distinct texts
   first stored text 2026-10-16 09:12 (turn) — 2 earlier turns have only a fingerprint
   applied edits 5: 3 kept · 1 altered · 1 reverted · 0 no later capture
     kept      replace  "This Agreement shall be governed…" → "…laws of England and Wales"   turn 6aef53da
@@ -253,12 +258,12 @@ No observation after the event → `no later capture`. `altered` prints the last
 
 **The pane's header line** (`App.tsx`) becomes:
 
-> During testing, the assistant records your questions, its answers and the document text sent with them; while this pane is open on a document the assistant has been used on — by you or by whoever sent it to you — a copy when the pane opens, each time you pause editing and before Finalize, with its tracked changes and who made them; when this pane is opened, which tab you use, how long answers take, errors it shows you, and what you do with its suggestions — so we can measure what it gets wrong. Sending feedback includes the document.
+> During testing, the assistant records your questions, its answers and the document text sent with them; while this pane is open on a document the assistant has been used on — by you or by whoever sent it to you — a copy when the pane opens, after you apply a suggestion, each time you pause editing and before Finalize, with its tracked changes and who made them; when this pane is opened, which tab you use, how long answers take, errors it shows you, and what you do with its suggestions — so we can measure what it gets wrong. Sending feedback includes the document.
 
 **`docs/tester-setup.md`, *What the assistant records*:**
 
 - the suggestions bullet: "what you do with its suggestions — applied (with the text that was applied), discarded, or failed to apply;"
-- a new bullet: "while the task pane is open on a document the assistant has been used on, by you or by whoever sent it to you: a copy of the document when you open the pane, each time you pause editing, and when you use Finalize — with its tracked changes and the name Word shows for who made each one (yours and, in a negotiated draft, the other side's). Edits made while the pane is closed are seen only when you open it again;"
+- a new bullet: "while the task pane is open on a document the assistant has been used on, by you or by whoever sent it to you: a copy of the document when you open the pane, after you apply one of its suggestions, each time you pause editing, and when you use Finalize — with its tracked changes and the name Word shows for who made each one (yours and, in a negotiated draft, the other side's). Edits made while the pane is closed are seen only when you open it again;"
 - the closing paragraph: pane events hold no document text (except an error quoting a passage); **the document copies do**. They are kept for the length of the pilot; ask and we delete them for a document or for you.
 
 ---
@@ -293,18 +298,20 @@ No observation after the event → `no later capture`. `altered` prints the last
 | pane: `enabled: false` stops | after it, a new reading makes no `send` | ignore the reply |
 | pane: Finalize survives the capture | a throwing or never-resolving capture → `finalizeDocument` still called | await without the race |
 | pane: the applied payload | `edit_applied` carries `draftText` as `new_text` and the model's text as `proposed_text` | send `proposal.new_text` |
+| pane: an Apply is copied once, and typing does not postpone it | three `noteApply()` → one pending 5,000 ms timer that sends one `apply` capture; a `noteChange()` after it leaves that timer pending beside the 30,000 ms idle one | no debounce; `noteChange()` cancels it; `noteApply()` cancels the idle timer |
+| pane: an `apply` capture is never dropped | asked for while another reads → it waits, then reads and sends its own (`reads` 2, moments `[idle, apply]`); two waiters read one after the other | return at once like `idle`; wait once instead of in a loop; skip the `enabled: false` re-check after the wait |
 
 ### Other checks
 
 - `scripts/check.sh` green; `EXPECTED_PASS_COUNT` raised by exactly the new pane assertions.
-- **End to end, local sideload** — also the first sight of three Word facts nothing else can check: an idle capture lands after typing (D3's events), `getTrackedChanges()` items load `type`/`author`/`date`/`text`, and `getReviewedText(original)` returns the rejected view: ask a question on a scratch NDA; apply an edit, reword it by hand, pause → `altered`; apply another, reject its tracked insertion → `reverted`; apply a third and leave it → `kept`; type a new clause by hand → `not suggested`; Finalize → a `finalize` capture; `--changes` and `--turns` read all of it back; the disclosure line shows.
+- **End to end, local sideload** — also the first sight of three Word facts nothing else can check: an idle capture lands after typing (D3's events), `getTrackedChanges()` items load `type`/`author`/`date`/`text`, and `getReviewedText(original)` returns the rejected view: ask a question on a scratch NDA; apply an edit, reword it by hand, pause → `altered`; apply another, reject its tracked insertion → `reverted`; apply a third and leave it → `kept`; apply a fourth, wait 10 s, then save and close the document → `kept` from its `apply` capture, without reopening the pane; type a new clause by hand → `not suggested`; Finalize → a `finalize` capture; `--changes` and `--turns` read all of it back; the disclosure line shows.
 - **Windows:** unverified — no Windows machine. Both events exist there, but the spec does not claim either was tested there.
 
 ---
 
 ## Known limits
 
-- Nothing runs while the pane is closed; edits made then are seen at the next pane open. A document never reopened with the pane ends at its last capture, and the last ≤ 30 s of editing before the pane closes can be missed.
+- Nothing runs while the pane is closed; edits made then are seen at the next pane open. A document never reopened with the pane ends at its last capture. An Apply followed by closing is caught — its copy is taken about 5 s after it — so only an Apply in the last 5 s, and hand edits in the last ≤ 30 s, before the pane closes can be missed.
 - The document id lives in the file only after the file is saved; an unsaved new document loses it on close, and a later session on it starts unlinked (an existing property of document ids).
 - A counterparty's second round returned in the same file shows as `not suggested`; the author counts separate it by hand.
 - Turns from before the deploy have a fingerprint and no text; the report starts from the first stored text and says how many earlier turns it skipped.
@@ -320,7 +327,7 @@ The established flow, each VM step only after the owner's OK (CLAUDE.md rule 6):
 1. Push the branch to both remotes; bundle it to the VM.
 2. **Dump `app-db` first** — new tables and a new column: `data/backups/app-db-<date>-pre-sp4.sql.gz`.
 3. Step 4 with `BUILD_SHA`; recreates backend and Caddy. No attorney reinstalls (the pane ships in the Caddy image).
-4. Verify on the VM: the tables and column exist; the owner opens the pane on a document used before → a `pane_open` snapshot; applies an edit, changes something by hand, pauses → an `idle` snapshot; `--changes --document <id>` shows the verdicts; `--turns` shows the capture lines; the new disclosure line shows in the pane.
+4. Verify on the VM: the tables and column exist; the owner opens the pane on a document used before → a `pane_open` snapshot; applies an edit → an `apply` snapshot about 5 s later; changes something by hand, pauses → an `idle` snapshot; `--changes --document <id>` shows the verdicts; `--turns` shows the capture lines; the new disclosure line shows in the pane.
 5. **The owner tells the existing tester** what is now recorded (the owner's message — not sent by us).
 6. Delete the probe data with the new deletion command (`--yes`), then the pre-deploy dump once verified (owner's OK); fast-forward `main`, push both remotes; move the VM checkout to `main`.
 

@@ -494,7 +494,7 @@ While we test, the assistant records, on the company's server:
 - the text of the open document, which has to be sent to the server for the assistant to answer at all; our diagnostic traces keep a copy of what was sent;
 - what you do with its suggestions — applied (with the text that was applied), discarded, or failed to apply;
 - when the task pane is opened, which tab you use, how long answers take, and any error it shows you;
-- while the task pane is open on a document the assistant has been used on, by you or by whoever sent it to you: a copy of the document when you open the pane, each time you pause editing, and when you use Finalize — with its tracked changes and the name Word shows for who made each one (yours and, in a negotiated draft, the other side's). Edits made while the pane is closed are seen only when you open it again;
+- while the task pane is open on a document the assistant has been used on, by you or by whoever sent it to you: a copy of the document when you open the pane, after you apply one of its suggestions, each time you pause editing, and when you use Finalize — with its tracked changes and the name Word shows for who made each one (yours and, in a negotiated draft, the other side's). Edits made while the pane is closed are seen only when you open it again;
 - for every request, the time, your computer's network address and the name you entered in the pane.
 
 When you send feedback — **Send feedback** or a flag on a card — the current text of the document and the assistant's output go with it.

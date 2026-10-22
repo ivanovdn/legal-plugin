@@ -3,6 +3,7 @@ import RiskBadge from "./RiskBadge";
 import type { Finding } from "../parser";
 import { acceptRedline, goToClause, showInDocument } from "../word";
 import { appliedFromRedline, buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
+import { noteApplied } from "../documentCapture";
 
 type ActionState =
   | { kind: "idle" }
@@ -73,6 +74,8 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
         // anchors[0] is what acceptRedline checked its match against; the rest are only search fallbacks.
         applied: appliedFromRedline(anchors, finding.redline),
       });
+      // SP4: a copy of the document a few seconds on, so applying and then closing is still seen.
+      noteApplied();
     } else {
       // A failed redline apply is always a genuine error (acceptRedline never
       // returns notFound) — the calm pill is only for navigation (jump/comment).

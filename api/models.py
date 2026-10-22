@@ -130,7 +130,7 @@ class DocumentSnapshot(BaseModel):
     session_id: str = ""
     document_id: str = Field(..., min_length=1,
                              description="The assistant's document id; the pane never captures without one")
-    moment: Literal["pane_open", "idle", "finalize"]
+    moment: Literal["pane_open", "apply", "idle", "finalize"]
     current_text: str = Field("", description="getReviewedText(current): every tracked change accepted")
     original_text: str = Field("", description="getReviewedText(original): every tracked change rejected")
     tracked_changes: list[TrackedChangeItem] = Field(default_factory=list)

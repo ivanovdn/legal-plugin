@@ -363,7 +363,7 @@ def test_the_block_reads_as_the_spec_shows_it():
     ], _VERSIONS, [_applied({**_EDIT, "proposed_text": "20 days"}, turn_id="6aef53da-0000")])
     out = "\n".join(format_document_changes(d))
     assert "document doc-1  A. Tester (atty-1) · 2026-10-16 09:00 → 2026-10-16 09:05" in out
-    assert ("observations 2 (1 turns · 0 pane_open · 1 idle · 0 finalize) · 2 distinct texts"
+    assert ("observations 2 (1 turns · 0 pane_open · 0 apply · 1 idle · 0 finalize) · 2 distinct texts"
             in out)
     assert "first stored text 2026-10-16 09:00 (turn)" in out
     assert "applied edits 1: 1 kept · 0 altered · 0 reverted · 0 no later capture" in out
@@ -373,6 +373,23 @@ def test_the_block_reads_as_the_spec_shows_it():
             "Counterparty LLP 1 (1 ins)") in out
     assert ("paragraphs changed since the first text: 2 — 2 explained by an applied edit · "
             "0 not suggested") in out
+
+
+def test_an_apply_capture_is_counted_and_is_the_sighting_that_judges_its_edit():
+    """The pane copies the document about 5 s after an Apply, so an Apply followed by
+    closing is no longer left at `no later capture`: the copy is an observation after the
+    edit like any other, and it is counted under its own moment.
+    Mutation: leave "apply" out of MOMENTS — the count and the total both lose it."""
+    d = build_document_changes("doc-1", [
+        _obs("2026-10-16T09:00:00+00:00", A, kind="turn"),
+        _obs("2026-10-16T09:01:06+00:00", B, kind="apply"),
+    ], _VERSIONS, [_applied(_EDIT)])
+    assert d["counts"] == {"turn": 1, "pane_open": 0, "apply": 1, "idle": 0, "finalize": 0}
+    assert [e["verdict"] for e in d["edits"]] == [KEPT]
+    out = "\n".join(format_document_changes(d))
+    assert ("observations 2 (1 turns · 0 pane_open · 1 apply · 0 idle · 0 finalize) · 2 distinct texts"
+            in out)
+    assert "applied edits 1: 1 kept · 0 altered · 0 reverted · 0 no later capture" in out
 
 
 def test_unreadable_or_absent_tracked_changes_say_so():

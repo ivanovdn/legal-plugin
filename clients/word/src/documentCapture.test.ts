@@ -1,12 +1,15 @@
 // SP4 document capture. Run with: npx tsx src/documentCapture.test.ts
 import {
+  APPLY_SETTLE_MS,
   buildSnapshotBody,
   captureBeforeFinalize,
   createDocumentCapture,
   IDLE_MS,
+  noteApplied,
   TRACKED_CAP,
   TRACKED_TEXT_CAP,
   withinTime,
+  type DocumentCapture,
   type DocumentReading,
   type SnapshotBody,
   type SnapshotReply,
@@ -20,24 +23,31 @@ const READING: DocumentReading = {
   tracked: [{ type: "Added", author: "Jane Smith", date: "2026-10-16T09:00:00.000Z", text: "Acme Ltd" }],
 };
 
-/** Timers the test fires by hand. */
+/** Timers the test fires by hand. Each remembers its delay, so a test can name the timer it means. */
 function fakeTimers() {
-  const pending = new Map<number, () => void>();
+  const pending = new Map<number, { fn: () => void; ms: number }>();
   let next = 0;
+  let cancelled = 0;
   return {
-    schedule: (fn: () => void) => {
-      pending.set(++next, fn);
+    schedule: (fn: () => void, ms: number) => {
+      pending.set(++next, { fn, ms });
       return next;
     },
     cancel: (handle: unknown) => {
+      cancelled++;
       pending.delete(handle as number);
     },
-    fire: () => {
-      const fns = [...pending.values()];
-      pending.clear();
-      fns.forEach((fn) => fn());
+    /** Every pending timer, or only those with this delay; the others stay pending. */
+    fire: (ms?: number) => {
+      const due = [...pending.entries()].filter(([, timer]) => ms === undefined || timer.ms === ms);
+      due.forEach(([handle]) => pending.delete(handle));
+      due.forEach(([, timer]) => timer.fn());
     },
     count: () => pending.size,
+    /** The delay of each pending timer, shortest first. */
+    delays: () => [...pending.values()].map((timer) => timer.ms).sort((a, b) => a - b),
+    /** How many times a pending timer was cancelled. */
+    cancelled: () => cancelled,
   };
 }
 
@@ -350,4 +360,180 @@ function stubWord(items: unknown[], opts: { secondSyncFails?: boolean } = {}): (
   timers.fire();
   await p;
   pass(through, "Finalize goes ahead when its capture hangs");
+}
+
+// A copy a few seconds after each Apply, so an Apply followed at once by saving and closing is still caught.
+
+{
+  const h = harness();
+  h.capture.noteApply();
+  h.capture.noteApply();
+  h.capture.noteApply();
+  const waiting = h.timers.delays();
+  h.timers.fire();
+  await tick();
+  pass(
+    JSON.stringify(waiting) === "[5000]" && APPLY_SETTLE_MS === 5000 &&
+      h.sent.length === 1 && h.sent[0].moment === "apply",
+    "Applies within 5 s of each other make one timer of 5,000 ms, which sends one apply capture",
+  );
+}
+
+{
+  const h = harness();
+  h.capture.noteApply();
+  h.capture.noteChange();
+  const both = h.timers.delays();
+  h.timers.fire(5000);
+  await tick();
+  pass(
+    JSON.stringify(both) === "[5000,30000]" && h.sent.length === 1 && h.sent[0].moment === "apply" &&
+      JSON.stringify(h.timers.delays()) === "[30000]",
+    "typing after an Apply neither cancels nor postpones its capture, and the 30 s idle timer is pending too",
+  );
+}
+
+{
+  const h = harness();
+  h.capture.noteChange();
+  h.capture.noteApply();
+  pass(
+    JSON.stringify(h.timers.delays()) === "[5000,30000]" && h.timers.cancelled() === 0,
+    "an Apply leaves a pending idle timer alone: nothing is cancelled and the 30 s timer is still there",
+  );
+}
+
+{
+  const h = harness();
+  await h.capture.capture("pane_open");
+  await h.capture.capture("apply");
+  pass(h.reads() === 2 && h.sent.length === 1, "an apply capture of an unchanged document reads it and sends nothing");
+}
+
+{
+  const h = harness({ reply: () => Promise.resolve({ recorded: 0, enabled: false }) });
+  await h.capture.capture("pane_open");
+  h.capture.noteApply();
+  pass(h.timers.count() === 0, "after the server says capture is off, an Apply schedules nothing");
+}
+
+{
+  // The capture in flight read the document before the Apply landed. The apply capture must not give way
+  // to it, which would drop it, and must not read until it is done: its read has to come after the Apply.
+  const releases: Array<(r: DocumentReading) => void> = [];
+  const h = harness({ read: () => new Promise<DocumentReading>((resolve) => { releases.push(resolve); }) });
+  const first = h.capture.capture("idle");
+  const apply = h.capture.capture("apply");
+  let returned = 0;
+  [h.capture.capture("idle"), h.capture.capture("pane_open")].forEach((p) => void p.then(() => { returned++; }));
+  await tick();
+  const readsWhileWaiting = h.reads();
+  const returnedWhileReading = returned;
+  releases[0](READING);
+  await first;
+  await tick();
+  releases[1]?.({ ...READING, current: "NDA with Acme Limited" });
+  await apply;
+  pass(
+    readsWhileWaiting === 1 && h.reads() === 2 && h.sent.map((b) => b.moment).join(",") === "idle,apply" &&
+      h.sent[1].current_text === "NDA with Acme Limited",
+    "an apply capture asked for while another is reading waits for it, then reads and sends its own",
+  );
+  pass(returnedWhileReading === 2,
+    "an idle and a pane_open capture asked for while one is reading still return at once, reading nothing");
+}
+
+{
+  // The capture it waits on is told that capture is off: the apply capture then reads and sends nothing.
+  let releaseSend: (r: SnapshotReply) => void = () => {};
+  let sends = 0;
+  let reads = 0;
+  const h = harness({
+    read: () => Promise.resolve(++reads === 1 ? READING : { ...READING, current: "after the Apply" }),
+    reply: () =>
+      ++sends === 1
+        ? new Promise<SnapshotReply>((resolve) => { releaseSend = resolve; })
+        : Promise.resolve({ recorded: 1, enabled: true }),
+  });
+  const first = h.capture.capture("pane_open");
+  await tick();
+  const apply = h.capture.capture("apply");
+  releaseSend({ recorded: 0, enabled: false });
+  await first;
+  await apply;
+  pass(h.reads() === 1 && h.sent.length === 1,
+    "an apply capture waiting on a capture that turns capture off reads nothing and sends nothing");
+}
+
+{
+  // Two Applies end up waiting on the same capture. They read one after the other, never together, so the
+  // second finds the first one's copy already sent.
+  let release: (r: DocumentReading) => void = () => {};
+  let calls = 0;
+  const h = harness({
+    read: () =>
+      ++calls === 1
+        ? new Promise<DocumentReading>((resolve) => { release = resolve; })
+        : Promise.resolve({ ...READING, current: "after the Applies" }),
+  });
+  const first = h.capture.capture("idle");
+  const one = h.capture.capture("apply");
+  const two = h.capture.capture("apply");
+  release(READING);
+  await Promise.all([first, one, two]);
+  pass(h.reads() === 3 && h.sent.map((b) => b.moment).join(",") === "idle,apply",
+    "two apply captures waiting on one capture read one after the other, and only the first sends");
+}
+
+{
+  const noteTwiceWith = (schedule: () => unknown, cancel: () => void): boolean => {
+    const capture = createDocumentCapture({
+      readDocumentId: () => "d-1",
+      readDocument: () => Promise.resolve(READING),
+      send: () => Promise.resolve({ recorded: 1, enabled: true }),
+      sessionId: "s-1",
+      schedule,
+      cancel,
+    });
+    try {
+      capture.noteApply();
+      capture.noteApply();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  pass(
+    noteTwiceWith(() => { throw new Error("no timers"); }, () => {}) &&
+      noteTwiceWith(() => 1, () => { throw new Error("no timers"); }),
+    "a timer that fails to schedule or to cancel never escapes noteApply",
+  );
+}
+
+{
+  let threw = false;
+  try {
+    noteApplied();
+  } catch {
+    threw = true;
+  }
+  pass(!threw, "noteApplied with no capture installed does nothing and does not throw");
+}
+
+{
+  let noted = 0;
+  const stub: DocumentCapture = {
+    capture: () => Promise.resolve(),
+    noteChange: () => {},
+    noteApply: () => { noted++; },
+  };
+  noteApplied(stub);
+  let threw = false;
+  try {
+    noteApplied({ ...stub, noteApply: () => { throw new Error("boom"); } });
+  } catch {
+    threw = true;
+  }
+  pass(noted === 1 && !threw,
+    "noteApplied tells the capture there was an Apply, and a capture that throws does not reach the caller");
 }

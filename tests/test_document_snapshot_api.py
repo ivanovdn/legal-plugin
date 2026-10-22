@@ -56,6 +56,19 @@ def test_a_capture_is_recorded_with_who_and_what_sent_it(client):
     assert _versions() == 2
 
 
+@pytest.mark.parametrize("moment", ["pane_open", "apply", "idle", "finalize"])
+def test_every_capture_moment_is_recorded_under_its_own_name(client, moment):
+    """The copy the pane takes a few seconds after an Apply is a moment of its own — the
+    report counts it, and an edit's verdict is read against it. Refusing it would lose the
+    copy that catches an Apply followed by closing the document.
+    Mutation: leave "apply" out of DocumentSnapshot.moment (a 422)."""
+    c, _ = client
+    r = c.post("/api/document-snapshot", json=_body(moment=moment), headers={"X-User-ID": "atty-1"})
+    assert r.status_code == 200 and r.json()["data"] == {"recorded": 1, "enabled": True}
+    (s,) = _snapshots()
+    assert s["moment"] == moment
+
+
 def test_a_store_failure_is_quiet_and_keeps_the_text_out_of_the_log(client, monkeypatch, caplog):
     """Review Focus 2. Mutation: let the exception through (a 500), log str(e), or drop
     the hashes and sizes that say which texts the lost capture held."""

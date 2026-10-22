@@ -166,9 +166,10 @@ Uncaught pane errors (`window`) are de-duplicated and capped at 20 per pane load
 ## A document, before and after
 
 What the attorney did to the document itself (SP4): each turn's text; a copy when
-the pane opens, 30 s after every pause in editing, and just before Finalize — both
-views (every tracked change accepted / every one rejected) and the tracked changes
-with who made them; and the full text of every Apply.
+the pane opens, about 5 s after each Apply, 30 s after every pause in editing, and
+just before Finalize — both views (every tracked change accepted / every one
+rejected) and the tracked changes with who made them; and the full text of every
+Apply.
 
 ```bash
 uv run python -m scripts.feedback_report --changes --document <id>
@@ -179,7 +180,7 @@ One block per document:
 
 ```
 document 4f1c…  A. Tester (cc91e640-…) · 2026-10-16 09:12 → 2026-10-18 14:02
-  observations 9 (3 turns · 2 pane_open · 4 idle · 0 finalize) · 6 distinct texts
+  observations 10 (3 turns · 2 pane_open · 1 apply · 4 idle · 0 finalize) · 7 distinct texts
   first stored text 2026-10-16 09:12 (turn)
   applied edits 5: 3 kept · 1 altered · 1 reverted · 0 no later capture
     kept             replace     "This Agreement shall be governed…" → "…laws of England and Wales"   turn 6aef53da

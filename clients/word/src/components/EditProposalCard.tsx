@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { EditProposal } from "../parseEditBlocks";
 import { applyEdit, goToClause } from "../word";
 import { appliedFromProposal, buildSnapshot, recordEvent, requestFlag, type TurnRef } from "../feedback";
+import { noteApplied } from "../documentCapture";
 
 type Status =
   | { kind: "idle" }
@@ -63,6 +64,8 @@ export default function EditProposalCard({ proposal, turn }: { proposal: EditPro
         targetRef: ref,
         applied: appliedFromProposal(proposal, draftText),
       });
+      // SP4: a copy of the document a few seconds on, so applying and then closing is still seen.
+      noteApplied();
     } else {
       setStatus({ kind: "error", message: res.error });
       // The error string is the point: this is the only field measurement of

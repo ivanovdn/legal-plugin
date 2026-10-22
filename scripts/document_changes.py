@@ -28,7 +28,7 @@ _LINE_BREAK = re.compile(r"\r?\n")   # how word.ts splits an edit's lines
 
 KEPT, ALTERED, REVERTED, NO_LATER = "kept", "altered", "reverted", "no later capture"
 VERDICTS = (KEPT, ALTERED, REVERTED, NO_LATER)          # the order they are counted in
-MOMENTS = ("pane_open", "idle", "finalize")
+MOMENTS = ("pane_open", "apply", "idle", "finalize")
 PARAGRAPHS_SHOWN = 20
 _TRACKED_KIND = {"Added": "ins", "Deleted": "del", "Formatted": "fmt"}
 _KIND_ORDER = ("ins", "del", "fmt", "other")
@@ -278,7 +278,8 @@ def format_document_changes(d: dict, *, full: bool = False) -> list[str]:
     lines = [
         f"document {d['document_id']}  {who} · {_minute(d['first'])} → {_minute(d['last'])}",
         f"  observations {sum(c.values())} ({c['turn']} turns · {c['pane_open']} pane_open · "
-        f"{c['idle']} idle · {c['finalize']} finalize) · {d['distinct']} distinct texts",
+        f"{c['apply']} apply · {c['idle']} idle · {c['finalize']} finalize) · "
+        f"{d['distinct']} distinct texts",
     ]
     if d["first_stored"] is None:
         lines.append("  no stored text yet — every observation has only a fingerprint")
