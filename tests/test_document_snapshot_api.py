@@ -58,7 +58,7 @@ def test_a_capture_is_recorded_with_who_and_what_sent_it(client):
 
 @pytest.mark.parametrize("moment", ["pane_open", "apply", "idle", "finalize"])
 def test_every_capture_moment_is_recorded_under_its_own_name(client, moment):
-    """The copy the pane takes a few seconds after an Apply is a moment of its own — the
+    """The copy the pane takes about a second after an Apply is a moment of its own — the
     report counts it, and an edit's verdict is read against it. Refusing it would lose the
     copy that catches an Apply followed by closing the document.
     Mutation: leave "apply" out of DocumentSnapshot.moment (a 422)."""

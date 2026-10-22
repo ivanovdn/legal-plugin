@@ -166,10 +166,10 @@ Uncaught pane errors (`window`) are de-duplicated and capped at 20 per pane load
 ## A document, before and after
 
 What the attorney did to the document itself (SP4): each turn's text; a copy when
-the pane opens, about 5 s after each Apply, 30 s after every pause in editing, and
-just before Finalize — both views (every tracked change accepted / every one
-rejected) and the tracked changes with who made them; and the full text of every
-Apply.
+the pane opens, about 1 s after the last Apply of a run, 30 s after every pause in
+editing, and just before Finalize — both views (every tracked change accepted /
+every one rejected) and the tracked changes with who made them; and the full text
+of every Apply.
 
 ```bash
 uv run python -m scripts.feedback_report --changes --document <id>

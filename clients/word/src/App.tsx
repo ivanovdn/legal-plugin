@@ -38,7 +38,7 @@ export default function App() {
       .then((saved) => recordPaneEvent("pane_opened", { detail: saved }));
   }, [sessionId]);
 
-  // SP4: copies of the document as the attorney works — at open, a few seconds
+  // SP4: copies of the document as the attorney works — at open, about a second
   // after each Apply, after each pause in editing, and before Finalize
   // (documentCapture.ts). Only documents the assistant has an id for; quiet,
   // like the events above. Guarded inside, so a second mount (StrictMode, HMR)

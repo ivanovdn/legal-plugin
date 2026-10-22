@@ -317,7 +317,7 @@ Rehearsed 2026-10-09 on a scratch stack built from the same pane image, with a s
 
 `document_version` and `document_snapshot` hold copies of contracts as attorneys edited them, and `interaction_event.applied` the text of each Apply (SP4). They are kept for the pilot; on request, for one document or one attorney.
 
-**First, ask the attorney to close the pane on that document and not to open it on that document again.** The file carries the assistant's document id, so opening the pane copies the document again (`pane_open`), an open pane copies it a few seconds after each Apply and at every pause in editing, and any later question stores its text again — a deletion sticks only while the attorney does not open the pane on it again.
+**First, ask the attorney to close the pane on that document and not to open it on that document again.** The file carries the assistant's document id, so opening the pane copies the document again (`pane_open`), an open pane copies it about a second after each Apply and at every pause in editing, and any later question stores its text again — a deletion sticks only while the attorney does not open the pane on it again.
 
 **Find the ids** with `feedback_report` (*Read it back* in [feedback-loop.md](feedback-loop.md)). A document id opens each `--changes` block (`document <id>`; add `--attorney <id>` for one attorney's documents) and is the `doc:` line of each feedback row. An attorney id belongs to one Word install (the pane keeps it in `localStorage`), so one attorney can have several: find each by name in `--activity`, which prints `name (id)` for every attorney-day, and run `--attorney` once per id. A copy saved with Save As carries its original's document id, so `--document` deletes both files' copies.
 

@@ -64,8 +64,8 @@ export default function EditProposalCard({ proposal, turn }: { proposal: EditPro
         targetRef: ref,
         applied: appliedFromProposal(proposal, draftText),
       });
-      // SP4: a copy of the document about 5 s on, so applying and then closing is still seen —
-      // unless the pane closes within those 5 s.
+      // SP4: a copy of the document about 1 s after the last Apply of a run, so applying and then
+      // closing is still seen — unless the pane closes within about 1 s of the last Apply.
       noteApplied();
     } else {
       setStatus({ kind: "error", message: res.error });

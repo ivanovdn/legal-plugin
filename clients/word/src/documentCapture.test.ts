@@ -362,20 +362,25 @@ function stubWord(items: unknown[], opts: { secondSyncFails?: boolean } = {}): (
   pass(through, "Finalize goes ahead when its capture hangs");
 }
 
-// A copy a few seconds after each Apply, so an Apply followed at once by saving and closing is still caught.
+// A copy about 1 s after the last Apply of a run, so an Apply followed by saving and closing is caught —
+// missed only when the pane closes within about 1 s of the last Apply.
 
 {
+  // Each call after the first restarts the timer, which means cancelling the one pending: three calls
+  // cancel two. A throttle (later calls ignored) also leaves one timer of the right delay pending, and
+  // only the cancel count tells it from a debounce.
   const h = harness();
   h.capture.noteApply();
   h.capture.noteApply();
   h.capture.noteApply();
   const waiting = h.timers.delays();
+  const cancelledByRestarts = h.timers.cancelled();
   h.timers.fire();
   await tick();
   pass(
-    JSON.stringify(waiting) === "[5000]" && APPLY_SETTLE_MS === 5000 &&
+    JSON.stringify(waiting) === "[1000]" && APPLY_SETTLE_MS === 1000 && cancelledByRestarts === 2 &&
       h.sent.length === 1 && h.sent[0].moment === "apply",
-    "Applies within 5 s of each other make one timer of 5,000 ms, which sends one apply capture",
+    "Applies within 1 s of each other make one timer of 1,000 ms, each restarting it, which sends one apply capture",
   );
 }
 
@@ -387,10 +392,10 @@ function stubWord(items: unknown[], opts: { secondSyncFails?: boolean } = {}): (
   h.capture.noteChange();
   const both = h.timers.delays();
   const cancelledByTyping = h.timers.cancelled();
-  h.timers.fire(5000);
+  h.timers.fire(1000);
   await tick();
   pass(
-    JSON.stringify(both) === "[5000,30000]" && cancelledByTyping === 0 &&
+    JSON.stringify(both) === "[1000,30000]" && cancelledByTyping === 0 &&
       h.sent.length === 1 && h.sent[0].moment === "apply" && JSON.stringify(h.timers.delays()) === "[30000]",
     "typing after an Apply neither cancels nor postpones its capture, and the 30 s idle timer is pending too",
   );
@@ -401,7 +406,7 @@ function stubWord(items: unknown[], opts: { secondSyncFails?: boolean } = {}): (
   h.capture.noteChange();
   h.capture.noteApply();
   pass(
-    JSON.stringify(h.timers.delays()) === "[5000,30000]" && h.timers.cancelled() === 0,
+    JSON.stringify(h.timers.delays()) === "[1000,30000]" && h.timers.cancelled() === 0,
     "an Apply leaves a pending idle timer alone: nothing is cancelled and the 30 s timer is still there",
   );
 }

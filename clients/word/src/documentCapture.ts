@@ -1,5 +1,5 @@
 // SP4: copies of the document as the attorney works on it — when the pane
-// opens, a few seconds after each Apply, after each pause in editing, and just
+// opens, about a second after each Apply, after each pause in editing, and just
 // before Finalize — so what the assistant applied can be compared with what the
 // attorney kept.
 // Spec: docs/superpowers/specs/2026-10-15-document-changes-design.md
@@ -45,8 +45,11 @@ export interface SnapshotReply {
 }
 
 export const IDLE_MS = 30_000;
-/** How long after the last Apply its copy is taken; Applies closer together than this make one copy. */
-export const APPLY_SETTLE_MS = 5_000;
+/** How long after the last Apply its copy is taken; Applies closer together than this make one copy.
+ *  Short on purpose: an attorney who applies, then saves and closes, closes the pane with the document,
+ *  and a copy still waiting goes with it. The copy is missed only when the pane closes within this long
+ *  of the last Apply; a longer wait missed two such runs in Word. */
+export const APPLY_SETTLE_MS = 1_000;
 export const FINALIZE_WAIT_MS = 3_000;
 export const POLL_MS = 120_000;
 export const TRACKED_CAP = 500;

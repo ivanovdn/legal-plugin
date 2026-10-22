@@ -376,9 +376,10 @@ def test_the_block_reads_as_the_spec_shows_it():
 
 
 def test_an_apply_capture_is_counted_and_is_the_sighting_that_judges_its_edit():
-    """The pane copies the document about 5 s after an Apply, so an Apply followed by
-    closing is no longer left at `no later capture`: the copy is an observation after the
-    edit like any other, and it is counted under its own moment.
+    """The pane copies the document about 1 s after an Apply, so an Apply followed by
+    closing is no longer left at `no later capture` (unless the pane closes within about
+    1 s of it): the copy is an observation after the edit like any other, and it is counted
+    under its own moment.
     Mutation: leave "apply" out of MOMENTS — the count and the total both lose it."""
     d = build_document_changes("doc-1", [
         _obs("2026-10-16T09:00:00+00:00", A, kind="turn"),
