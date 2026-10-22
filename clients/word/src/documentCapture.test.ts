@@ -380,15 +380,18 @@ function stubWord(items: unknown[], opts: { secondSyncFails?: boolean } = {}): (
 }
 
 {
+  // The fake has no clock, so a postponed timer can only show as a cancelled one: restarting the apply
+  // timer means cancelling the pending one first. Typing here has nothing of its own to cancel.
   const h = harness();
   h.capture.noteApply();
   h.capture.noteChange();
   const both = h.timers.delays();
+  const cancelledByTyping = h.timers.cancelled();
   h.timers.fire(5000);
   await tick();
   pass(
-    JSON.stringify(both) === "[5000,30000]" && h.sent.length === 1 && h.sent[0].moment === "apply" &&
-      JSON.stringify(h.timers.delays()) === "[30000]",
+    JSON.stringify(both) === "[5000,30000]" && cancelledByTyping === 0 &&
+      h.sent.length === 1 && h.sent[0].moment === "apply" && JSON.stringify(h.timers.delays()) === "[30000]",
     "typing after an Apply neither cancels nor postpones its capture, and the 30 s idle timer is pending too",
   );
 }

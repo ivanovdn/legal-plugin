@@ -74,7 +74,8 @@ export default function FindingCard({ finding, turn }: { finding: Finding; turn:
         // anchors[0] is what acceptRedline checked its match against; the rest are only search fallbacks.
         applied: appliedFromRedline(anchors, finding.redline),
       });
-      // SP4: a copy of the document a few seconds on, so applying and then closing is still seen.
+      // SP4: a copy of the document about 5 s on, so applying and then closing is still seen —
+      // unless the pane closes within those 5 s.
       noteApplied();
     } else {
       // A failed redline apply is always a genuine error (acceptRedline never
