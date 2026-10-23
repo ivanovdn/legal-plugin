@@ -1,11 +1,16 @@
 {
   "kind": "match",
-  "why": "body.search matches the RAW document including tracked-change deletions, which is why readBody uses getReviewedText('current') for the LLM but the matcher still sees struck text. Trace 5f188799.",
+  "why": "body.search matches the RAW document including tracked-change deletions (trace 5f188799), so text that now survives only as a struck deletion is still found by search. The matcher must not return it: the model reads the accepted-changes view, where 'Signed by: [__]' no longer exists, and an Apply landing on struck text is not a fill. Go to still lands there (match-goto-falls-back-to-struck-text); the matcher itself returns nothing.",
   "input": {
     "paragraphs": [
-      { "raw": "Signed by: [__]Suzy Quatro", "reviewed": "Signed by: Suzy Quatro" }
+      {
+        "raw": "Signed by: [__]Suzy Quatro",
+        "reviewed": "Signed by: Suzy Quatro"
+      }
     ],
     "target": "Signed by: [__]"
   },
-  "expect": { "matched": "Signed by: [__]" }
+  "expect": {
+    "matched": null
+  }
 }

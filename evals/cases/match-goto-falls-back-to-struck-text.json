@@ -1,0 +1,17 @@
+{
+  "kind": "match",
+  "why": "Go to never writes, so when nothing live matches it still lands on text that survives only as a struck deletion: a finding from a review made before 'Signed by: [__]' was filled jumps to where the placeholder was, as it did before the matcher learned to skip struck text.",
+  "input": {
+    "via": "goto",
+    "paragraphs": [
+      {
+        "raw": "Signed by: [__]Suzy Quatro",
+        "reviewed": "Signed by: Suzy Quatro"
+      }
+    ],
+    "target": "Signed by: [__]"
+  },
+  "expect": {
+    "matched": "Signed by: [__]"
+  }
+}

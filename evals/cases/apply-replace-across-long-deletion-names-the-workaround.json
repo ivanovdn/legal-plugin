@@ -1,0 +1,21 @@
+{
+  "kind": "apply",
+  "why": "A quote across a struck run longer than body.search's 255-character limit: every stretch Word could search for is too long, so nothing can be located. The quote IS in the accepted-changes text the model read, so the error names the workaround (accept or reject the tracked change) instead of saying there is nothing to replace.",
+  "input": {
+    "paragraphs": [
+      {
+        "raw": "The Receiving Party shall not disclose any Confidential Information to any third party without the prior written consent of the disclosing party, and shall restrict access to it to those of its employees, officers, advisers and contractors who need to know it for the purpose and who are bound by obligations of confidentiality no less strict than these, and shall keep all Confidential Information strictly confidential.",
+        "reviewed": "The Receiving Party shall keep all Confidential Information strictly confidential."
+      }
+    ],
+    "proposal": {
+      "action": "replace",
+      "target_text": "The Receiving Party shall keep all Confidential Information strictly confidential.",
+      "new_text": "The Receiving Party shall keep all Confidential Information confidential for five years."
+    }
+  },
+  "expect": {
+    "ok": false,
+    "errorContains": "Accept or reject"
+  }
+}

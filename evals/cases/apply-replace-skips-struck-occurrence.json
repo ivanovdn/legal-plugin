@@ -1,0 +1,22 @@
+{
+  "kind": "apply",
+  "why": "body.search also matches struck text and the matcher took the FIRST hit, so once one '[Legal Name]' was filled as a tracked change, a replace of '[Legal Name]' landed on the struck one instead of the live one below it (same cause as the VM failure of 2026-10-23; not yet seen in the pilot). Only a match whose accepted-changes text is the quote counts.",
+  "input": {
+    "paragraphs": [
+      {
+        "raw": "The Company: Sony Corp[Legal Name]",
+        "reviewed": "The Company: Sony Corp"
+      },
+      "for and on behalf of [Legal Name]"
+    ],
+    "proposal": {
+      "action": "replace",
+      "target_text": "[Legal Name]",
+      "new_text": "Sony Corp"
+    }
+  },
+  "expect": {
+    "ok": true,
+    "reviewed": "The Company: Sony Corp\rfor and on behalf of Sony Corp"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "kind": "apply",
+  "why": "replace_all snapshots every body.search match, struck ones included, so 'fill every [Legal Name]' after one was already filled as a tracked change also wrote into the struck one. Only matches whose accepted-changes text is the target are replaced.",
+  "input": {
+    "paragraphs": [
+      {
+        "raw": "The Company: Sony Corp[Legal Name]",
+        "reviewed": "The Company: Sony Corp"
+      },
+      "for and on behalf of [Legal Name]",
+      "Signed for [Legal Name] by its director"
+    ],
+    "proposal": {
+      "action": "replace_all",
+      "target_text": "[Legal Name]",
+      "new_text": "Sony Corp"
+    }
+  },
+  "expect": {
+    "ok": true,
+    "reviewed": "The Company: Sony Corp\rfor and on behalf of Sony Corp\rSigned for Sony Corp by its director"
+  }
+}

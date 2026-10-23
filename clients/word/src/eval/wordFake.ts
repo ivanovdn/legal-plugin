@@ -37,6 +37,16 @@
 // fixture pair must differ by exactly one contiguous span (longest-common-
 // prefix/suffix locates it) — anything else throws at construction time,
 // naming the paragraph, rather than silently producing wrong ground truth.
+//
+// VIEWS: `body.text` is the raw text, tracked deletions still in it (CLAUDE.md:
+// "body.text includes tracked-change deletions"); `getReviewedText("Current")`
+// drops them (CLAUDE.md: the text as if every change were accepted). The Range
+// form is that documented Body behavior applied to a range — Office.js gives
+// Range.getReviewedText (WordApi 1.4) the same description — and is NOT yet
+// observed in real Word. "Original" is refused: this fake does not track
+// insertions, so it cannot know the original text. Both views join paragraphs
+// with "\r"; how real Word writes them is not established, so word.ts must not
+// depend on the two views agreeing about line breaks.
 
 export type FakeParagraph = string | { raw: string; reviewed: string };
 
@@ -223,6 +233,10 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     `${Word.RangeLocation}`
   >;
   const InsertLocation = { replace: "Replace" } as const satisfies Record<string, `${Word.InsertLocation}`>;
+  const ChangeTrackingVersion = { original: "Original", current: "Current" } as const satisfies Record<
+    string,
+    `${Word.ChangeTrackingVersion}`
+  >;
 
   type Mutation = { start: number; end: number; text: string; tracked: boolean };
 
@@ -245,6 +259,45 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
   const rawTextOf = (): string => paras.map((p) => p.raw).join("\r");
   const rawSlice = (start: number, end: number): string => rawTextOf().slice(start, end);
 
+  /** Raw [start, end) without the tracked deletions inside it — the reviewed view of a range. */
+  const reviewedSlice = (start: number, end: number): string => {
+    const offs = paraOffsets();
+    let out = "";
+    paras.forEach((para, i) => {
+      for (let at = Math.max(start, offs[i]); at < Math.min(end, offs[i] + para.raw.length); at++) {
+        const local = at - offs[i];
+        if (!para.deletions.some((d) => d.start <= local && local < d.end)) out += para.raw[local];
+      }
+      // This paragraph's mark, when the range covers it (the last paragraph has none in the joined text).
+      const mark = offs[i] + para.raw.length;
+      if (i < paras.length - 1 && start <= mark && mark < end) out += "\r";
+    });
+    return out;
+  };
+
+  /** A ClientResult: its value is computed at the next sync() and throws if read before. */
+  const clientResult = (compute: () => string): { readonly value: string } => {
+    let loaded = false;
+    let value = "";
+    pendingLoads.push(() => {
+      value = compute();
+      loaded = true;
+    });
+    return {
+      get value(): string {
+        if (!loaded) throw new Error("ValueNotLoaded: call context.sync() before reading value");
+        return value;
+      },
+    };
+  };
+
+  const reviewedText = (version: string, compute: () => string): { readonly value: string } => {
+    if (version !== ChangeTrackingVersion.current) {
+      throw new Error(`fake models only ChangeTrackingVersion.current (it does not track insertions), got ${version}`);
+    }
+    return clientResult(compute);
+  };
+
   type FakeRange = {
     start: number;
     end: number;
@@ -254,6 +307,8 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     getRange(loc: string): FakeRange;
     expandTo(other: FakeRange): FakeRange;
     insertText(text: string, loc: string): void;
+    getReviewedText(version: string): { readonly value: string };
+    select(): void;
   };
 
   const makeRange = (start: number, end: number): FakeRange => {
@@ -296,6 +351,12 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
           text,
           tracked: trackingMode === ChangeTrackingMode.trackAll,
         });
+      },
+      getReviewedText(version: string) {
+        return reviewedText(version, () => reviewedSlice(range.start, range.end));
+      },
+      select() {
+        /* navigation only: the fake does not model the selection */
       },
     };
     return range;
@@ -401,13 +462,29 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     },
     body: {
       search: (query: string, opts: SearchOptions) => makeCollection(query, opts),
+      load(prop: string) {
+        if (prop === "text") {
+          pendingLoads.push(() => {
+            bodyText = rawTextOf();
+          });
+        }
+      },
+      get text(): string {
+        if (bodyText === undefined) {
+          throw new Error("PropertyNotLoaded: call load('text') then context.sync()");
+        }
+        return bodyText;
+      },
+      getReviewedText: (version: string) => reviewedText(version, () => paras.map(reviewedOf).join("\r")),
     },
   };
+  let bodyText: string | undefined;
 
   const namespace = {
     run: async <T>(cb: (context: { document: typeof document; sync: () => Promise<void> }) => Promise<T>): Promise<T> =>
       cb({ document, sync }),
     ChangeTrackingMode,
+    ChangeTrackingVersion,
     RangeLocation,
     InsertLocation,
   };

@@ -7,6 +7,7 @@
 import type { DocumentReading, TrackedChange } from "./documentCapture";
 import { normalizeForSearch } from "./normalize";
 import type { EditProposal } from "./parseEditBlocks";
+import { sameLiveText, trackedView, type TrackedView } from "./trackedText";
 
 export type Result<T = void> =
   | { ok: true; value: T }
@@ -176,6 +177,16 @@ const SEARCH_MAX_LEN = 200;
 const NO_MATCH_MESSAGE =
   "No exact match in the document — this finding describes a section rather than quoting it verbatim, so there's nothing to locate.";
 
+// Shown when the text IS in what the model read (the accepted-changes view) but
+// Word can't place it: it runs across tracked changes in a way the raw-text
+// translation couldn't resolve (see trackedText.ts). Unlike the not-found
+// messages, it names the workaround.
+const TRACKED_NO_MATCH_MESSAGE =
+  "This text runs across tracked changes that Word's search can't see past. Accept or reject the tracked changes around it, then try again.";
+
+const inAcceptedText = (view: TrackedView | null, anchors: string[]): boolean =>
+  view !== null && anchors.some((a) => view.count(a) > 0);
+
 function searchCandidates(needle: string): string[] {
   const normalized = normalizeForSearch(needle);
   const candidates: string[] = [];
@@ -286,33 +297,52 @@ function tailCandidates(needle: string): string[] {
   return candidates;
 }
 
+/** The document's tracked deletions, read once per action: null when it has
+ *  none, and every search below then takes the path it always took. */
+export async function readTrackedView(context: Word.RequestContext): Promise<TrackedView | null> {
+  const body = context.document.body;
+  body.load("text");
+  const current = body.getReviewedText(Word.ChangeTrackingVersion.current);
+  await context.sync();
+  return trackedView(body.text, current.value);
+}
+
+/** Every body.search match for `query`, in document order. */
+async function searchAll(
+  context: Word.RequestContext,
+  query: string,
+  matchWildcards: boolean,
+  matchWholeWord: boolean,
+): Promise<Word.Range[]> {
+  try {
+    const results = context.document.body.search(query, {
+      matchCase: false,
+      matchWildcards,
+      matchWholeWord,
+    });
+    results.load("items");
+    await context.sync();
+    return results.items;
+  } catch (e) {
+    // body.search throws on malformed candidates (>255 chars, certain
+    // wildcard-char combinations the API rejects post-queue, etc.). Treat as
+    // "no match" so the search loop moves on rather than aborting the whole
+    // find/delete/redline flow. Logged at warn for DevTools visibility.
+    console.warn("[word.ts] body.search rejected candidate:", query.slice(0, 80), e);
+    return [];
+  }
+}
+
 async function searchFirst(
   context: Word.RequestContext,
   trial: string,
+  view: TrackedView | null,
 ): Promise<Word.Range | null> {
-  const run = async (query: string, matchWildcards: boolean, matchWholeWord: boolean) => {
-    try {
-      const results = context.document.body.search(query, {
-        matchCase: false,
-        matchWildcards,
-        matchWholeWord,
-      });
-      results.load("items");
-      await context.sync();
-      return results.items.length > 0 ? results.items[0] : null;
-    } catch (e) {
-      // body.search throws on malformed candidates (>255 chars, certain
-      // wildcard-char combinations the API rejects post-queue, etc.). Treat as
-      // "no match" so the search loop moves on rather than aborting the whole
-      // find/delete/redline flow. Logged at warn for DevTools visibility.
-      console.warn("[word.ts] body.search rejected candidate:", query.slice(0, 80), e);
-      return null;
-    }
-  };
+  if (view) return searchLive(context, trial, view);
 
   // Single-word clause-name anchors ("Title") search whole-word-only so they
   // can't match mid-word ("entitled"). Multi-word trials keep substring behavior.
-  const literal = await run(trial, false, shouldMatchWholeWord(trial));
+  const literal = (await searchAll(context, trial, false, shouldMatchWholeWord(trial)))[0];
   if (literal) return literal;
 
   // Word for Mac mis-reads [](){}<>?* etc. as wildcards even in literal mode, so
@@ -321,9 +351,53 @@ async function searchFirst(
   // body.search match the literal characters. Whole-word is irrelevant/ignored
   // in wildcard mode, so pass false.
   if (WORD_WILDCARD_META.test(trial)) {
-    return run(escapeWordWildcards(trial), true, false);
+    return (await searchAll(context, escapeWordWildcards(trial), true, false))[0] ?? null;
   }
   return null;
+}
+
+/**
+ * searchFirst on a document with tracked deletions. The trial comes from the
+ * accepted-changes text the model read, but Word searches the raw text, where a
+ * struck run may sit inside it — so search for the trial's raw stretch (see
+ * trackedText.ts) and take a match only when its own accepted-changes text IS
+ * the trial. That also keeps a match off text that survives only struck.
+ */
+async function searchLive(
+  context: Word.RequestContext,
+  trial: string,
+  view: TrackedView,
+): Promise<Word.Range | null> {
+  for (const stretch of view.stretchesFor(trial, shouldMatchWholeWord(trial))) {
+    const [first] = await liveMatchesOf(context, stretch, trial, shouldMatchWholeWord(stretch));
+    if (first) return first;
+  }
+  return null;
+}
+
+/** Matches of a raw stretch whose accepted-changes text is `expected`:
+ *  literal first, then escaped wildcards, as searchFirst does. */
+async function liveMatchesOf(
+  context: Word.RequestContext,
+  stretch: string,
+  expected: string,
+  matchWholeWord: boolean,
+): Promise<Word.Range[]> {
+  const literal = await keepLive(context, await searchAll(context, stretch, false, matchWholeWord), expected);
+  if (literal.length > 0 || !WORD_WILDCARD_META.test(stretch)) return literal;
+  return keepLive(context, await searchAll(context, escapeWordWildcards(stretch), true, false), expected);
+}
+
+/** The matches whose accepted-changes text is `expected`, in document order. */
+async function keepLive(
+  context: Word.RequestContext,
+  matches: Word.Range[],
+  expected: string,
+): Promise<Word.Range[]> {
+  if (matches.length === 0) return [];
+  const live = matches.map((m) => m.getReviewedText(Word.ChangeTrackingVersion.current));
+  await context.sync();
+  return matches.filter((_, i) => sameLiveText(live[i].value, expected));
 }
 
 /**
@@ -340,15 +414,19 @@ async function searchFirst(
  * Using the MATCH boundaries (not whole paragraphs) means a fragment quote
  * replaces exactly the fragment, while a full-clause quote still spans the
  * whole clause. If no tail is found, the head match alone is returned.
+ *
+ * `view` is readTrackedView's: null on a document without tracked deletions,
+ * which keeps every search on the path it always took.
  */
 export async function findClauseRange(
   context: Word.RequestContext,
   currentText: string,
+  view: TrackedView | null,
 ): Promise<Word.Range | null> {
   // Step 1: find the start via the first matching head candidate.
   let startMatch: Word.Range | null = null;
   for (const trial of searchCandidates(currentText)) {
-    startMatch = await searchFirst(context, trial);
+    startMatch = await searchFirst(context, trial, view);
     if (startMatch) break;
   }
   if (!startMatch) return null;
@@ -363,7 +441,7 @@ export async function findClauseRange(
   // Step 2: find the end via the first matching tail candidate.
   let endMatch: Word.Range | null = null;
   for (const trial of tailCandidates(currentText)) {
-    endMatch = await searchFirst(context, trial);
+    endMatch = await searchFirst(context, trial, view);
     if (endMatch) break;
   }
   // No tail (short quote, or only the full string matched) → the head match
@@ -377,10 +455,12 @@ export async function findClauseRange(
 
   // Safety check: if the span ended up much bigger than the original needle
   // (head and tail in unrelated parts of the doc), the expansion is bogus.
-  // Fall back to just the head match.
+  // Fall back to just the head match. Struck runs inside the span are not
+  // clause text, so a tracked document measures its accepted-changes text.
+  const spanLive = view ? span.getReviewedText(Word.ChangeTrackingVersion.current) : null;
   span.load("text");
   await context.sync();
-  if (span.text.length > currentText.length * 3) {
+  if ((spanLive ? spanLive.value : span.text).length > currentText.length * 3) {
     return startMatch;
   }
   return span;
@@ -398,13 +478,30 @@ export async function findClauseRange(
 async function findClauseRangeFromAnchors(
   context: Word.RequestContext,
   anchors: string[],
+  view: TrackedView | null,
 ): Promise<Word.Range | null> {
   for (const candidate of anchors) {
     if (!candidate.trim()) continue;
-    const range = await findClauseRange(context, candidate);
+    const range = await findClauseRange(context, candidate, view);
     if (range) return range;
   }
   return null;
+}
+
+/**
+ * The range navigation shows. Navigation never writes, so when nothing live
+ * matches on a tracked document it still lands on text that survives only as
+ * a struck deletion: a finding from a review made before a placeholder was
+ * filled jumps to where the placeholder was, as it always did.
+ */
+async function findForNavigation(
+  context: Word.RequestContext,
+  anchors: string[],
+  view: TrackedView | null,
+): Promise<Word.Range | null> {
+  const range = await findClauseRangeFromAnchors(context, anchors, view);
+  if (range || !view) return range;
+  return findClauseRangeFromAnchors(context, anchors, null);
 }
 
 /** Normalize string|string[] into the ordered candidate list the helpers use. */
@@ -460,8 +557,9 @@ export async function showInDocument(
   if (anchors.length === 0) return fail("Empty clause text — nothing to locate.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return notFound(NO_MATCH_MESSAGE);
+      const view = await readTrackedView(context);
+      const range = await findForNavigation(context, anchors, view);
+      if (!range) return inAcceptedText(view, anchors) ? fail(TRACKED_NO_MATCH_MESSAGE) : notFound(NO_MATCH_MESSAGE);
       range.select();
       range.insertComment(commentBody);
       range.load("text");
@@ -486,8 +584,9 @@ export async function goToClause(target: string | string[]): Promise<Result<stri
   if (anchors.length === 0) return fail("Empty clause text — nothing to locate.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRangeFromAnchors(context, anchors);
-      if (!range) return notFound(NO_MATCH_MESSAGE);
+      const view = await readTrackedView(context);
+      const range = await findForNavigation(context, anchors, view);
+      if (!range) return inAcceptedText(view, anchors) ? fail(TRACKED_NO_MATCH_MESSAGE) : notFound(NO_MATCH_MESSAGE);
       range.select();
       range.load("text");
       await context.sync();
@@ -517,22 +616,32 @@ export async function acceptRedline(
   if (!newText.trim()) return fail("No redline provided.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRangeFromAnchors(context, anchors);
+      const view = await readTrackedView(context);
+      const range = await findClauseRangeFromAnchors(context, anchors, view);
       // A failed REPLACE is a genuine error the user must act on (their edit did
       // not apply), NOT the benign "nothing to locate" navigation case — so this
       // is a red fail(), not notFound(). Navigation (goToClause/showInDocument)
       // uses notFound(NO_MATCH_MESSAGE) for the calm gray pill instead.
-      if (!range) return fail("Couldn't find the target text in the document — there's nothing to replace here.");
+      if (!range) {
+        return fail(
+          inAcceptedText(view, anchors)
+            ? TRACKED_NO_MATCH_MESSAGE
+            : "Couldn't find the target text in the document — there's nothing to replace here.",
+        );
+      }
 
       // Verify the matched range covers most of the intended target. searchCandidates
       // falls back to shorter prefixes when the full target isn't found verbatim —
       // useful for "show in document" navigation, but for REPLACE that means we'd
       // inject the entire (long) new_text into a (short) prefix match. Refuse and
       // surface a clear error instead of producing a silently-wrong track change.
+      // On a tracked document the match is measured by its accepted-changes text:
+      // struck text inside it is not what the edit replaces.
+      const live = view ? range.getReviewedText(Word.ChangeTrackingVersion.current) : null;
       range.load("text");
       await context.sync();
       const intended = normalizeForSearch(anchors[0]).trim();
-      const matched = normalizeForSearch(range.text).trim();
+      const matched = normalizeForSearch(live ? live.value : range.text).trim();
       if (matched.length < intended.length * MATCH_COMPLETENESS_THRESHOLD) {
         const preview = (intended.length > 50 ? intended.slice(0, 50) + "…" : intended);
         return fail(
@@ -578,6 +687,7 @@ export async function insertNear(
   if (!newText.trim()) return fail("No insertion text provided.");
   try {
     return await Word.run(async (context) => {
+      const view = await readTrackedView(context);
       // Anchor on a SINGLE line/paragraph, not the whole multi-paragraph anchor:
       // for "after" use the anchor's LAST line (end of the section), for
       // "before" its FIRST line. Each line sits in one paragraph, so body.search
@@ -588,10 +698,14 @@ export async function insertNear(
 
       let match: Word.Range | null = null;
       for (const trial of searchCandidates(targetLine)) {
-        match = await searchFirst(context, trial);
+        match = await searchFirst(context, trial, view);
         if (match) break;
       }
-      if (!match) return fail("Couldn't locate the anchor in the document.");
+      if (!match) {
+        return fail(
+          inAcceptedText(view, [targetLine]) ? TRACKED_NO_MATCH_MESSAGE : "Couldn't locate the anchor in the document.",
+        );
+      }
       match.paragraphs.load("items");
       await context.sync();
       if (match.paragraphs.items.length === 0) {
@@ -663,7 +777,6 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
   try {
     return await Word.run(async (context) => {
       const doc = context.document;
-      const body = doc.body;
       doc.load("changeTrackingMode");
       await context.sync();
 
@@ -678,46 +791,12 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
       // visible to body.search even after insertText('replace'), so any
       // re-search inside the same Word.run kept finding the same spot and
       // stacking insertions on top of one another.
-      let matches = body.search(target, {
-        matchCase: false,
-        matchWildcards: false,
-      });
-      matches.load("items");
-      await context.sync();
-
-      // Word for Mac mis-reads bracket/paren metacharacters as wildcards in
-      // literal mode, so a target like "Signed by: [__]" finds nothing. Retry in
-      // wildcard mode with the metacharacters escaped so they match literally.
-      if (matches.items.length === 0 && WORD_WILDCARD_META.test(target)) {
-        matches = body.search(escapeWordWildcards(target), {
-          matchCase: false,
-          matchWildcards: true,
-        });
-        matches.load("items");
-        await context.sync();
-      }
-
-      if (matches.items.length === 0) {
-        return fail(`Couldn't find "${preview}" in the document.`);
-      }
-
-      const snapshot: Word.Range[] = matches.items.slice(0, HARD_CAP);
-      // Load text on every match in one batch so we can verify completeness
-      // before mutating anything.
-      for (const m of snapshot) m.load("text");
-      await context.sync();
-
-      const intended = normalizeForSearch(target).trim();
-      const validMatches = snapshot.filter(
-        (m) =>
-          normalizeForSearch(m.text).trim().length >=
-          intended.length * MATCH_COMPLETENESS_THRESHOLD,
-      );
-      if (validMatches.length === 0) {
-        return fail(
-          `Found "${preview}" but no match covered enough of the target — refusing to apply partial replacements.`,
-        );
-      }
+      const view = await readTrackedView(context);
+      const found = view
+        ? await liveReplaceTargets(context, target, view, preview, HARD_CAP)
+        : await rawReplaceTargets(context, target, preview, HARD_CAP);
+      if (!found.ok) return found;
+      const validMatches = found.value;
 
       const originalMode = doc.changeTrackingMode;
       doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
@@ -741,6 +820,86 @@ async function replaceAll(target: string, newText: string): Promise<Result<numbe
   }
 }
 
+/** replaceAll's matches on a document without tracked deletions: the first
+ *  `cap` body.search matches, kept when they cover enough of the target. */
+async function rawReplaceTargets(
+  context: Word.RequestContext,
+  target: string,
+  preview: string,
+  cap: number,
+): Promise<Result<Word.Range[]>> {
+  const body = context.document.body;
+  let matches = body.search(target, {
+    matchCase: false,
+    matchWildcards: false,
+  });
+  matches.load("items");
+  await context.sync();
+
+  // Word for Mac mis-reads bracket/paren metacharacters as wildcards in
+  // literal mode, so a target like "Signed by: [__]" finds nothing. Retry in
+  // wildcard mode with the metacharacters escaped so they match literally.
+  if (matches.items.length === 0 && WORD_WILDCARD_META.test(target)) {
+    matches = body.search(escapeWordWildcards(target), {
+      matchCase: false,
+      matchWildcards: true,
+    });
+    matches.load("items");
+    await context.sync();
+  }
+
+  if (matches.items.length === 0) {
+    return fail(`Couldn't find "${preview}" in the document.`);
+  }
+
+  const snapshot: Word.Range[] = matches.items.slice(0, cap);
+  // Load text on every match in one batch so we can verify completeness
+  // before mutating anything.
+  for (const m of snapshot) m.load("text");
+  await context.sync();
+
+  const intended = normalizeForSearch(target).trim();
+  const validMatches = snapshot.filter(
+    (m) =>
+      normalizeForSearch(m.text).trim().length >=
+      intended.length * MATCH_COMPLETENESS_THRESHOLD,
+  );
+  if (validMatches.length === 0) {
+    return fail(
+      `Found "${preview}" but no match covered enough of the target — refusing to apply partial replacements.`,
+    );
+  }
+  return ok(validMatches);
+}
+
+/**
+ * replaceAll's matches on a document with tracked deletions: each live
+ * occurrence of the target in the accepted-changes text, found through its raw
+ * stretch and confirmed by its accepted-changes text — never a struck copy. A
+ * confirmed match IS the target, so no completeness filter is needed.
+ */
+async function liveReplaceTargets(
+  context: Word.RequestContext,
+  target: string,
+  view: TrackedView,
+  preview: string,
+  cap: number,
+): Promise<Result<Word.Range[]>> {
+  const found: Word.Range[] = [];
+  for (const stretch of view.stretchesForEvery(target)) {
+    found.push(...(await liveMatchesOf(context, stretch, target, false)));
+  }
+  if (found.length === 0) {
+    return fail(view.count(target) > 0 ? TRACKED_NO_MATCH_MESSAGE : `Couldn't find "${preview}" in the document.`);
+  }
+  // Each occurrence is matched once. More matches than occurrences means two
+  // stretches landed on the same text, and replacing both would stack the edit.
+  if (found.length > view.count(target)) {
+    return fail(`Found "${preview}" more often than it occurs — refusing to apply overlapping replacements.`);
+  }
+  return ok(found.slice(0, cap));
+}
+
 /**
  * Delete the range matching `targetText` as a tracked change (strikethrough).
  * Used for chat-driven removals like "delete the auto-renewal language."
@@ -750,8 +909,13 @@ async function deleteClause(targetText: string): Promise<Result<void>> {
   if (!targetText.trim()) return fail("Empty target text — nothing to delete.");
   try {
     return await Word.run(async (context) => {
-      const range = await findClauseRange(context, targetText);
-      if (!range) return fail("Couldn't locate this text in the document.");
+      const view = await readTrackedView(context);
+      const range = await findClauseRange(context, targetText, view);
+      if (!range) {
+        return fail(
+          inAcceptedText(view, [targetText]) ? TRACKED_NO_MATCH_MESSAGE : "Couldn't locate this text in the document.",
+        );
+      }
 
       const doc = context.document;
       doc.load("changeTrackingMode");

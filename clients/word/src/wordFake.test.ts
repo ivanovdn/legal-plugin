@@ -279,3 +279,70 @@ await withFake(["Signed by: Boris and CEO title block"], async (_fake) => {
   }
   pass(threw, "overlap: an edit spanning a tracked deletion throws instead of silently corrupting reviewed");
 });
+
+// --- The two views: body.text keeps tracked deletions, getReviewedText("Current") drops them ---
+// CLAUDE.md: body.text includes tracked-change deletions; getReviewedText("current")
+// returns the text as if every change were accepted. The Range form is that
+// documented behavior applied to a range (Office.js: WordApi 1.4 on Range).
+await withFake(
+  [{ raw: "between Sony Corp[Legal Name], mailing address", reviewed: "between Sony Corp, mailing address" }, "Second paragraph."],
+  async () => {
+    await Word.run(async (context) => {
+      const body = context.document.body;
+      body.load("text");
+      const current = body.getReviewedText(Word.ChangeTrackingVersion.current);
+      await context.sync();
+      pass(body.text === "between Sony Corp[Legal Name], mailing address\rSecond paragraph.", "views: body.text is raw, struck run included");
+      pass(current.value === "between Sony Corp, mailing address\rSecond paragraph.", "views: body.getReviewedText(current) drops the struck run");
+      const hits = body.search("Corp\\[Legal Name\\], mailing", { matchCase: false, matchWildcards: true, matchWholeWord: false });
+      hits.load("items");
+      await context.sync();
+      const live = hits.items[0].getReviewedText(Word.ChangeTrackingVersion.current);
+      await context.sync();
+      pass(live.value === "Corp, mailing", "views: range.getReviewedText(current) is the range without its struck part");
+    });
+  },
+);
+
+// a range wholly inside a deletion has no accepted-changes text; one across a paragraph mark keeps the mark
+await withFake([{ raw: "Name: [Legal Name]Sony", reviewed: "Name: Sony" }, "Next"], async () => {
+  await Word.run(async (context) => {
+    const body = context.document.body;
+    const opts = { matchCase: false, matchWildcards: false, matchWholeWord: false };
+    const struck = body.search("\\[Legal Name\\]", { ...opts, matchWildcards: true });
+    const sony = body.search("Sony", opts);
+    const next = body.search("Next", opts);
+    struck.load("items");
+    sony.load("items");
+    next.load("items");
+    await context.sync();
+    const inside = struck.items[0].getReviewedText(Word.ChangeTrackingVersion.current);
+    const across = sony.items[0]
+      .getRange(Word.RangeLocation.start)
+      .expandTo(next.items[0].getRange(Word.RangeLocation.end))
+      .getReviewedText(Word.ChangeTrackingVersion.current);
+    let threwBeforeSync = false;
+    try {
+      void inside.value;
+    } catch {
+      threwBeforeSync = true;
+    }
+    pass(threwBeforeSync, "views: a reviewed-text value throws before sync");
+    await context.sync();
+    pass(inside.value === "", "views: a range wholly inside a deletion has no accepted-changes text");
+    pass(across.value === "Sony\rNext", "views: a range across a paragraph mark keeps the mark");
+  });
+});
+
+// "Original" is refused: this fake does not track insertions, so it cannot know the original text
+let refusedOriginal = false;
+await withFake(["text"], async () => {
+  await Word.run(async (context) => {
+    try {
+      context.document.body.getReviewedText(Word.ChangeTrackingVersion.original);
+    } catch {
+      refusedOriginal = true;
+    }
+  });
+});
+pass(refusedOriginal, "views: the original version is refused rather than guessed");

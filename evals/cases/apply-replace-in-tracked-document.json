@@ -1,0 +1,26 @@
+{
+  "kind": "apply",
+  "why": "A document with tracked deletions sends every Apply down the new path (search the raw stretch of the quote, then confirm the match's accepted-changes text). An ordinary replace away from any struck run must apply exactly as before.",
+  "input": {
+    "paragraphs": [
+      {
+        "raw": "Payment is due within 4530 days of invoice.",
+        "reviewed": "Payment is due within 45 days of invoice."
+      },
+      "This Agreement is governed by the laws of England."
+    ],
+    "proposal": {
+      "action": "replace",
+      "target_text": "governed by the laws of England",
+      "new_text": "governed by the laws of Ireland"
+    }
+  },
+  "expect": {
+    "ok": true,
+    "reviewed": "Payment is due within 45 days of invoice.\rThis Agreement is governed by the laws of Ireland.",
+    "trackingModeLog": [
+      "TrackAll",
+      "Off"
+    ]
+  }
+}

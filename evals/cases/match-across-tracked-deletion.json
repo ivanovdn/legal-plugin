@@ -1,0 +1,16 @@
+{
+  "kind": "match",
+  "why": "VM 2026-10-23 (edit_failed, document bfca9500): '[Legal Name]' had been replaced by 'Sony Corp' as a tracked change, and Word for Mac put the insertion BEFORE the struck original. The model reads getReviewedText('current') and quoted 'Sony Corp, mailing address at [Address]'; body.search matches the raw text, where the struck '[Legal Name]' sits inside that quote, so Apply and Go to found nothing. The quoted words and the struck run are from the VM; the rest of the paragraph is reconstructed. Go to must land on the raw stretch, struck run inside.",
+  "input": {
+    "paragraphs": [
+      {
+        "raw": "This Mutual Non-Disclosure Agreement is made by and between Sony Corp[Legal Name], mailing address at [Address] (the \"Company\"), and Trinetix, Inc.",
+        "reviewed": "This Mutual Non-Disclosure Agreement is made by and between Sony Corp, mailing address at [Address] (the \"Company\"), and Trinetix, Inc."
+      }
+    ],
+    "target": "Sony Corp, mailing address at [Address]"
+  },
+  "expect": {
+    "matched": "Sony Corp[Legal Name], mailing address at [Address]"
+  }
+}

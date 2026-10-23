@@ -11,7 +11,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { applyEdit, findClauseRange } from "../word";
+import { applyEdit, findClauseRange, goToClause, readTrackedView } from "../word";
 import { extractEditBlocks, normalizeProposals, type EditProposal } from "../parseEditBlocks";
 import { createFakeWord, type FakeParagraph } from "./wordFake";
 
@@ -32,6 +32,8 @@ type Case = {
     prose?: string;
     paragraphs?: FakeParagraph[];
     target?: string;
+    /** "goto": run the target through goToClause (navigation), not the bare matcher. */
+    via?: "goto";
     proposal?: EditProposal;
   };
   expect: {
@@ -67,11 +69,17 @@ async function runMatch(c: Case): Promise<boolean> {
   // expectation ("no match" is a value, not an absence). A typo'd field name
   // must fail the case, not silently fall back to "expected no match" via `??`.
   if (!("matched" in c.expect)) return false;
+  // Same rule for `via`: an unrecognised value must fail, not run as a plain match.
+  if (c.input.via !== undefined && c.input.via !== "goto") return false;
   const fake = createFakeWord(c.input.paragraphs ?? []);
   fake.install();
   try {
+    if (c.input.via === "goto") {
+      const result = await goToClause(c.input.target ?? "");
+      return result.ok ? result.value === c.expect.matched : c.expect.matched === null;
+    }
     return await Word.run(async (context) => {
-      const range = await findClauseRange(context, c.input.target ?? "");
+      const range = await findClauseRange(context, c.input.target ?? "", await readTrackedView(context));
       if (range === null) return c.expect.matched === null;
       range.load("text");
       await context.sync();
