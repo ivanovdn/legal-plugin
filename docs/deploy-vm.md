@@ -236,11 +236,11 @@ What we make on the VM by hand — deploy logs, backups, the exported root certi
 sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
 ```
 
-**`app-db` is dumped every night** by the deploy user's crontab — its only entry, installed 2026-10-09. At 02:17 UTC it writes `data/backups/app-db-<UTC date>-nightly.sql.gz`, deletes nightly dumps older than 14 days (never a manual backup: those lack the `-nightly` suffix), and appends one line per run to `data/backups/app-db-nightly.log` — `ok <file> <bytes>`, or `FAILED` with the error. `pipefail`, plus a `.part` file renamed only on success, keep a failed dump from passing for a good one. **Nothing alerts on a `FAILED`**, so read the log's last line whenever you are on the VM:
+**`app-db` is dumped every night** by the deploy user's crontab — installed 2026-10-09. At 02:17 UTC it writes `data/backups/app-db-<UTC date>-nightly.sql.gz`, deletes nightly dumps older than 14 days (never a manual backup: those lack the `-nightly` suffix), and appends one line per run to `data/backups/app-db-nightly.log` — `ok <file> <bytes>`, or `FAILED` with the error. `pipefail`, plus a `.part` file renamed only on success, keep a failed dump from passing for a good one. **Nothing alerts on a `FAILED`**, so read the log's last line whenever you are on the VM:
 
 ```bash
 tail -3 data/backups/app-db-nightly.log
-crontab -l   # the deployed copy of the entry below — reinstall it from here if it is ever lost
+crontab -l   # the deployed copy of our two entries below — reinstall them from here if they are ever lost
 ```
 
 ```
@@ -251,6 +251,13 @@ MAILTO=""
 ```
 
 There is no `%` in it (`date -I`, `wc -c`) on purpose: cron turns an unescaped `%` into a newline. Installed with `crontab -` and then run once exactly as cron would (`env -i HOME=… PATH=/usr/bin:/bin SHELL=/bin/bash`): it logged `ok … 91184 bytes`.
+
+**After a reboot, the same crontab starts our stack** (added 2026-10-22). A reboot had left all five containers stopped: Docker's `unless-stopped` policy does not restart a container that was stopped by hand before the reboot. The entry waits for Docker, then starts only our five services — never building or recreating anything — and logs to `data/deploy-logs/boot.log`. It first brought the stack back on its own after the VM crash of 2026-10-23 08:10 UTC. The crontab also holds an `@reboot` line for compliance-bot's `rag` stack; that one is theirs — leave it alone.
+
+```
+# legal-plugin: start our five containers after a reboot; Docker's restart policy skips containers stopped by hand (2026-10-22). Log: data/deploy-logs/boot.log
+@reboot cd "$HOME/legal-plugin" && for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 5; done && docker compose -f docker-compose.yml -f docker-compose.remote.yml up -d --no-build --no-recreate app-db redis phoenix backend caddy >> data/deploy-logs/boot.log 2>&1
+```
 
 **What else to back up, and when.** A nightly dump can be a day old, so before anything risky take a manual one too:
 
