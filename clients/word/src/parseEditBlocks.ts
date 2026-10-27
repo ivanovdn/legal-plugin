@@ -363,11 +363,31 @@ export function isNoOpEdit(e: EditProposal): boolean {
   return typeof e.target_text === "string" && e.target_text === e.new_text;
 }
 
+/**
+ * True when a proposal turns a blank into nothing: its replacement is its
+ * target with the blank taken out ("Title: [__]" -> "Title:", "[__]" -> "").
+ *
+ * The local LLM does this to the fields it has no value for while filling the
+ * rest of a block — "fill every signed by placeholder with Jane Doe" came back
+ * with "Title: [__]" -> "Title: " (local sideload, 2026-10-27). Erasing a blank
+ * is never a fill: the field then reads as deliberately empty, and the review's
+ * unfilled-placeholder check no longer sees it.
+ */
+export function erasesBlank(e: EditProposal): boolean {
+  if (e.action !== "replace" && e.action !== "replace_all") return false;
+  if (typeof e.target_text !== "string" || typeof e.new_text !== "string") return false;
+  if (!BLANK_PLACEHOLDER_RE.test(e.target_text)) return false;
+  const squash = (t: string) => t.replace(/\s+/g, " ").trim();
+  const withoutBlanks = e.target_text.replace(new RegExp(BLANK_PLACEHOLDER_RE.source, "g"), "");
+  return squash(e.new_text) === squash(withoutBlanks);
+}
+
 export function normalizeProposals(blocks: EditProposal[]): EditProposal[] {
   // Filter LAST: splitting a multi-line block and collapsing duplicates can
-  // each surface a no-op that wasn't visible in the original proposal.
+  // each surface a no-op or an erased blank that wasn't visible in the
+  // original proposal.
   return collapseDuplicateFills(blocks.flatMap(splitMultilineFieldEdits)).filter(
-    (e) => !isNoOpEdit(e),
+    (e) => !isNoOpEdit(e) && !erasesBlank(e),
   );
 }
 

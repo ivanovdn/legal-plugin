@@ -1,0 +1,31 @@
+{
+  "kind": "parse",
+  "why": "Local sideload 2026-10-27: 'fill every signed by placeholder with Jane Doe' came back as one block edit whose Title line erased the blank ('Title: [__]' -> 'Title: '). splitMultilineFieldEdits turns it into one card per line, and the Title card would wipe the placeholder, so the field reads as deliberately empty and the review's unfilled-placeholder check no longer sees it. normalizeProposals drops a card that turns a blank into nothing (erasesBlank). The unrequested 'for and on behalf of Sony Corp' card survives: no code rule can tell an unrequested value from a wanted one (CLAUDE.md, the SCOPE rule). expect.edits is the backend's raw output; expect.normalized is extractEditBlocks(prose).blocks.",
+  "input": {
+    "prose": "I have updated the signature blocks to include Jane Doe as the signatory for Sony Corp.\n\n```json\n{\"action\": \"replace\", \"target_text\": \"Signed by: [__]\\nTitle: [__]\\nfor and on behalf of [__]\", \"new_text\": \"Signed by: Jane Doe\\nTitle: \\nfor and on behalf of Sony Corp\", \"rationale\": \"Fills the signatory name, title, and entity for the Receiving Party (Sony) as requested.\"}\n```\n"
+  },
+  "expect": {
+    "edits": [
+      {
+        "action": "replace",
+        "target_text": "Signed by: [__]\nTitle: [__]\nfor and on behalf of [__]",
+        "new_text": "Signed by: Jane Doe\nTitle: \nfor and on behalf of Sony Corp",
+        "rationale": "Fills the signatory name, title, and entity for the Receiving Party (Sony) as requested."
+      }
+    ],
+    "normalized": [
+      {
+        "action": "replace_all",
+        "target_text": "Signed by: [__]",
+        "new_text": "Signed by: Jane Doe",
+        "rationale": "Fills the signatory name, title, and entity for the Receiving Party (Sony) as requested."
+      },
+      {
+        "action": "replace_all",
+        "target_text": "for and on behalf of [__]",
+        "new_text": "for and on behalf of Sony Corp",
+        "rationale": "Fills the signatory name, title, and entity for the Receiving Party (Sony) as requested."
+      }
+    ]
+  }
+}

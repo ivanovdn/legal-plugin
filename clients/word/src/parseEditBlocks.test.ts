@@ -408,6 +408,42 @@ import { pass } from "./testAssert";
   pass(normalizeProposals(blocks).length === 1, "no-op: whitespace-differing edit kept");
 }
 
+// --- a card that turns a blank into nothing is dropped ---
+// "fill every signed by placeholder with Jane Doe" (local sideload, 2026-10-27)
+// came back as one block edit whose Title line was "Title: [__]" -> "Title: ".
+// Split per line, that is a card that erases the placeholder: the field then
+// reads as filled-in-blank and nothing flags it as unfilled any more.
+{
+  const blocks: EditProposal[] = [
+    {
+      action: "replace",
+      target_text: "Signed by: [__]\nTitle: [__]\nfor and on behalf of [__]",
+      new_text: "Signed by: Jane Doe\nTitle: \nfor and on behalf of Sony Corp",
+    },
+  ];
+  const out = normalizeProposals(blocks);
+  pass(
+    JSON.stringify(out.map((e) => e.target_text)) === JSON.stringify(["Signed by: [__]", "for and on behalf of [__]"]),
+    "erased blank: the Title card from the sideload turn is dropped, the others survive",
+  );
+}
+{
+  const blocks: EditProposal[] = [{ action: "replace_all", target_text: "[__]", new_text: "" }];
+  pass(normalizeProposals(blocks).length === 0, "erased blank: a bare blank replaced by nothing is dropped");
+}
+{
+  const blocks: EditProposal[] = [{ action: "replace", target_text: "Title: ___", new_text: "Title:" }];
+  pass(normalizeProposals(blocks).length === 0, "erased blank: an underscore blank replaced by nothing is dropped");
+}
+{
+  const blocks: EditProposal[] = [{ action: "replace_all", target_text: "Title: [__]", new_text: "Title: CEO" }];
+  pass(normalizeProposals(blocks).length === 1, "erased blank: a blank filled with a value is kept");
+}
+{
+  const blocks: EditProposal[] = [{ action: "replace", target_text: "Title: [__]", new_text: "Position:" }];
+  pass(normalizeProposals(blocks).length === 1, "erased blank: an edit that also changes the label is kept");
+}
+
 // --- fill-vs-overwrite guard ---
 // "fill blanc singed by with suzy qutreo" produced Signed by: Jane Doe ->
 // Signed by: Suzy Qutreo while `Title: [__]` and `for and on behalf of [__]`
