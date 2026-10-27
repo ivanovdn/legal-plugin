@@ -1,0 +1,23 @@
+{
+  "kind": "apply",
+  "why": "Which match is ours is settled by counting raw occurrences, so the count must agree with Word's: body.search can't match across a raw tab, and a struck copy holding one is counted by us but not found by Word. Taking match nth anyway would land on the NEXT live copy. When the counts disagree nothing is taken from that search; here the remaining candidates are too short to pass the completeness check, so nothing is applied.",
+  "input": {
+    "paragraphs": [
+      {
+        "raw": "Old: Party\tA owes the fee",
+        "reviewed": "Old: "
+      },
+      "First: Party A owes the fee",
+      "Second: Party A owes the fee"
+    ],
+    "proposal": {
+      "action": "replace",
+      "target_text": "Party A owes the fee",
+      "new_text": "Party A owes nothing"
+    }
+  },
+  "expect": {
+    "ok": false,
+    "reviewed": "Old: \rFirst: Party A owes the fee\rSecond: Party A owes the fee"
+  }
+}

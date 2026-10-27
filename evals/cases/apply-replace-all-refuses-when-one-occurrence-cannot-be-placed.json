@@ -1,0 +1,23 @@
+{
+  "kind": "apply",
+  "why": "Fill every: when one live occurrence can't be placed (here a struck tab sits inside it, and body.search can't match across a tab), filling the others would leave the attorney believing every one was filled. Nothing is applied, and the message names the workaround.",
+  "input": {
+    "paragraphs": [
+      "for and on behalf of [Legal Name]",
+      {
+        "raw": "Signed for [Legal \tName] by its director",
+        "reviewed": "Signed for [Legal Name] by its director"
+      }
+    ],
+    "proposal": {
+      "action": "replace_all",
+      "target_text": "[Legal Name]",
+      "new_text": "Sony Corp"
+    }
+  },
+  "expect": {
+    "ok": false,
+    "errorContains": "Accept or reject the tracked changes around it",
+    "reviewed": "for and on behalf of [Legal Name]\rSigned for [Legal Name] by its director"
+  }
+}

@@ -168,7 +168,7 @@ await withFake(["Signed by: Boris"], async (fake) => {
     await context.sync();
   });
   pass(fake.reviewedText() === "Signed by: Suzy", "tracked: reviewed shows the replacement");
-  pass(fake.rawText() === "Signed by: BorisSuzy", "tracked: raw keeps the struck original");
+  pass(fake.rawText() === "Signed by: SuzyBoris", "tracked: raw keeps the struck original, after the new text (measured)");
   pass(
     fake.trackingModeLog().join(",") === "TrackAll,Off",
     "tracked: every changeTrackingMode assignment is logged in order",
@@ -241,49 +241,56 @@ await withFake(["Signed by: Boris and CEO title block"], async (fake) => {
     results.items[0].insertText("Officer", Word.InsertLocation.replace);
     await context.sync();
   });
-  pass(fake.rawText() === "Signed by: BorisSuzy and CEO Officer block", "cross-sync: raw carries both edits");
+  pass(fake.rawText() === "Signed by: SuzyBoris and CEO Officer block", "cross-sync: raw carries both edits");
   pass(
     fake.reviewedText() === "Signed by: Suzy and CEO Officer block",
     "cross-sync: reviewed carries both edits, not just the tracked one",
   );
 });
 
-// an edit that re-touches a region already containing a tracked deletion is
-// refused, not guessed at — real Word's semantics there (absorb / preserve /
-// nest the strike) are not established anywhere this fake can check.
-await withFake(["Signed by: Boris and CEO title block"], async (_fake) => {
-  await Word.run(async (context) => {
-    const doc = context.document;
-    const results = doc.body.search("Boris", { matchCase: false, matchWildcards: false, matchWholeWord: false });
-    results.load("items");
-    await context.sync();
-    doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-    results.items[0].insertText("Suzy", Word.InsertLocation.replace);
-    await context.sync();
-    doc.changeTrackingMode = Word.ChangeTrackingMode.off;
-    await context.sync();
-  });
-  let threw = false;
-  try {
+// A tracked edit over a whole struck run: measured in Word for Mac 16.114
+// (2026-10-27) — the new text goes first and the struck run merges into the
+// new deletion. An edit that cuts into a struck run, or an untracked edit over
+// one, is not observed, so the fake refuses rather than guess.
+const editAfterStrike = (query: string, tracked: boolean) =>
+  withFake(["Signed by: Boris and CEO title block"], async (fake) => {
     await Word.run(async (context) => {
-      const results = context.document.body.search("BorisSuzy", {
-        matchCase: false, matchWildcards: false, matchWholeWord: false,
-      });
+      const doc = context.document;
+      const results = doc.body.search("Boris", { matchCase: false, matchWildcards: false, matchWholeWord: false });
       results.load("items");
       await context.sync();
-      results.items[0].insertText("X", Word.InsertLocation.replace);
+      doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+      results.items[0].insertText("Suzy", Word.InsertLocation.replace);
       await context.sync();
     });
-  } catch {
-    threw = true;
-  }
-  pass(threw, "overlap: an edit spanning a tracked deletion throws instead of silently corrupting reviewed");
-});
+    let threw = false;
+    try {
+      await Word.run(async (context) => {
+        const doc = context.document;
+        const results = doc.body.search(query, { matchCase: false, matchWildcards: false, matchWholeWord: false });
+        results.load("items");
+        await context.sync();
+        if (results.items.length !== 1) throw new Error(`setup: expected one match for ${query}`);
+        doc.changeTrackingMode = tracked ? Word.ChangeTrackingMode.trackAll : Word.ChangeTrackingMode.off;
+        results.items[0].insertText("X", Word.InsertLocation.replace);
+        await context.sync();
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("setup:")) throw e;
+      threw = true;
+    }
+    return { threw, raw: fake.rawText(), reviewed: fake.reviewedText() };
+  });
+const merged = await editAfterStrike("SuzyBoris", true);
+pass(!merged.threw && merged.reviewed === "Signed by: X and CEO title block", "overlap: a tracked edit over a whole struck run applies");
+pass(merged.raw === "Signed by: XSuzyBoris and CEO title block", "overlap: the new text goes first, the struck run merges into the new deletion");
+pass((await editAfterStrike("zyBo", true)).threw, "overlap: an edit that cuts into a struck run throws");
+pass((await editAfterStrike("SuzyBoris", false)).threw, "overlap: an untracked edit over a struck run throws");
 
 // --- The two views: body.text keeps tracked deletions, getReviewedText("Current") drops them ---
 // CLAUDE.md: body.text includes tracked-change deletions; getReviewedText("current")
-// returns the text as if every change were accepted. The Range form is that
-// documented behavior applied to a range (Office.js: WordApi 1.4 on Range).
+// returns the text as if every change were accepted. The Range form keeps the
+// struck runs (measured, Word for Mac 16.114, 2026-10-27).
 await withFake(
   [{ raw: "between Sony Corp[Legal Name], mailing address", reviewed: "between Sony Corp, mailing address" }, "Second paragraph."],
   async () => {
@@ -293,18 +300,18 @@ await withFake(
       const current = body.getReviewedText(Word.ChangeTrackingVersion.current);
       await context.sync();
       pass(body.text === "between Sony Corp[Legal Name], mailing address\rSecond paragraph.", "views: body.text is raw, struck run included");
-      pass(current.value === "between Sony Corp, mailing address\rSecond paragraph.", "views: body.getReviewedText(current) drops the struck run");
+      pass(current.value === "between Sony Corp, mailing address\rSecond paragraph.\r", "views: body.getReviewedText(current) drops the struck run and ends with a paragraph mark (measured)");
       const hits = body.search("Corp\\[Legal Name\\], mailing", { matchCase: false, matchWildcards: true, matchWholeWord: false });
       hits.load("items");
       await context.sync();
       const live = hits.items[0].getReviewedText(Word.ChangeTrackingVersion.current);
       await context.sync();
-      pass(live.value === "Corp, mailing", "views: range.getReviewedText(current) is the range without its struck part");
+      pass(live.value === "Corp[Legal Name], mailing", "views: range.getReviewedText(current) keeps its struck part (measured)");
     });
   },
 );
 
-// a range wholly inside a deletion has no accepted-changes text; one across a paragraph mark keeps the mark
+// a range's accepted-changes text is its raw text, struck runs and paragraph marks included
 await withFake([{ raw: "Name: [Legal Name]Sony", reviewed: "Name: Sony" }, "Next"], async () => {
   await Word.run(async (context) => {
     const body = context.document.body;
@@ -329,7 +336,7 @@ await withFake([{ raw: "Name: [Legal Name]Sony", reviewed: "Name: Sony" }, "Next
     }
     pass(threwBeforeSync, "views: a reviewed-text value throws before sync");
     await context.sync();
-    pass(inside.value === "", "views: a range wholly inside a deletion has no accepted-changes text");
+    pass(inside.value === "[Legal Name]", "views: a range wholly inside a deletion keeps it (measured)");
     pass(across.value === "Sony\rNext", "views: a range across a paragraph mark keeps the mark");
   });
 });

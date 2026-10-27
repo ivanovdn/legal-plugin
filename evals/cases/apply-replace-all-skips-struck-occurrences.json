@@ -1,6 +1,6 @@
 {
   "kind": "apply",
-  "why": "replace_all snapshots every body.search match, struck ones included, so 'fill every [Legal Name]' after one was already filled as a tracked change also wrote into the struck one. Only matches whose accepted-changes text is the target are replaced.",
+  "why": "replace_all snapshots every body.search match, struck ones included, so 'fill every [Legal Name]' after one was already filled as a tracked change also wrote into the struck one. Each live occurrence is picked by its place among the raw matches, so the struck copy is skipped.",
   "input": {
     "paragraphs": [
       {

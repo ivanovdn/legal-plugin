@@ -1,6 +1,6 @@
 {
   "kind": "apply",
-  "why": "VM 2026-10-23 (edit_failed, document bfca9500): '[Legal Name]' had been replaced by 'Sony Corp' as a tracked change, and Word for Mac put the insertion BEFORE the struck original. The model reads getReviewedText('current') and quoted 'Sony Corp, mailing address at [Address]'; body.search matches the raw text, where the struck '[Legal Name]' sits inside that quote, so Apply and Go to found nothing. The quoted words and the struck run are from the VM; the rest of the paragraph is reconstructed. The matcher now finds the raw stretch; what Word does to a replace over a range that already holds a tracked deletion is not established, and the fake refuses to guess, so this case waits on that observation (baseline).",
+  "why": "VM 2026-10-23 (edit_failed, document bfca9500): '[Legal Name]' had been replaced by 'Sony Corp' as a tracked change, and Word for Mac put the insertion BEFORE the struck original. The model reads getReviewedText('current') and quoted 'Sony Corp, mailing address at [Address]'; body.search matches the raw text, where the struck '[Legal Name]' sits inside that quote, so Apply and Go to found nothing. The quoted words and the struck run are from the VM; the rest of the paragraph is reconstructed. Measured in a Word for Mac 16.114 sideload (2026-10-27): the replace applies, the new text goes before the struck text, and the old struck run merges into the new deletion — the fake models exactly that.",
   "input": {
     "paragraphs": [
       {

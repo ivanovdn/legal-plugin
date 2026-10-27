@@ -12,28 +12,39 @@
 // maps onto one stretch of the raw text — struck runs inside it included — and
 // that stretch is what Word can find. Where the mapping is ambiguous (a struck
 // run that repeats the text beside it), two stretches are offered, the tight
-// one first. Either way the caller accepts a match only after Word's own
-// reading of it (Range.getReviewedText) is the quote, so a wrong guess applies
-// nothing.
+// one first.
+//
+// Which match is ours is settled by counting, not by asking Word: in Word for
+// Mac 16.114 a range's getReviewedText("current") still holds its struck runs
+// (measured 2026-10-27), so it can't tell a live match from a struck copy. We
+// hold the raw text, so each stretch carries its place among the stretch's raw
+// occurrences, counted the way Word's search counts; Word returns matches in
+// document order, and the caller takes match `nth` only when Word found exactly
+// `total` — any disagreement and nothing is applied.
 
 import { normalizeForSearch } from "./normalize";
 
+/** Raw text to search for, and which of its `total` raw occurrences is the one meant. */
+export type Stretch = { text: string; nth: number; total: number };
+
 export type TrackedView = {
   /** Raw stretches that may hold the first occurrence of `needle` in the
-   *  accepted-changes text, best first; empty when it isn't there. */
-  stretchesFor(needle: string, wholeWord: boolean): string[];
-  /** One raw stretch per occurrence of `needle`, distinct, in document order. */
-  stretchesForEvery(needle: string): string[];
+   *  accepted-changes text, best first; empty when it isn't there. Search each
+   *  with the same `wholeWord`. */
+  stretchesFor(needle: string, wholeWord: boolean): Stretch[];
+  /** One raw stretch per occurrence of `needle`, in document order. */
+  stretchesForEvery(needle: string): Stretch[];
   /** How many times `needle` occurs in the accepted-changes text. */
   count(needle: string): number;
 };
 
-// How body.text and getReviewedText write line breaks is not established, so
-// any of these counts as the same character.
-const BREAKS = "\r\n\v\f";
-const isBreak = (c: string): boolean => BREAKS.includes(c);
-const sameChar = (a: string, b: string): boolean => a === b || (isBreak(a) && isBreak(b));
-const breaksAsOne = (s: string): string => s.replace(/\r\n|[\r\n\v\f]/g, "\n");
+// The views do not agree about line breaks: in Word for Mac 16.114 the
+// accepted-changes text ends with a paragraph mark body.text lacks (measured
+// 2026-10-27), and nothing else about how either writes breaks is established.
+// So breaks are left out of the comparison on both sides. That costs nothing:
+// a stretch with a break in it can't be searched anyway.
+const isBreak = (c: string): boolean => "\r\n\v\f".includes(c);
+const withoutBreaks = (s: string): string => s.replace(/[\r\n\v\f]/g, "");
 
 // body.search never matches across a paragraph mark or a line break, nor a
 // literal tab, and rejects a string over 255 characters.
@@ -45,6 +56,7 @@ const WORD_CHAR = /[\p{L}\p{N}_]/u;
 
 /** One character as normalizeForSearch and Word's case-insensitive search see it. */
 const fold = (c: string): string => {
+  if (isBreak(c)) return " ";
   if (c === "‘" || c === "’") return "'";
   if (c === "“" || c === "”") return '"';
   if (/\s/.test(c)) return " ";
@@ -55,11 +67,13 @@ const fold = (c: string): string => {
 /** `text` folded, whitespace runs collapsed; `at[k]` is the source index of folded character k. */
 type Folded = { text: string; at: number[] };
 
-const foldText = (s: string): Folded => {
+/** `keepBreaks` folds breaks to a character no needle holds, so an occurrence
+ *  can't span one — as Word's search can't. */
+const foldText = (s: string, keepBreaks = false): Folded => {
   const chars: string[] = [];
   const at: number[] = [];
   for (let i = 0; i < s.length; i++) {
-    const f = fold(s[i]);
+    const f = keepBreaks && isBreak(s[i]) ? "\n" : fold(s[i]);
     if (f === " " && chars[chars.length - 1] === " ") continue;
     chars.push(f);
     at.push(i);
@@ -89,7 +103,8 @@ const occurrences = (folded: Folded, needle: string, wholeWord: boolean): Array<
 };
 
 /** For each current character, the earliest (`left`) and latest (`right`) raw
- *  index it can sit at. Null when current is not raw with stretches taken out. */
+ *  index it can sit at; -1 for a break, which is not placed. Null when current,
+ *  breaks aside, is not raw with stretches taken out. */
 type Embedding = { left: Int32Array; right: Int32Array };
 
 const embed = (raw: string, current: string): Embedding | null => {
@@ -97,7 +112,11 @@ const embed = (raw: string, current: string): Embedding | null => {
   const left = new Int32Array(n);
   let i = 0;
   for (let j = 0; j < n; j++) {
-    while (i < raw.length && !sameChar(raw[i], current[j])) i++;
+    if (isBreak(current[j])) {
+      left[j] = -1;
+      continue;
+    }
+    while (i < raw.length && raw[i] !== current[j]) i++;
     if (i === raw.length) return null;
     left[j] = i++;
   }
@@ -105,56 +124,75 @@ const embed = (raw: string, current: string): Embedding | null => {
   const right = new Int32Array(n);
   i = raw.length - 1;
   for (let j = n - 1; j >= 0; j--) {
-    while (!sameChar(raw[i], current[j])) i--;
+    if (isBreak(current[j])) {
+      right[j] = -1;
+      continue;
+    }
+    while (raw[i] !== current[j]) i--;
     right[j] = i--;
   }
   return { left, right };
 };
 
 /** The raw stretches for current [start, end): the tight one (struck runs only
- *  inside), then the wide one (struck runs at the edges too), searchable only. */
-const stretchesAt = (raw: string, e: Embedding, start: number, end: number): string[] => {
-  const out: string[] = [];
-  const add = (s: string) => {
-    if (searchable(s) && !out.includes(s)) out.push(s);
+ *  inside), then the wide one (struck runs at the edges too), searchable only,
+ *  each placed among its raw occurrences. An occurrence starts and ends on a
+ *  non-break: its needle is trimmed. */
+const stretchesAt = (
+  raw: string,
+  rawFolded: Folded,
+  e: Embedding,
+  start: number,
+  end: number,
+  wholeWord: boolean,
+): Stretch[] => {
+  const out: Stretch[] = [];
+  if (e.left[start] < 0 || e.right[end - 1] < 0) return out;
+  const add = (from: number, to: number) => {
+    const text = raw.slice(from, to);
+    if (!searchable(text) || out.some((s) => s.text === text)) return;
+    const all = occurrences(rawFolded, text, wholeWord);
+    const nth = all.findIndex(([at]) => at === from);
+    if (nth >= 0) out.push({ text, nth, total: all.length });
   };
-  if (e.right[start] <= e.left[end - 1]) add(raw.slice(e.right[start], e.left[end - 1] + 1));
-  add(raw.slice(e.left[start], e.right[end - 1] + 1));
+  if (e.right[start] <= e.left[end - 1]) add(e.right[start], e.left[end - 1] + 1);
+  add(e.left[start], e.right[end - 1] + 1);
   return out;
 };
 
 /** Null when the document holds no tracked deletions — the two views differ by
  *  nothing but how they write line breaks — so the caller keeps today's path. */
 export function trackedView(raw: string, current: string): TrackedView | null {
-  if (breaksAsOne(raw) === breaksAsOne(current)) return null;
+  if (withoutBreaks(raw) === withoutBreaks(current)) return null;
   const folded = foldText(current);
+  const rawFolded = foldText(raw, true);
   const e = embed(raw, current);
-  // Views that don't line up (a character the raw text lacks): search the
-  // text as written. The caller still checks every match's accepted-changes text.
-  const asWritten = (needle: string): string[] => (searchable(needle) ? [needle] : []);
+  // Views that don't line up (a character the raw text lacks): search the text
+  // as written, and only when every raw occurrence of it is live — then the
+  // k-th live occurrence is the k-th raw one.
+  const asWritten = (needle: string, wholeWord: boolean, live: number): Stretch[] => {
+    const total = occurrences(rawFolded, needle, wholeWord).length;
+    if (!searchable(needle) || total !== live) return [];
+    return Array.from({ length: live }, (_, nth) => ({ text: needle, nth, total }));
+  };
   return {
     stretchesFor(needle, wholeWord) {
-      const first = occurrences(folded, needle, wholeWord)[0];
-      if (!first) return [];
-      return e ? stretchesAt(raw, e, first[0], first[1]) : asWritten(needle);
+      const live = occurrences(folded, needle, wholeWord);
+      if (live.length === 0) return [];
+      if (!e) return asWritten(needle, wholeWord, live.length).slice(0, 1);
+      return stretchesAt(raw, rawFolded, e, live[0][0], live[0][1], wholeWord);
     },
     stretchesForEvery(needle) {
-      const all = occurrences(folded, needle, false);
-      if (all.length === 0) return [];
-      if (!e) return asWritten(needle);
-      const out: string[] = [];
-      for (const [start, end] of all) {
-        const best = stretchesAt(raw, e, start, end)[0];
-        if (best !== undefined && !out.includes(best)) out.push(best);
+      const live = occurrences(folded, needle, false);
+      if (live.length === 0) return [];
+      if (!e) return asWritten(needle, false, live.length);
+      const out: Stretch[] = [];
+      for (const [start, end] of live) {
+        const best = stretchesAt(raw, rawFolded, e, start, end, false)[0];
+        if (best !== undefined) out.push(best);
       }
       return out;
     },
     count: (needle) => occurrences(folded, needle, false).length,
   };
-}
-
-/** Is a match's accepted-changes text the text searched for, compared the way
- *  Word's case-insensitive search and normalizeForSearch compare? */
-export function sameLiveText(live: string, expected: string): boolean {
-  return foldNeedle(live) === foldNeedle(expected);
 }

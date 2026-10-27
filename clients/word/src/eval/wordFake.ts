@@ -18,13 +18,13 @@
 // expandTo across tables, list renumbering, content controls, and wildcard
 // MATCHING (only escaped-literal wildcard queries are supported — see
 // searchSync). A case asserts which characters, never how they look.
-// ALSO: an edit whose raw span overlaps an existing tracked deletion throws
-// (see applyMutation) instead of being modelled. This is not merely
-// unimplemented — what real Word does when you re-edit a region that already
-// contains a tracked deletion (absorb the strike, preserve it, nest it) is
-// not established anywhere this fake can check (CLAUDE.md, Office.js docs).
-// Guessing would mean inventing fidelity nobody can validate, which is worse
-// than refusing.
+// TRACKED REPLACE, measured in Word for Mac 16.114 (VM 2026-10-23; sideload
+// 2026-10-27): the new text goes BEFORE the struck original, and a tracked
+// deletion wholly inside the replaced range merges into the new deletion. (Real
+// Word also drops the author's own earlier insertion instead of striking it;
+// the fake keeps no insertions, so it strikes it — raw differs there, the
+// accepted-changes text does not.) An edit that only PARTLY overlaps a deletion
+// is not observed, so it throws (see applyMutation) rather than guess.
 //
 // MODEL NOTE: `reviewed` is never stored. A paragraph is `raw` plus a list of
 // deletion spans (raw coordinates); `reviewed` is always `raw` with those
@@ -41,12 +41,14 @@
 // VIEWS: `body.text` is the raw text, tracked deletions still in it (CLAUDE.md:
 // "body.text includes tracked-change deletions"); `getReviewedText("Current")`
 // drops them (CLAUDE.md: the text as if every change were accepted). The Range
-// form is that documented Body behavior applied to a range — Office.js gives
-// Range.getReviewedText (WordApi 1.4) the same description — and is NOT yet
-// observed in real Word. "Original" is refused: this fake does not track
+// form does NOT: Office.js describes it the same way, but in Word for Mac
+// 16.114 a searched range's "current" text kept its struck run (measured
+// 2026-10-27), so the fake returns the raw slice. "Original" is refused: this fake does not track
 // insertions, so it cannot know the original text. Both views join paragraphs
-// with "\r"; how real Word writes them is not established, so word.ts must not
-// depend on the two views agreeing about line breaks.
+// with "\r", and Body.getReviewedText adds one more "\r" at the end — the
+// one difference measured in real Word (Mac 16.114, 2026-10-27), which broke
+// the first version of trackedText.ts. How else real Word writes breaks is not
+// established, so word.ts must not depend on the two views agreeing about them.
 
 export type FakeParagraph = string | { raw: string; reviewed: string };
 
@@ -259,21 +261,6 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
   const rawTextOf = (): string => paras.map((p) => p.raw).join("\r");
   const rawSlice = (start: number, end: number): string => rawTextOf().slice(start, end);
 
-  /** Raw [start, end) without the tracked deletions inside it — the reviewed view of a range. */
-  const reviewedSlice = (start: number, end: number): string => {
-    const offs = paraOffsets();
-    let out = "";
-    paras.forEach((para, i) => {
-      for (let at = Math.max(start, offs[i]); at < Math.min(end, offs[i] + para.raw.length); at++) {
-        const local = at - offs[i];
-        if (!para.deletions.some((d) => d.start <= local && local < d.end)) out += para.raw[local];
-      }
-      // This paragraph's mark, when the range covers it (the last paragraph has none in the joined text).
-      const mark = offs[i] + para.raw.length;
-      if (i < paras.length - 1 && start <= mark && mark < end) out += "\r";
-    });
-    return out;
-  };
 
   /** A ClientResult: its value is computed at the next sync() and throws if read before. */
   const clientResult = (compute: () => string): { readonly value: string } => {
@@ -353,7 +340,9 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
         });
       },
       getReviewedText(version: string) {
-        return reviewedText(version, () => reviewedSlice(range.start, range.end));
+        // Measured, Word for Mac 16.114 (2026-10-27): a range's accepted-changes
+        // text still holds the struck runs inside it — unlike the body's.
+        return reviewedText(version, () => rawSlice(range.start, range.end));
       },
       select() {
         /* navigation only: the fake does not model the selection */
@@ -377,33 +366,34 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
     const length = m.end - m.start;
     const s = local;
     const e = local + length;
-    // Refuse rather than guess: real Word's behavior when an edit re-touches
-    // a region that already contains a tracked deletion is not established
-    // (see BLIND SPOTS). Detect and throw here, at the moment an author trips
-    // it, instead of leaving it to silently corrupt reviewedOf()'s output.
-    const overlapping = para.deletions.find((d) => d.start < e && d.end > s);
-    if (overlapping) {
+    // Refuse rather than guess: an edit that cuts INTO an existing deletion
+    // (one end inside the struck run), or an untracked edit over one, is not
+    // observed in real Word (see TRACKED REPLACE). A deletion wholly inside a
+    // tracked edit is (it merges).
+    const straddling = para.deletions.find(
+      (d) => d.start < e && d.end > s && (d.start < s || d.end > e || !m.tracked),
+    );
+    if (straddling) {
       throw new Error(
-        `FakeParagraph #${index}: edit at raw [${s}, ${e}) overlaps an existing tracked deletion at ` +
-          `[${overlapping.start}, ${overlapping.end}). Whether real Word absorbs, preserves, or nests a ` +
-          `strike when you re-edit a region that already contains one is not established anywhere this ` +
-          `fake can check — this needs a real-Word observation before it can be modelled, not a fix to ` +
-          `this fake.`,
+        `FakeParagraph #${index}: edit at raw [${s}, ${e}) cuts into an existing tracked deletion at ` +
+          `[${straddling.start}, ${straddling.end}). What real Word does with an edit that ends inside a ` +
+          `struck run, or an untracked edit over one, is not observed — this needs a real-Word observation before it can be modelled, ` +
+          `not a fix to this fake.`,
       );
     }
     if (m.tracked) {
-      // Tracked: the original span stays in RAW (struck), with the new text
-      // appended right after it — nothing before `e` moves. Record `[s, e)`
-      // as a deletion so reviewedOf() excludes it; any deletion already at or
-      // after the insertion point shifts right by the inserted length.
-      para.raw = para.raw.slice(0, e) + m.text + para.raw.slice(e);
+      // Tracked: the new text goes in BEFORE the original span, which stays in
+      // RAW (struck) — measured. Deletions inside the span merge into its new
+      // deletion; any deletion at or after `s` shifts right by the inserted length.
+      para.raw = para.raw.slice(0, s) + m.text + para.raw.slice(s);
+      para.deletions = para.deletions.filter((d) => !(d.start >= s && d.end <= e));
       for (const d of para.deletions) {
-        if (d.start >= e) {
+        if (d.start >= s) {
           d.start += m.text.length;
           d.end += m.text.length;
         }
       }
-      para.deletions.push({ start: s, end: e });
+      para.deletions.push({ start: s + m.text.length, end: e + m.text.length });
       para.deletions.sort((a, b) => a.start - b.start);
     } else {
       // Untracked: the span is genuinely removed from RAW. Any deletion at or
@@ -475,7 +465,9 @@ export function createFakeWord(paragraphs: FakeParagraph[]) {
         }
         return bodyText;
       },
-      getReviewedText: (version: string) => reviewedText(version, () => paras.map(reviewedOf).join("\r")),
+      // Measured, Word for Mac 16.114 (2026-10-27): the body's accepted-changes
+      // text ends with one paragraph mark body.text does not have.
+      getReviewedText: (version: string) => reviewedText(version, () => paras.map(reviewedOf).join("\r") + "\r"),
     },
   };
   let bodyText: string | undefined;

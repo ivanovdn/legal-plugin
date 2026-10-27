@@ -7,7 +7,7 @@
 import type { DocumentReading, TrackedChange } from "./documentCapture";
 import { normalizeForSearch } from "./normalize";
 import type { EditProposal } from "./parseEditBlocks";
-import { sameLiveText, trackedView, type TrackedView } from "./trackedText";
+import { trackedView, type Stretch, type TrackedView } from "./trackedText";
 
 export type Result<T = void> =
   | { ok: true; value: T }
@@ -360,45 +360,44 @@ async function searchFirst(
  * searchFirst on a document with tracked deletions. The trial comes from the
  * accepted-changes text the model read, but Word searches the raw text, where a
  * struck run may sit inside it — so search for the trial's raw stretch (see
- * trackedText.ts) and take a match only when its own accepted-changes text IS
- * the trial. That also keeps a match off text that survives only struck.
+ * trackedText.ts) and take the match it names. That also keeps a match off
+ * text that survives only struck.
  */
 async function searchLive(
   context: Word.RequestContext,
   trial: string,
   view: TrackedView,
 ): Promise<Word.Range | null> {
-  for (const stretch of view.stretchesFor(trial, shouldMatchWholeWord(trial))) {
-    const [first] = await liveMatchesOf(context, stretch, trial, shouldMatchWholeWord(stretch));
-    if (first) return first;
+  const wholeWord = shouldMatchWholeWord(trial);
+  for (const stretch of view.stretchesFor(trial, wholeWord)) {
+    const match = (await stretchMatches(context, stretch, wholeWord))?.[stretch.nth];
+    if (match) {
+      liveTextOf.set(match, trial);
+      return match;
+    }
   }
   return null;
 }
 
-/** Matches of a raw stretch whose accepted-changes text is `expected`:
- *  literal first, then escaped wildcards, as searchFirst does. */
-async function liveMatchesOf(
+/** Word's matches for a stretch, in document order — literal first, then
+ *  escaped wildcards, as searchFirst does — or null unless Word found exactly
+ *  as many as the raw text holds, so the stretch's `nth` names the right one. */
+async function stretchMatches(
   context: Word.RequestContext,
-  stretch: string,
-  expected: string,
-  matchWholeWord: boolean,
-): Promise<Word.Range[]> {
-  const literal = await keepLive(context, await searchAll(context, stretch, false, matchWholeWord), expected);
-  if (literal.length > 0 || !WORD_WILDCARD_META.test(stretch)) return literal;
-  return keepLive(context, await searchAll(context, escapeWordWildcards(stretch), true, false), expected);
+  stretch: Stretch,
+  wholeWord: boolean,
+): Promise<Word.Range[] | null> {
+  const literal = await searchAll(context, stretch.text, false, wholeWord);
+  if (literal.length === stretch.total) return literal;
+  if (!WORD_WILDCARD_META.test(stretch.text)) return null;
+  const escaped = await searchAll(context, escapeWordWildcards(stretch.text), true, false);
+  return escaped.length === stretch.total ? escaped : null;
 }
 
-/** The matches whose accepted-changes text is `expected`, in document order. */
-async function keepLive(
-  context: Word.RequestContext,
-  matches: Word.Range[],
-  expected: string,
-): Promise<Word.Range[]> {
-  if (matches.length === 0) return [];
-  const live = matches.map((m) => m.getReviewedText(Word.ChangeTrackingVersion.current));
-  await context.sync();
-  return matches.filter((_, i) => sameLiveText(live[i].value, expected));
-}
+/** The accepted-changes text a searchLive match stands for. Word can't say:
+ *  a range's getReviewedText("current") keeps its struck runs (Word for Mac
+ *  16.114, measured 2026-10-27). */
+const liveTextOf = new WeakMap<Word.Range, string>();
 
 /**
  * Locate the range of the text matching `currentText`.
@@ -455,12 +454,11 @@ export async function findClauseRange(
 
   // Safety check: if the span ended up much bigger than the original needle
   // (head and tail in unrelated parts of the doc), the expansion is bogus.
-  // Fall back to just the head match. Struck runs inside the span are not
-  // clause text, so a tracked document measures its accepted-changes text.
-  const spanLive = view ? span.getReviewedText(Word.ChangeTrackingVersion.current) : null;
+  // Fall back to just the head match. Struck runs inside the span count
+  // toward it, which can only make this fall back, never over-reach.
   span.load("text");
   await context.sync();
-  if ((spanLive ? spanLive.value : span.text).length > currentText.length * 3) {
+  if (span.text.length > currentText.length * 3) {
     return startMatch;
   }
   return span;
@@ -635,13 +633,12 @@ export async function acceptRedline(
       // useful for "show in document" navigation, but for REPLACE that means we'd
       // inject the entire (long) new_text into a (short) prefix match. Refuse and
       // surface a clear error instead of producing a silently-wrong track change.
-      // On a tracked document the match is measured by its accepted-changes text:
+      // A match found across a struck run is measured by the text it stands for:
       // struck text inside it is not what the edit replaces.
-      const live = view ? range.getReviewedText(Word.ChangeTrackingVersion.current) : null;
       range.load("text");
       await context.sync();
       const intended = normalizeForSearch(anchors[0]).trim();
-      const matched = normalizeForSearch(live ? live.value : range.text).trim();
+      const matched = normalizeForSearch(liveTextOf.get(range) ?? range.text).trim();
       if (matched.length < intended.length * MATCH_COMPLETENESS_THRESHOLD) {
         const preview = (intended.length > 50 ? intended.slice(0, 50) + "…" : intended);
         return fail(
@@ -875,8 +872,8 @@ async function rawReplaceTargets(
 /**
  * replaceAll's matches on a document with tracked deletions: each live
  * occurrence of the target in the accepted-changes text, found through its raw
- * stretch and confirmed by its accepted-changes text — never a struck copy. A
- * confirmed match IS the target, so no completeness filter is needed.
+ * stretch and picked by its place among that stretch's matches — never a
+ * struck copy. A picked match IS the target, so no completeness filter is needed.
  */
 async function liveReplaceTargets(
   context: Word.RequestContext,
@@ -885,18 +882,18 @@ async function liveReplaceTargets(
   preview: string,
   cap: number,
 ): Promise<Result<Word.Range[]>> {
+  const searched = new Map<string, Word.Range[] | null>();
   const found: Word.Range[] = [];
   for (const stretch of view.stretchesForEvery(target)) {
-    found.push(...(await liveMatchesOf(context, stretch, target, false)));
+    if (!searched.has(stretch.text)) searched.set(stretch.text, await stretchMatches(context, stretch, false));
+    const match = searched.get(stretch.text)?.[stretch.nth];
+    if (match) found.push(match);
   }
-  if (found.length === 0) {
-    return fail(view.count(target) > 0 ? TRACKED_NO_MATCH_MESSAGE : `Couldn't find "${preview}" in the document.`);
-  }
-  // Each occurrence is matched once. More matches than occurrences means two
-  // stretches landed on the same text, and replacing both would stack the edit.
-  if (found.length > view.count(target)) {
-    return fail(`Found "${preview}" more often than it occurs — refusing to apply overlapping replacements.`);
-  }
+  const live = view.count(target);
+  if (live === 0) return fail(`Couldn't find "${preview}" in the document.`);
+  // All or nothing: filling some occurrences of "every X" and not others would
+  // leave the attorney believing every one was filled.
+  if (found.length < live) return fail(TRACKED_NO_MATCH_MESSAGE);
   return ok(found.slice(0, cap));
 }
 
