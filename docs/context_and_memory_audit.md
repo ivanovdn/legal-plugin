@@ -110,7 +110,7 @@ What follows from these keys:
   - **The model's memory survives.** The review, the conversation and its summaries are keyed by `(document_id, attorney_id)`. Those survive a reopen, a new session and another machine.
   - **The attorney's view does not survive.** The visible chat lives only in React state, and no route returns it, so a reopened pane shows an empty chat while the model still remembers the conversation.
   - A `localStorage` restore was built and reverted on 2026-07-14 ([spec](superpowers/specs/2026-07-13-chat-persistence-pane-reopen-design.md)). The server-side design that replaced it restored only the model's memory.
-- **An unsaved document starts with no memory next time.** Its id is lost with the file, so the next session starts without the old review or conversation (wiki: *unsaved document silently resets all memory*). The pane warns about this (`isDocumentUnsaved`).
+- **An unsaved document starts with no memory next time.** Its id is lost with the file, so the next session starts without the old review or conversation ([roadmap](roadmap.md): *unsaved document silently resets all memory*). The pane warns about this (`isDocumentUnsaved`).
 - **`document_id` survives edits.** The UUID lives in the file. The hash fallback reads only the preamble (the first ~800 chars, cut at the first numbered clause), because the body gets redlined.
 - **`attorney_id` is a partitioning key, not authentication.** SSO swaps it at `resolve_user_id` and nothing downstream changes, except that existing conversations stay keyed by the old UUID (§10).
 
@@ -174,7 +174,7 @@ intake → intent_router → skill_dispatcher → legal_research
 | `rag_retriever`, `llm_caller` | skip, because `llm_response` is already set |
 | `risk_assessor` | always rates doc-chat `low`, so it never reaches `human_review` |
 | `output_formatter` | builds `report` from state |
-| `history_appender` | appends `[user, assistant ≤300 chars]` to Redis `chat_history`. **It runs for every task type**, so review turns land there too. That is how the Redis fallback can replay a review into chat (wiki: *`chat_history` bleed — residual scope*) |
+| `history_appender` | appends `[user, assistant ≤300 chars]` to Redis `chat_history`. **It runs for every task type**, so review turns land there too. That is how the Redis fallback can replay a review into chat ([roadmap](roadmap.md): *`chat_history` bleed — residual scope*) |
 | `memory_writer` | writes `audit_log` (degrades on failure). On research it appends the raw turn to `conversation_store` (best-effort; needs `document_id` and `attorney_id`). On contract_review it calls `save_review` (loud) |
 
 After the graph:
@@ -453,7 +453,7 @@ All of these live in `config.py` and can be overridden from the environment.
 
 ## 10. Open items
 
-**Shipped since the 2026-07-15 audit** (each has a row in the wiki's Shipped Log):
+**Shipped since the 2026-07-15 audit** (each has a row in [shipped-log.md](shipped-log.md)):
 - stale-recall reconciliation, for placeholders and the gate verdict
 - history compaction, manual and automatic
 - attorney preferences
@@ -466,13 +466,13 @@ All of these live in `config.py` and can be overridden from the environment.
 - feedback and pane events
 - the document copies (SP4)
 
-**Found in this audit** (added to the wiki's Follow-ups on 2026-10-28):
+**Found in this audit** (added to [roadmap.md](roadmap.md) on 2026-10-28):
 - **A failed review is stored as the document's latest review** (§6).
 - **The preference retry can replace a good answer with an error** (§4).
 - **Some Redis checkpoint keys never expire** (§8).
 - **A reopened pane shows an empty chat while the model still remembers it** (§1).
 
-**Still open.** These are listed in [wiki.md](wiki.md) Follow-ups under these titles:
+**Still open.** These are listed in [roadmap.md](roadmap.md) under these titles:
 - **Recall and freshness**
   - *Chat: re-review nudge on doc divergence*: reviews carry no document fingerprint yet.
   - *Chat gate-verdict reconciliation: broaden trigger to prose gates*.

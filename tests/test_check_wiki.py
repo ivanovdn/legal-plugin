@@ -54,7 +54,7 @@ services:
     build: .
 """
 
-WIKI = """# Wiki
+ARCH = """# Architecture
 
 ## API Endpoints
 
@@ -73,6 +73,9 @@ WIKI = """# Wiki
 request,          # the attorney's question
 turn_id           # joins turn_log
 ```
+"""
+
+OPS = """# Operations
 
 ## Docker Services (docker-compose.yml)
 
@@ -87,9 +90,10 @@ turn_id           # joins turn_log
 """
 
 
-def _problems(wiki=WIKI, routes=(ROUTES, HEALTH), state=STATE, base=BASE, overlay=OVERLAY, db=DB):
+def _problems(arch=ARCH, ops=OPS, routes=(ROUTES, HEALTH), state=STATE, base=BASE, overlay=OVERLAY, db=DB):
     return wiki_problems(
-        wiki,
+        arch,
+        ops,
         routes=code_routes(routes),
         fields=state_fields(state),
         base_services=compose_services(base),
@@ -126,66 +130,66 @@ def test_a_wiki_that_matches_the_code_has_no_problems():
 def test_a_route_the_wiki_does_not_list_is_a_problem():
     routes = ROUTES + '\n@router.post("/events")\ndef events(): ...\n'
     assert _problems(routes=(routes, HEALTH)) == [
-        "route POST /api/events is not in the wiki's API Endpoints table",
+        "route POST /api/events is not in architecture.md's API Endpoints table",
     ]
 
 
 def test_a_working_row_with_no_route_is_a_problem():
-    wiki = WIKI.replace(
+    arch = ARCH.replace(
         "| GET | `/api/audit` | Not built |", "| GET | `/api/audit` | **Working** |"
     )
-    assert _problems(wiki=wiki) == [
-        "the wiki lists GET /api/audit as built, but no route serves it",
+    assert _problems(arch=arch) == [
+        "architecture.md lists GET /api/audit as built, but no route serves it",
     ]
 
 
 def test_a_combined_method_row_must_cover_each_method():
-    wiki = WIKI.replace("| GET/PUT | `/api/preferences` |", "| GET | `/api/preferences` |")
-    assert _problems(wiki=wiki) == [
-        "route PUT /api/preferences is not in the wiki's API Endpoints table",
+    arch = ARCH.replace("| GET/PUT | `/api/preferences` |", "| GET | `/api/preferences` |")
+    assert _problems(arch=arch) == [
+        "route PUT /api/preferences is not in architecture.md's API Endpoints table",
     ]
 
 
 def test_a_route_the_wiki_calls_not_built_is_a_problem():
-    wiki = WIKI.replace(
+    arch = ARCH.replace(
         "| POST | `/api/query` | **Working** |", "| POST | `/api/query` | Not built |"
     )
-    assert _problems(wiki=wiki) == [
-        "route POST /api/query is not in the wiki's API Endpoints table",
+    assert _problems(arch=arch) == [
+        "route POST /api/query is not in architecture.md's API Endpoints table",
     ]
 
 
 def test_state_fields_missing_from_or_extra_in_the_wiki_are_problems():
-    wiki = WIKI.replace("turn_id           # joins turn_log", "trace_ref         # gone")
-    assert _problems(wiki=wiki) == [
-        "state field turn_id is not in the wiki's LegalAgentState block",
-        "the wiki's LegalAgentState block lists trace_ref, which graph/state.py does not have",
+    arch = ARCH.replace("turn_id           # joins turn_log", "trace_ref         # gone")
+    assert _problems(arch=arch) == [
+        "state field turn_id is not in architecture.md's LegalAgentState block",
+        "architecture.md's LegalAgentState block lists trace_ref, which graph/state.py does not have",
     ]
 
 
 def test_a_compose_service_missing_from_or_extra_in_the_table_is_a_problem():
-    wiki = WIKI.replace("| **redis** | 6379 | Checkpointer |", "| **qdrant** | 6333 | Vectors |")
-    assert _problems(wiki=wiki) == [
-        "compose service redis is not in the wiki's Docker Services table",
-        "the wiki's Docker Services table lists qdrant, which docker-compose.yml does not define",
+    ops = OPS.replace("| **redis** | 6379 | Checkpointer |", "| **qdrant** | 6333 | Vectors |")
+    assert _problems(ops=ops) == [
+        "compose service redis is not in operations.md's Docker Services table",
+        "operations.md's Docker Services table lists qdrant, which docker-compose.yml does not define",
     ]
 
 
 def test_an_overlay_service_must_be_named_in_the_docker_section():
-    wiki = WIKI.replace("**VM overlay:** adds `backend`.", "")
-    assert _problems(wiki=wiki) == [
-        "VM overlay service backend is not named in the wiki's Docker Services section",
+    ops = OPS.replace("**VM overlay:** adds `backend`.", "")
+    assert _problems(ops=ops) == [
+        "VM overlay service backend is not named in operations.md's Docker Services section",
     ]
 
 
 def test_a_store_table_the_wiki_does_not_name_is_a_problem():
     db = DB + "CREATE TABLE IF NOT EXISTS feedback (id BIGSERIAL);\n"
     assert _problems(db=db) == [
-        "store table feedback is not named in the wiki's Docker Services section (the app-db row)",
+        "store table feedback is not named in operations.md's Docker Services section (the app-db row)",
     ]
 
 
 def test_a_missing_section_is_a_problem_not_a_crash():
-    wiki = WIKI.replace("## API Endpoints", "## Endpoints")
-    problems = _problems(wiki=wiki)
-    assert "the wiki has no '## API Endpoints' section" in problems
+    arch = ARCH.replace("## API Endpoints", "## Endpoints")
+    problems = _problems(arch=arch)
+    assert "architecture.md has no '## API Endpoints' section" in problems

@@ -80,7 +80,7 @@ AI_PROC_DROP_FROM = "ai output schema"
 # schema — here, in the tracked build, because the canonical source under data/ is
 # gitignored and source edits would not persist. If legal folds these into the
 # canonical .docx/source, delete these two constants + their injections in
-# _build_global_files() and rebuild. See docs/wiki.md (placeholder safety-net, Layer 1).
+# _build_global_files() and rebuild. See docs/shipped-log.md (placeholder safety-net, Layer 1).
 OUTPUT_FORMAT_COMPLETENESS = (
     "\n\n### Completeness and current wording\n"
     '- In the "Issue" cell of each finding, quote the current or offending wording '
@@ -102,7 +102,7 @@ NO_SIG_BLOCKER_ANCHOR = "- final version not checked after the latest edits."
 # variant" prompt (the bundle the model saw before the placeholder cue) — e.g. to
 # A/B the cue against the live model — run:
 #     PLAYBOOK_PLACEHOLDER_CUE=0 python scripts/build_playbook.py
-# and rebuild with the default to restore. See docs/wiki.md (placeholder recall).
+# and rebuild with the default to restore. See docs/shipped-log.md (placeholder recall).
 LAYER1_PLACEHOLDER_CUE = os.environ.get("PLAYBOOK_PLACEHOLDER_CUE", "1") != "0"
 
 TYPES = ("nda", "msa", "sow", "baa")

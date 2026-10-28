@@ -90,7 +90,7 @@ legal-plugin/
 │   └── word/             Word add-in (see clients/word/README.md)
 ├── data/                 Corpus, demo contracts, playbook source  (git-ignored)
 ├── scripts/              start.sh · build_playbook.py · ingestion helpers
-├── docs/                 wiki.md (architecture + changelog) + design notes
+├── docs/                 wiki.md (index) + topic files, runbooks, design notes
 └── tests/                pytest suite
 ```
 
@@ -210,7 +210,7 @@ Contributor conventions and hard-won gotchas (Word add-in quirks, RAG rules, pro
 
 ## Roadmap
 
-Currently deferred (see `docs/wiki.md` follow-ups):
+Currently deferred (see `docs/roadmap.md`):
 
 - Structured JSON output for `contract_review` (unlocks in-Word playbook citations)
 - Generate-clause tab in the Word add-in

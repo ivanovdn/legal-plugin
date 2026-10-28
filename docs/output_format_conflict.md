@@ -117,8 +117,8 @@ Same jobs, incompatible shapes — only SOURCE 1 matches the parser.
 
 `build_playbook.py` faithfully generates one file per source and `load_bundle` concatenates
 both into the system prompt:
-- [build_playbook.py:213-218](scripts/build_playbook.py#L213) → `output_format.md` (from SOURCE 1)
-- [build_playbook.py:220-225](scripts/build_playbook.py#L220) → `ai_review_procedure.md` (from SOURCE 2 §10)
+- [build_playbook.py:213-218](../scripts/build_playbook.py#L213) → `output_format.md` (from SOURCE 1)
+- [build_playbook.py:220-225](../scripts/build_playbook.py#L220) → `ai_review_procedure.md` (from SOURCE 2 §10)
 
 So the model reads the endorsed table format and, a few KB later, three competing schemas —
 the likely driver of the 14 client-side workarounds in `parser.ts`. The *proper* long-term
@@ -131,7 +131,7 @@ in the bundle now.
 
 All three keep §10.1 (behavior rules), `output_format.md`, the per-type `SKILL.md`, and
 `_OUTPUT_CONSTRAINTS`. They differ only on the unendorsed §10.2/10.3/10.4. Any code change
-is in `_render_ai_review_procedure` ([build_playbook.py:119](scripts/build_playbook.py#L119));
+is in `_render_ai_review_procedure` ([build_playbook.py:119](../scripts/build_playbook.py#L119));
 regenerate the bundle after.
 
 - **Option A — drop §10.2/10.3/10.4 in the build script + flag legal.** Render §10.1 only;

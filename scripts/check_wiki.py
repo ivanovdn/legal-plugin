@@ -2,16 +2,19 @@
 """Assert the wiki's reference sections list what the code has.
 
 The 2026-10-28 audit found four live routes, seven state fields and the app's
-own database service missing from docs/wiki.md: the rule to update the wiki
-named only the Shipped Log, so these sections were never touched. Four lists
-can be checked mechanically, and are:
+own database service missing from the wiki: the rule to update the wiki named
+only the Shipped Log, so these sections were never touched. Four lists can be
+checked mechanically, and are:
 
-  - API routes        both ways: every route is in the API Endpoints table (not
-                      as "Not built"); every row not marked "Not built" has a route
-  - state fields      both ways: graph/state.py's LegalAgentState vs the wiki block
-  - compose services  both ways for docker-compose.yml vs the Docker Services
-                      table; the VM overlay's services must be named in that section
-  - store tables      one way: every table memory/db.py creates is named in the
+  - API routes        both ways: every route is in docs/architecture.md's API
+                      Endpoints table (not as "Not built"); every row not marked
+                      "Not built" has a route
+  - state fields      both ways: graph/state.py's LegalAgentState vs the block in
+                      docs/architecture.md
+  - compose services  both ways for docker-compose.yml vs docs/operations.md's
+                      Docker Services table; the VM overlay's services must be
+                      named in that section
+  - store tables      one way: every table memory/db.py creates is named in that
                       Docker Services section (the app-db row)
 
 Prose can't be checked like this, and isn't.
@@ -100,7 +103,8 @@ def _cells(row: str) -> list[str]:
 
 
 def wiki_problems(
-    wiki: str,
+    architecture: str,
+    operations: str,
     *,
     routes: set[tuple[str, str]],
     fields: set[str],
@@ -110,9 +114,9 @@ def wiki_problems(
 ) -> list[str]:
     problems: list[str] = []
 
-    api = _section(wiki, "## API Endpoints")
+    api = _section(architecture, "## API Endpoints")
     if api is None:
-        problems.append("the wiki has no '## API Endpoints' section")
+        problems.append("architecture.md has no '## API Endpoints' section")
     else:
         listed: set[tuple[str, str]] = set()
         for row in api.split("\n"):
@@ -128,38 +132,38 @@ def wiki_problems(
                 if built:
                     listed.add(key)
                     if key not in routes:
-                        problems.append(f"the wiki lists {key[0]} {key[1]} as built, but no route serves it")
+                        problems.append(f"architecture.md lists {key[0]} {key[1]} as built, but no route serves it")
         for method, path in sorted(routes - listed, key=lambda r: (r[1], r[0])):
-            problems.append(f"route {method} {path} is not in the wiki's API Endpoints table")
+            problems.append(f"route {method} {path} is not in architecture.md's API Endpoints table")
 
-    state = _section(wiki, "### LegalAgentState")
+    state = _section(architecture, "### LegalAgentState")
     if state is None:
-        problems.append("the wiki has no '### LegalAgentState' section")
+        problems.append("architecture.md has no '### LegalAgentState' section")
     else:
         block = re.search(r"```python\n(.*?)```", state, re.S)
         names = set()
         for line in (block.group(1) if block else "").split("\n"):
             names.update(re.findall(r"\b([a-z_][a-z0-9_]*)\b", line.split("#", 1)[0]))
         for name in sorted(fields - names):
-            problems.append(f"state field {name} is not in the wiki's LegalAgentState block")
+            problems.append(f"state field {name} is not in architecture.md's LegalAgentState block")
         for name in sorted(names - fields):
-            problems.append(f"the wiki's LegalAgentState block lists {name}, which graph/state.py does not have")
+            problems.append(f"architecture.md's LegalAgentState block lists {name}, which graph/state.py does not have")
 
-    docker = _section(wiki, "## Docker Services")
+    docker = _section(operations, "## Docker Services")
     if docker is None:
-        problems.append("the wiki has no '## Docker Services' section")
+        problems.append("operations.md has no '## Docker Services' section")
     else:
         rows = set(re.findall(r"^\| \*\*([\w-]+)\*\* \|", docker, re.M))
         for name in sorted(base_services - rows):
-            problems.append(f"compose service {name} is not in the wiki's Docker Services table")
+            problems.append(f"compose service {name} is not in operations.md's Docker Services table")
         for name in sorted(rows - base_services):
-            problems.append(f"the wiki's Docker Services table lists {name}, which docker-compose.yml does not define")
+            problems.append(f"operations.md's Docker Services table lists {name}, which docker-compose.yml does not define")
         named = set(re.findall(r"`([\w-]+)`", docker)) | rows
         for name in sorted(overlay_services - base_services - named):
-            problems.append(f"VM overlay service {name} is not named in the wiki's Docker Services section")
+            problems.append(f"VM overlay service {name} is not named in operations.md's Docker Services section")
         for name in sorted(tables - named):
             problems.append(
-                f"store table {name} is not named in the wiki's Docker Services section (the app-db row)"
+                f"store table {name} is not named in operations.md's Docker Services section (the app-db row)"
             )
 
     return problems
@@ -167,7 +171,8 @@ def wiki_problems(
 
 def main() -> int:
     problems = wiki_problems(
-        (REPO / "docs/wiki.md").read_text(),
+        (REPO / "docs/architecture.md").read_text(),
+        (REPO / "docs/operations.md").read_text(),
         routes=code_routes(p.read_text() for p in sorted((REPO / "api/routes").glob("*.py"))),
         fields=state_fields((REPO / "graph/state.py").read_text()),
         base_services=compose_services((REPO / "docker-compose.yml").read_text()),
@@ -175,7 +180,7 @@ def main() -> int:
         tables=store_tables((REPO / "memory/db.py").read_text()),
     )
     if problems:
-        print("FAIL: docs/wiki.md is out of step with the code:", file=sys.stderr)
+        print("FAIL: the wiki (docs/architecture.md, docs/operations.md) is out of step with the code:", file=sys.stderr)
         for line in problems:
             print(f"  {line}", file=sys.stderr)
         print("      (update the wiki section in the same change — CLAUDE.md, *When making changes*)", file=sys.stderr)

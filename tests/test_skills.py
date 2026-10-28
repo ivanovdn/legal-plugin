@@ -525,7 +525,7 @@ def test_chat_prompts_forbid_unsourced_values_in_edits():
     Note the general "Do not invent facts" rule already sat in the conversational
     RULES block and did NOT prevent this, so the constraint is restated where the
     edit path reads it and names the specific fact classes. Model-neutral behavior
-    spec; the durable fix is a code-side provenance guard (see wiki follow-up).
+    spec; the durable fix is a code-side provenance guard (see docs/roadmap.md).
     """
     from skills.legal_research.prompts import CHAT_SYSTEM_PROMPT, _JSON_RETRY_SYSTEM
 

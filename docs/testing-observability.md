@@ -285,7 +285,7 @@ The drill still **passes**, on what it actually demonstrates: `app.outcome`
 `degraded`, both codes recorded with `announced=true`, both `db.*` spans ERROR
 carrying Postgres's own message, and the turn answering in 102.8 s. What it
 *additionally* demonstrates is the second follow-up in
-[docs/wiki.md](wiki.md#follow-ups--roadmap) — the "announced" promise is kept on
+[docs/roadmap.md](roadmap.md#follow-ups--roadmap) — the "announced" promise is kept on
 one surface only (closed 2026-10-15: the Findings tab now paints the banner). That gap was found during the same review and, it turns out,
 reached into this document and produced a drill whose stated expectation was the
 opposite of what it proved.
@@ -620,6 +620,6 @@ matching backend log lines: `WARNING rag.reranker: Reranker error: Request URL
 is missing an 'http://' or 'https://' protocol. — using original ranking`. The
 reranker has never run. It is a genuine
 silent degradation, it is tracked as a follow-up in
-[docs/wiki.md](wiki.md#follow-ups--roadmap), and it is *not* in the vocabulary
+[docs/roadmap.md](roadmap.md#follow-ups--roadmap), and it is *not* in the vocabulary
 because the RAG pipeline was explicitly descoped from this work — so it shows up
 as httpx noise rather than as a reason code. Do not chase it as a drill failure.

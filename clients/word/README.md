@@ -102,4 +102,4 @@ clients/word/
 
 ## Follow-ups
 
-See the `docs/wiki.md` Follow-ups section for the planned phases beyond MVP (playbook citations, inline comments, tracked-changes redlines, Q&A tab, generate-clause tab).
+See `docs/roadmap.md` for the planned phases beyond MVP (playbook citations, inline comments, tracked-changes redlines, Q&A tab, generate-clause tab).

@@ -2,7 +2,7 @@
 
 Project guidance for AI assistants. Read this before making changes.
 
-> **Maintenance:** keep this file **≤150 lines** — highest-value rules and hard-won lessons only. When it nears the cap, consolidate or drop the lowest-value line rather than appending; full feature history + follow-ups live in [docs/wiki.md](docs/wiki.md).
+> **Maintenance:** keep this file **≤150 lines** — highest-value rules and hard-won lessons only. When it nears the cap, consolidate or drop the lowest-value line rather than appending; feature history lives in [docs/shipped-log.md](docs/shipped-log.md), follow-ups in [docs/roadmap.md](docs/roadmap.md) (index: [docs/wiki.md](docs/wiki.md)).
 
 ## Stack
 
@@ -31,7 +31,7 @@ clients/
   web/                Chainlit frontend
   word/               Office.js task-pane add-in (React + Vite + TS)
 rag/                Qdrant search tools (search_legal, get_document, escalate)
-docs/wiki.md        Architecture + shipped/follow-up log — keep current
+docs/wiki.md        Index: architecture · operations · rag · observability · roadmap · shipped-log · decisions/ — keep current
 docs/playbook_cross_reference.md   Crosswalk: Playbook × SKILL.md × References
 docs/deploy-vm.md   VM deploy runbook (backend image + Caddy + compose overlay; Ollama on Spark 172.20.0.22) · feedback-loop.md = running/reading the tester loop · testing-compaction.md = the manual checks no gate can reach
 scripts/start.sh    Boots backend + Chainlit (Word add-in is `npm run dev` in clients/word/)
@@ -139,9 +139,9 @@ bash scripts/check.sh                 # pre-push gate: tests + typecheck + add-i
 - **Editing a skill's behavior?** Update its `SKILL.md` first, then the Python wrapper. The playbook is the contract.
 - **Adding a graph node?** Update `LegalAgentState` if new state fields are needed and check the `chat_history` reducer still makes sense.
 - **Touching the Word add-in?** Smoke-test by sideloading in Word for Mac — `npx tsc --noEmit` is not enough.
-- **Shipping a feature?** Add a row at the top of [docs/wiki.md](docs/wiki.md)'s "Shipped Log" and bump its date; remove (don't mark) any follow-up it closes. If it adds or removes a route, state field, setting, compose service, store table or module, update that wiki section in the same change; if it removes or reverts something, grep the wiki for its name. `scripts/check_wiki.py` (in `check.sh`) fails on routes, state fields, services and tables the wiki doesn't list — the rule alone let all four drift (audit 2026-10-28).
+- **Which doc to update, in the same change** (all in `docs/`): shipped → a row at the top of `shipped-log.md` + the date in `wiki.md`, and delete (don't mark) the follow-up it closes from `roadmap.md` · new or re-rated follow-up → `roadmap.md` · route, state field, data model, graph/skill/module structure → `architecture.md` · compose service, store table, setting, run/test command → `operations.md` · spans, degradation codes, trace backend → `observability.md` · Qdrant, ingest → `rag.md` · memory stores or prompt assembly → `context_and_memory_audit.md` · a choice between options → a note in `decisions/`. Removing or reverting something? grep `docs/` for its name. `scripts/check_wiki.py` (in `check.sh`) fails on routes and state fields `architecture.md` doesn't list and on services and tables `operations.md` doesn't — the rule alone let all four drift (audit 2026-10-28).
 
-## Out of scope (deferred — see wiki follow-ups)
+## Out of scope (deferred — see [docs/roadmap.md](docs/roadmap.md))
 
 - Structured JSON output for `contract_review` (would unlock Phase 2 playbook citations in Word)
 - Generate-clause tab (Phase 6) + AppSource publishing — sideload only; both optional polish

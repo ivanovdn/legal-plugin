@@ -5,7 +5,7 @@ Unlike the RAG chunker (`parse_docx` / `parse_pdf`), these extractors must be
 LOSSLESS: the contract review feeds the whole document to the LLM, so every
 paragraph and table cell must survive. The chunker is a clause-splitter with
 section-detection + noise-stripping heuristics that silently drop content when
-(mis)used as a text extractor — see docs/wiki.md and the audit notes.
+(mis)used as a text extractor — see docs/shipped-log.md and the audit notes.
 """
 
 from __future__ import annotations
