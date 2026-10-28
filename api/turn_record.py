@@ -109,6 +109,10 @@ def finish_turn(
     response; without (an exit about to raise) it happens now.
     """
     set_outcome(outcome)
+    # The answer goes on the root too, where Phoenix's span list and Sessions
+    # tab read it; the same llm_response the row's response_chars counts.
+    if result and result.get("llm_response"):
+        set_trace_attributes(output=result["llm_response"])
     try:
         row = build_turn_row(
             kind=turn["kind"], turn_id=turn["turn_id"], trace_id=turn["trace_id"],

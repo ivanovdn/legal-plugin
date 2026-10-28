@@ -227,19 +227,41 @@ def test_failed_outcome_also_sets_root_status_error():
     assert spans_by_name("llm_caller")[0].status.status_code == StatusCode.ERROR
 
 
-def test_ok_outcome_leaves_status_alone_and_writes_no_reason_list():
+def test_ok_outcome_sets_root_status_ok_and_writes_no_reason_list():
     from observability.degradations import OUTCOME_OK
     from observability.spans import traced, set_outcome
 
+    @traced("child")
+    def child():
+        set_outcome(OUTCOME_OK)
+
     @traced("root")
     def root():
-        set_outcome(OUTCOME_OK)
+        child()
 
     root()
     span = spans_by_name("root")[0]
     assert span.attributes["app.outcome"] == OUTCOME_OK
-    assert span.status.status_code != StatusCode.ERROR
+    assert span.status.status_code == StatusCode.OK
+    assert spans_by_name("child")[0].status.status_code == StatusCode.UNSET
     assert "app.degradations" not in span.attributes
+
+
+def test_degraded_outcome_sets_root_status_ok():
+    """A degraded turn still answered the attorney; ERROR is kept for one who
+    got nothing, and app.outcome says which turns were degraded."""
+    from observability.degradations import CHAT_GROUNDING_FAILED, OUTCOME_DEGRADED
+    from observability.spans import traced, record_degradation, set_outcome
+
+    @traced("root")
+    def root():
+        record_degradation(CHAT_GROUNDING_FAILED, announced=False)
+        set_outcome(OUTCOME_DEGRADED)
+
+    root()
+    span = spans_by_name("root")[0]
+    assert span.attributes["app.outcome"] == OUTCOME_DEGRADED
+    assert span.status.status_code == StatusCode.OK
 
 
 def test_record_degradation_accumulates_even_when_the_span_is_not_recording(monkeypatch):

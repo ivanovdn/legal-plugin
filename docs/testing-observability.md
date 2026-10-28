@@ -37,6 +37,8 @@ fine — which is exactly the state the feature was built to leave.
 | `app.outcome` | request **root** span only | `ok` / `degraded` / `failed` — the one field to sort and filter on |
 | `app.degradations` | request root span | JSON list of the reason codes accumulated this turn |
 | span `status_code = ERROR` on the **root** | root | **the attorney did not get their answer** |
+| span `status_code = OK` on the **root** | root | they did — `ok` or `degraded`, `app.outcome` says which. Since 2026-10-28; the results below predate it and show `UNSET` there |
+| `output.value` | request root span | the answer the turn returned (`llm_response`), so Phoenix's span list and Sessions tab show it; the root's kind is `CHAIN` (since 2026-10-28) |
 | span `status_code = ERROR` on a **node** | `llm_caller`, `db.*`, … | where it broke |
 | `degradation.reason` / `.detail` | attributes of the **failed** span | which of the 8 failure codes, and the exception class |
 | `degradation` **event** | on whichever span recorded it | a degradation — carries `.reason`, `.announced`, `.detail` |

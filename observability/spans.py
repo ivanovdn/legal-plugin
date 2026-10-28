@@ -58,7 +58,9 @@ def traced(name: str, kind: str | None = None) -> Callable:
     """Run the wrapped (sync) function inside a span named `name`.
 
     kind="LLM" marks it as an OpenInference LLM (GENERATION) span. The outermost
-    traced span registers itself as the trace root for set_trace_attributes().
+    traced span registers itself as the trace root for set_trace_attributes(),
+    and is marked CHAIN — Phoenix lists roots, and one with no kind reads
+    "unknown".
     """
     def decorator(fn: Callable) -> Callable:
         @functools.wraps(fn)
@@ -77,6 +79,11 @@ def traced(name: str, kind: str | None = None) -> Callable:
                     span.set_attribute(
                         SpanAttributes.OPENINFERENCE_SPAN_KIND,
                         OpenInferenceSpanKindValues.LLM.value,
+                    )
+                elif root_token is not None:
+                    span.set_attribute(
+                        SpanAttributes.OPENINFERENCE_SPAN_KIND,
+                        OpenInferenceSpanKindValues.CHAIN.value,
                     )
                 try:
                     return fn(*args, **kwargs)
@@ -104,6 +111,7 @@ def set_trace_attributes(
     user_id: str | None = None,
     session_id: str | None = None,
     input: Any = None,
+    output: Any = None,
     tags: Any = None,
     metadata: dict | None = None,
 ) -> None:
@@ -120,6 +128,8 @@ def set_trace_attributes(
             span.set_attribute(SpanAttributes.SESSION_ID, session_id)
         if input is not None:
             span.set_attribute(SpanAttributes.INPUT_VALUE, _as_attr(input))
+        if output is not None:
+            span.set_attribute(SpanAttributes.OUTPUT_VALUE, _as_attr(output))
         if tags is not None:
             if isinstance(tags, str):
                 tags = [tags]
@@ -364,7 +374,10 @@ def set_outcome(outcome: str) -> None:
 
     When outcome == "failed" the root status is set to ERROR as well, which is
     the point of the whole exercise: afterwards, ERROR means exactly "the
-    attorney did not get their answer".
+    attorney did not get their answer". Any other outcome sets OK — degraded
+    included, since that attorney did get one — so Phoenix shows a verdict
+    rather than "unset"; app.outcome is what tells ok from degraded. The SDK
+    ignores any status set after OK, so this stays the root's last status write.
     """
     try:
         span = _root_span.get() or trace.get_current_span()
@@ -376,5 +389,7 @@ def set_outcome(outcome: str) -> None:
             span.set_attribute("app.degradations", json.dumps(reasons, ensure_ascii=False))
         if outcome == OUTCOME_FAILED:
             span.set_status(Status(StatusCode.ERROR, ", ".join(reasons) or OUTCOME_FAILED))
+        else:
+            span.set_status(Status(StatusCode.OK))
     except Exception:
         pass

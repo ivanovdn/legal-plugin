@@ -97,6 +97,7 @@ def test_submit_query_marks_failed_when_the_graph_raises(monkeypatch):
     assert span.attributes["degradation.reason"] == GRAPH_INVOKE_FAILED
     assert span.status.status_code == StatusCode.ERROR
     assert GRAPH_INVOKE_FAILED in json.loads(span.attributes["app.degradations"])
+    assert "output.value" not in span.attributes
 
 
 def test_submit_query_is_ok_on_a_clean_turn(monkeypatch):
@@ -122,7 +123,9 @@ def test_submit_query_is_ok_on_a_clean_turn(monkeypatch):
     assert resp.data["memory_degraded"] is False
     span = spans_by_name("query:auto")[0]
     assert span.attributes["app.outcome"] == OUTCOME_OK
-    assert span.status.status_code != StatusCode.ERROR
+    assert span.status.status_code == StatusCode.OK
+    # The answer, on the span Phoenix lists — not only on the model call's.
+    assert span.attributes["output.value"] == "done"
 
 
 def test_submit_query_is_degraded_when_the_checkpointer_was_never_available(monkeypatch):
@@ -155,7 +158,7 @@ def test_submit_query_is_degraded_when_the_checkpointer_was_never_available(monk
 
     span = spans_by_name("query:auto")[0]
     assert span.attributes["app.outcome"] == OUTCOME_DEGRADED
-    assert span.status.status_code != StatusCode.ERROR
+    assert span.status.status_code == StatusCode.OK
     assert CHECKPOINTER_UNAVAILABLE in json.loads(span.attributes["app.degradations"])
 
 
@@ -190,7 +193,7 @@ def test_submit_query_degrades_when_the_checkpointer_dies_mid_invoke(monkeypatch
 
     span = spans_by_name("query:auto")[0]
     assert span.attributes["app.outcome"] == OUTCOME_DEGRADED
-    assert span.status.status_code != StatusCode.ERROR
+    assert span.status.status_code == StatusCode.OK
     assert CHECKPOINTER_UNAVAILABLE in json.loads(span.attributes["app.degradations"])
 
 
@@ -406,6 +409,7 @@ def test_resume_query_is_ok_on_a_clean_resume(monkeypatch):
                 "report": {},
                 "risk_level": "low",
                 "awaiting_review": False,
+                "llm_response": "revised draft",
             }
 
     monkeypatch.setattr(mod, "_get_graph", lambda: CleanGraph())
@@ -420,7 +424,8 @@ def test_resume_query_is_ok_on_a_clean_resume(monkeypatch):
 
     span = spans_by_name("resume:sess-4")[0]
     assert span.attributes["app.outcome"] == OUTCOME_OK
-    assert span.status.status_code != StatusCode.ERROR
+    assert span.status.status_code == StatusCode.OK
+    assert span.attributes["output.value"] == "revised draft"
 
 
 # --- skill spans: legal_research / contract_generation ----------------------

@@ -41,6 +41,23 @@ def test_traced_llm_kind_sets_openinference_span_kind():
     assert span.attributes.get("openinference.span.kind") == "LLM"
 
 
+def test_traced_root_is_a_chain_and_its_children_carry_no_kind():
+    """Phoenix lists root spans, and one with no kind reads "unknown"."""
+    from observability.spans import traced
+
+    @traced("chain_child")
+    def child():
+        return None
+
+    @traced("chain_root")
+    def root():
+        child()
+
+    root()
+    assert _spans_by_name("chain_root")[0].attributes.get("openinference.span.kind") == "CHAIN"
+    assert "openinference.span.kind" not in _spans_by_name("chain_child")[0].attributes
+
+
 def test_traced_propagates_exceptions_and_resets_root():
     from observability.spans import traced, set_trace_attributes, _root_span
 
@@ -82,6 +99,22 @@ def test_set_trace_attributes_lands_on_root_from_nested_span():
     assert root_span.attributes.get("session.id") == "s1"
     assert json.loads(root_span.attributes.get("tag.tags")) == ["research"]
     assert "user.id" not in child_span.attributes
+
+
+def test_set_trace_attributes_output_lands_on_root_from_nested_span():
+    from observability.spans import traced, set_trace_attributes
+
+    @traced("out_child")
+    def child():
+        set_trace_attributes(output="the answer")
+
+    @traced("out_root")
+    def root():
+        child()
+
+    root()
+    assert _spans_by_name("out_root")[0].attributes.get("output.value") == "the answer"
+    assert "output.value" not in _spans_by_name("out_child")[0].attributes
 
 
 def test_set_trace_attributes_merges_metadata_on_root():
