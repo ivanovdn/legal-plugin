@@ -12,7 +12,7 @@ A decision that leads to building something usually gets a note here *and* a spe
 
 ## File name
 
-`YYYY-MM-DD-<short-slug>.md`, dated the day the decision was made. For example: `2026-10-28-vm-chat-budget-back-to-default.md`.
+`YYYY-MM-DD-<short-slug>.md`, dated the day the decision was made. For example: [2026-10-28-plans-deleted-once-shipped.md](2026-10-28-plans-deleted-once-shipped.md).
 
 ## Format
 
