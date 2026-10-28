@@ -58,8 +58,8 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init observability; init_db() creates all Postgres store tables
-    (audit, review, conversation, feedback, interaction_event)."""
+    """Startup: init observability; init_db() creates every Postgres store table
+    (memory/db.py's _STATEMENTS; tests/conftest.py's STORE_TABLES lists them)."""
     settings = get_settings()
 
     init_observability()

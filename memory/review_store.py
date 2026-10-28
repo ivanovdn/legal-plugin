@@ -1,8 +1,9 @@
 """Postgres store for persisted contract reviews, keyed to a document_id.
 
-Stores the FULL markdown review, one row per (document_id, session_id) — list-
-shaped so a re-review appends a new row rather than overwriting. The natural
-home for the later FTS cross-matter precedent layer.
+Stores the FULL markdown review, one row per save — list-shaped so a re-review
+appends a new row rather than overwriting. Looked up by document_id alone, so a
+review is shared by every attorney on the document; session_id is recorded, not
+a key. The natural home for the later FTS cross-matter precedent layer.
 
 Writes are LOUD: save_review lets exceptions propagate. A lost review write must
 never be silent — the user believes their review was saved.

@@ -1,12 +1,11 @@
-"""Resolve a stable document identifier from contract text.
+"""Resolve a stable document identifier from contract text — the FALLBACK.
 
-Keys the persisted review store. Hashes a NORMALIZED PREAMBLE REGION (title +
-parties) rather than the whole body, because the body is actively redlined and a
-full-body hash would change on every edit and orphan the stored review.
-
-Interim implementation. The durable upgrade is an Office.js custom document
-property (a UUID written into the file on first open); that is a swap of this one
-function. See docs/superpowers/specs/2026-06-29-chat-memory-grounding-design.md.
+The Word pane sends its own per-file UUID (`legalTriageDocId`, written into the
+document's settings), and intake prefers it. This hash serves any request that
+arrives without one, Chainlit's included. It hashes a NORMALIZED PREAMBLE
+REGION (title + parties) rather than the whole body, because the body is actively
+redlined and a full-body hash would change on every edit and orphan the stored
+review and conversation.
 """
 from __future__ import annotations
 
