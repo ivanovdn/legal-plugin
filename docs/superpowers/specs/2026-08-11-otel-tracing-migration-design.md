@@ -1,6 +1,6 @@
 # Design — OpenTelemetry tracing migration (one instrumentation, backend by env)
 
-**Status:** approved design · **Date:** 2026-08-11 · **Supersedes:** `docs/tracing-otel-migration-scope.md` (scope/decisions D1b, D2a)
+**Status:** approved design · **Date:** 2026-08-11 · **Supersedes:** `docs/archive/tracing-otel-migration-scope.md` (scope/decisions D1b, D2a)
 
 ## Problem
 

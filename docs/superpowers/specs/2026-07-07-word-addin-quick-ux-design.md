@@ -3,7 +3,7 @@
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** two frontend-only quick wins in the Word add-in ("Bucket A"), shippable as
 > one small PR. **No backend, graph, prompt, or LLM change** — so zero risk to review quality.
-> **Source ideas:** `docs/legal-agent-upgrade-research.md` — competitor-landscape #1
+> **Source ideas:** `docs/archive/legal-agent-upgrade-research.md` — competitor-landscape #1
 > (go-to-clause jump) and #8 (findings filter/sort chips).
 
 ## Problem
