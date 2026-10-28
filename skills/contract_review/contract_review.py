@@ -132,8 +132,8 @@ def contract_review(state: LegalAgentState) -> LegalAgentState:
 
     # Surface detection on the trace. This is the signal that was
     # invisible when an MSA was silently reviewed as a SOW (audit Dimension 7) —
-    # the skill has no @traced span, so without this the detected type only
-    # leaks out via the final report payload. Tracing must never break the skill.
+    # the skill's own span records nothing about it, so this stamps it on the
+    # request root, where a turn is read. Tracing must never break the skill.
     try:
         set_trace_attributes(
             metadata={
