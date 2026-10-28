@@ -32,7 +32,7 @@ uv run python -m scripts.feedback_report --document <id>    # one contract
 
 **On the VM there is no `uv`** — the backend image installs with plain pip, and
 `app-db` publishes only `127.0.0.1:5434`, so this cannot be run from your own
-machine either. Use a throwaway container off the same image:
+machine either without a tunnel (below). Use a throwaway container off the same image:
 
 ```bash
 DC="docker compose -f docker-compose.yml -f docker-compose.remote.yml"
@@ -43,6 +43,13 @@ $DC run --rm --no-deps backend python -m scripts.feedback_report --days 7
 container's lifetime; `--no-deps` so reading the data never restarts anything.
 `scripts/` is in the image (`.dockerignore` excludes `tests/`, `docs/` and
 `clients/`, not `scripts/`).
+
+To browse the tables in a desktop client (DBeaver, …), tunnel over SSH: SSH host
+`172.20.1.10:22` as your VM user, then database host `127.0.0.1`, port `5434`,
+database and user `legal`, password `APP_DB_PASSWORD` from the VM's `.env`. Set
+the tunnel's keep-alive to a minute. On 2026-10-28 an hour-idle tunnel was
+dropped on the way to the VM and DBeaver noticed only at the next query
+("Operation timed out"); **Invalidate/Reconnect** recovers it without a restart.
 
 Unfiltered it is cumulative for all time, so pilot week one and week ten look
 identical. `--days` is what makes a trend visible.

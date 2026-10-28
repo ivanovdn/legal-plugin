@@ -184,7 +184,7 @@ curl -sk https://<hostname>/api/query \
   -d '{"request": "what is an NDA?", "task_type": "research"}'
 ```
 
-**Browse Phoenix directly at `http://172.20.1.10:6007`** (`http://<vm-ip>:6007`) from any machine on the VPN — `docker-compose.remote.yml` publishes it on all interfaces. Expect the trace tree to show `query:<task_type> → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The root span carries `app.outcome` (`ok`/`degraded`/`failed`) — `status = ERROR` means the attorney did not get their answer; see [docs/testing-observability.md](testing-observability.md). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
+**Browse Phoenix directly at `http://172.20.1.10:6007`** (`http://<vm-ip>:6007`) from any machine on the VPN — `docker-compose.remote.yml` publishes it on all interfaces. Expect the trace tree to show `query:<task_type> → intent_router / contract_review → generation spans with token counts`, routed to Phoenix (no `OTEL_EXPORTER_OTLP_HEADERS` — Phoenix needs no auth). The root span carries `app.outcome` (`ok`/`degraded`/`failed`) — `status = ERROR` means the attorney did not get their answer, `OK` that they did — and, since 2026-10-28, the answer itself as its output; see [docs/testing-observability.md](testing-observability.md). The local-dev equivalent is simpler: submit any query, then confirm the trace in the Langfuse UI at http://localhost:3000.
 
 > Phoenix has **no auth**, and its spans carry the full uploaded contract, the governing MSA and the firm's playbook bundle (`data/contract_review_skills/` is gitignored because it is canonical legal-team IP) — anyone on the VPN who knows the address can read them. It is published this way deliberately, for direct browsing. Host `6006` on the VM belongs to compliance-bot's *separate* Phoenix; ours is on `6007`, and the backend reaches it in-network at `phoenix:6006`.
 
@@ -382,7 +382,7 @@ $DC exec -T app-db psql -U legal -d legal -P pager=off -c \
   "SELECT timestamp, kind, outcome, office_platform, office_version, pane_build, backend_build FROM turn_log ORDER BY id DESC LIMIT 1;"
 ```
 
-`pane_build` and `backend_build` must both be the commit, and `office_platform` / `office_version` must name your Word. If `pane_build` is empty, the pane you asked from was opened before the deploy — close and reopen it.
+`pane_build` and `backend_build` must both be the commit, and `office_platform` / `office_version` must name your Word. If `pane_build` is empty, the pane you asked from was opened before the deploy — close and reopen it. In Phoenix the same turn's root row reads status OK, kind `chain`, and shows the answer in its output column.
 
 **Confirm Caddy's files are written and readable without sudo**, and that a rejected certificate is recorded — run the `curl` from a machine that does NOT trust the VM's CA (e.g. a Mac without `caddy-root-ca.crt`):
 

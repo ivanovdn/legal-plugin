@@ -22,6 +22,9 @@ uv run pytest tests/ -q
 echo "==> degradation vocabulary"
 uv run python scripts/check_degradation_vocabulary.py
 
+echo "==> wiki reference sections"
+uv run python scripts/check_wiki.py
+
 echo "==> word add-in typecheck"
 cd clients/word
 npx tsc --noEmit
