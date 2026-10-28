@@ -82,11 +82,12 @@ The stores fall into three kinds. Some feed a prompt. Some are records that no m
    The budget cuts only the document, from the end (§4).
 3. **Everything relational is one Postgres database**, the `app-db` service (`memory/db.py`; §5 lists its tables). Redis holds only the 24-hour session checkpoint.
 
-**Production (the VM) differs from a local run in four ways that change what the model sees:**
+**Production (the VM) differs from a local run in three ways that change what the model sees:**
 - **No MSA, no RAG.** Spark's Qdrant `legal_docs` collection is empty (0 points, checked 2026-10-28). No MSA is ever attached, and no-document research retrieves nothing.
-- **A smaller chat budget.** The VM's `.env` sets **`CHAT_CONTEXT_MAX_CHARS=68000`**, not the 150000 default. [testing-compaction.md](testing-compaction.md) uses that value to make compaction fire on a VM without an MSA. Every pilot turn whose settings were recorded (since 2026-10-21) ran at 68000 (`turn_log.settings`). None has truncated yet.
 - **Phoenix, not Langfuse.** Traces go to Phoenix at `http://172.20.1.10:6007`.
 - **Redis keys that never expire** (§8).
+
+**When reading older pilot turns:** until 2026-10-28 15:15 UTC the VM ran with `CHAT_CONTEXT_MAX_CHARS=68000`, the compaction-test value from [testing-compaction.md](testing-compaction.md), instead of the 150000 default. Every turn whose settings were recorded (from 2026-10-21) shows it in `turn_log.settings`, and none truncated. The override is gone and the VM now runs the default.
 
 ---
 
@@ -410,7 +411,7 @@ All of these live in `config.py` and can be overridden from the environment.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `chat_context_max_chars` | `150000` (**VM: 68000**) | the chat budget; above it the document is cut from the end. Derived from a ~30 s prefill ceiling |
+| `chat_context_max_chars` | `150000` | the chat budget; above it the document is cut from the end. Derived from a ~30 s prefill ceiling |
 | `est_chars_per_token` | `4.89` | chars→tokens for the gauge and the review overflow check; measured on legal text |
 | `ollama_num_ctx` | `131072` | must equal the Ollama server's window, or the model reloads |
 | `ollama_num_predict_chat` / `_review` | `2048` / `8192` | output caps; a review's input headroom is `num_ctx − num_predict_review` |
