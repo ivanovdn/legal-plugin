@@ -1,5 +1,7 @@
 # What attorneys do to the document — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *What attorneys do to the document (SP4)* · [roadmap.md](../../roadmap.md) — *SP4 follow-ups — reading what attorneys kept*
+
 - **Date:** 2026-10-15
 - **Status:** Draft — awaiting review
 - **Branch:** `feat/document-changes` (to be cut from `main` at `4993385`)

@@ -1,5 +1,7 @@
 # Repo cleanup + `legal_research` module split — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Repo cleanup + `legal_research` five-module split*
+
 > Date: 2026-08-12 · Branch: `chore/cleanup-and-legal-research-split` · Status: design, approved for planning
 
 ## Why

@@ -1,5 +1,7 @@
 # Context Budget and Loud Truncation — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Context budget + loud truncation — fixing two silent truncation bugs* · [roadmap.md](../../roadmap.md) — *OpenAI-compatible backend seam*; *Cross-session recall node — query stored conversations by argument*
+
 **Status:** ready to implement (slice 1)
 **Date:** 2026-08-21
 **Branch:** `feat/context-budget`

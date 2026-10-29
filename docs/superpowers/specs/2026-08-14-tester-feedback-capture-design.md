@@ -1,5 +1,7 @@
 # Tester feedback capture — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Tester feedback capture (flag + read-back, no UI report)* · [roadmap.md](../../roadmap.md) — *Promote a feedback row to an eval fixture (Phase A)*; *Derive the taxonomy from the first ~30 items*
+
 > Date: 2026-08-14 · Branch: `feat/tester-feedback-capture` · Status: design, approved for planning
 
 ## Why

@@ -2,6 +2,8 @@
 
 Date: 2026-10-28 · Decided by: the project owner · Status: decided
 
+Related: none — no spec or roadmap row; the rule is applied through the doc map in [CLAUDE.md](../../CLAUDE.md).
+
 ## Context
 `docs/superpowers/plans/` held 36 implementation plans: about 42,000 lines, most of the text in `docs/`. Every one was for work that had already shipped.
 - **What a plan is:** a step-by-step script that includes the code as it stood that day, with SQLite, the Langfuse SDK and line numbers that have since moved.

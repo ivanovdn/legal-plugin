@@ -1,5 +1,7 @@
 # Stale-Recall Reconciliation — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Chat stale-recall reconciliation* · [roadmap.md](../../roadmap.md) — *Chat: re-review nudge on doc divergence (stale-recall, next slice)*
+
 **Date:** 2026-07-15
 **Status:** Approved (brainstorming) — ready for implementation plan
 **Surface:** Backend only (`skills/legal_research.py`). No Word client / graph / config change.

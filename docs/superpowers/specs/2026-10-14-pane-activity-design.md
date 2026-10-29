@@ -1,5 +1,7 @@
 # Pane activity and the Caddy logs — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Pane activity + Caddy logs (SP3)*
+
 - **Date:** 2026-10-14
 - **Status:** Draft — awaiting review
 - **Branch:** `feat/pane-activity` (cut from `main` at `e67adfb`)

@@ -1,5 +1,7 @@
 # Automatic Compaction — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Automatic compaction* · [roadmap.md](../../roadmap.md) — *Read the condensed summary in the pane*
+
 **Date:** 2026-08-26
 **Branch:** `feat/auto-compaction`
 **Builds on:** [2026-08-25-context-compaction-design.md](2026-08-25-context-compaction-design.md)

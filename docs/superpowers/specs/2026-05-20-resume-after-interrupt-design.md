@@ -1,5 +1,7 @@
 # Resume After Interrupt — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Resume after interrupt*
+
 > Date: 2026-05-20
 > Branch: `feat/resume-after-interrupt`
 > Scope: Make LangGraph's `interrupt()` actually pause the graph at `human_review`, expose a working `POST /api/query/{session_id}/resume` endpoint, and wire Chainlit's action buttons to call it. Adds an iterative "Request Changes" loop so attorneys can refine drafts in-place.

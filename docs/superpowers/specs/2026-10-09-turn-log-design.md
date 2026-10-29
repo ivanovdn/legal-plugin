@@ -1,5 +1,7 @@
 # Per-turn record (`turn_log`) — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Per-turn record — `turn_log`*
+
 - **Date:** 2026-10-09
 - **Status:** Draft — awaiting review
 - **Branch:** `feat/turn-log` (cut from `main` at `14c902e`)

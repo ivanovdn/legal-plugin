@@ -1,5 +1,7 @@
 # Context Counter and Attorney-Triggered Compaction — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Context counter + attorney-triggered compaction* · [roadmap.md](../../roadmap.md) — *Re-summarising older segments*; *Self-calibrating chars/token for the live document line*
+
 **Status:** ready to plan
 **Date:** 2026-08-25
 **Branch:** `feat/context-compaction`

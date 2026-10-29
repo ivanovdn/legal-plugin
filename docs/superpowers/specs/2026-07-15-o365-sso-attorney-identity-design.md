@@ -1,5 +1,7 @@
 # O365 SSO Attorney Identity — Design (Backend Foundation)
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *O365 SSO attorney identity — backend foundation (slice 3)* · [roadmap.md](../../roadmap.md) — *O365 SSO attorney identity (real authentication)*
+
 **Date:** 2026-07-15
 **Status:** Approved (design) — pending spec review
 **Slice:** 3 of 3 in the server-side multi-attorney chat-continuity initiative

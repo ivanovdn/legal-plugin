@@ -1,5 +1,7 @@
 # Calm "not found" message styling — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Word add-in: calm not-found message styling*
+
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** one frontend-only UI fix in the Word add-in. **No backend, graph, prompt,
 > parser, or LLM change** — zero risk to review quality.

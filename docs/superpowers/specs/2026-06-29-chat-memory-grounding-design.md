@@ -1,5 +1,7 @@
 # Chat memory & grounding — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Chat memory & grounding* · [roadmap.md](../../roadmap.md) — *Ollama cross-turn prefix-cache reuse doesn't engage*; *Chat smoke: BAA document*; *Structured-JSON review output / selective finding injection*; *Clause segmentation / retrieval-narrowing on chat*; *FTS cross-matter precedent recall on the Postgres review store*
+
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** one consolidated design, implemented in four phases (0→3), each its own commit/PR.
 > **Source ideas:** `docs/archive/00_PLAN.md` + `docs/archive/01_reliability_floor.md` … `docs/archive/04_context_cap.md`,

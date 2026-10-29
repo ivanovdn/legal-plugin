@@ -1,5 +1,7 @@
 # Postgres store migration — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *SQLite → Postgres store migration*
+
 - **Date:** 2026-07-23
 - **Status:** Draft — awaiting review
 - **Spec 1 of 2** in the "run on company O365 / SharePoint" effort. Spec 2 (deferred) = VM deployment + hosting (reverse proxy, cert, remote Ollama, manifest, sideload). This spec is intentionally self-contained and testable on the dev machine — it does not depend on spec 2.

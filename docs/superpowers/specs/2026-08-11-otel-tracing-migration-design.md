@@ -1,5 +1,7 @@
 # Design — OpenTelemetry tracing migration (one instrumentation, backend by env)
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *OpenTelemetry tracing migration*
+
 **Status:** approved design · **Date:** 2026-08-11 · **Supersedes:** `docs/archive/tracing-otel-migration-scope.md` (scope/decisions D1b, D2a)
 
 ## Problem

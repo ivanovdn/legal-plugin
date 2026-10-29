@@ -1,5 +1,7 @@
 # SOW-vs-MSA Review — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *SOW reviewed against its governing MSA* · [roadmap.md](../../roadmap.md) — *SOW-vs-MSA review: scale beyond the one-MSA demo*
+
 **Date:** 2026-06-18
 **Status:** Approved (design); pending implementation plan
 **Branch:** `feat/sow-vs-msa-review`

@@ -1,5 +1,7 @@
 # Server-Side Per-Attorney Conversation Store — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Server-side per-attorney conversation store (slice 2)* · [roadmap.md](../../roadmap.md) — *Conversation retention / pruning policy*
+
 **Date:** 2026-07-15
 **Status:** Approved (design) — pending spec review
 **Slice:** 2 of 3 in the server-side multi-attorney chat-continuity initiative

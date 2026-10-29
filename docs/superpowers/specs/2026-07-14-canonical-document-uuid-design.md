@@ -1,5 +1,7 @@
 # Canonical document UUID — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Canonical document UUID (review-store identity)* · [roadmap.md](../../roadmap.md) — *Word add-in: unsaved document silently resets all memory*
+
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** Foundation slice #1 of the "server-side multi-attorney chat continuity" initiative.
 > Adopt a stable, document-embedded UUID as the canonical `document_id` so the **review store**

@@ -1,5 +1,7 @@
 # Attorney Preference Memory (`USER.md`) — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Attorney preference memory (USER.md) — stage 1 of the self-improving harness* · [roadmap.md](../../roadmap.md) — *Attorney preference memory → self-improving agent harness (NORTH STAR)*; *Chat: relaxing preferences vs the ceiling (harness safety)*
+
 > **Status:** Approved design (brainstorming) — 2026-07-21.
 > **Stage:** 1 of the *self-improving agent harness* (the project north star). This spec
 > builds the harness's first organ: a durable, per-attorney memory the agent **reads** and

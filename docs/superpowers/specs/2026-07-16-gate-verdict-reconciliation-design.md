@@ -1,5 +1,7 @@
 # Gate-Verdict Reconciliation — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Chat gate-verdict reconciliation* · [roadmap.md](../../roadmap.md) — *Chat gate-verdict reconciliation: broaden trigger to prose gates*
+
 **Date:** 2026-07-16
 **Status:** Approved (brainstorming) — ready for implementation plan
 **Surface:** Backend only (`skills/legal_research.py`). No Word client / graph / config change.

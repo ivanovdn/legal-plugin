@@ -1,5 +1,7 @@
 # Clause-locator hardening (whole-word matching + label-only findings) — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Word add-in: clause-locator hardening*
+
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** two frontend-only fixes to the Word add-in clause locator. **No backend,
 > graph, prompt, or LLM change** — so zero risk to review quality.

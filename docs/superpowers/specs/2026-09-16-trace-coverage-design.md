@@ -1,5 +1,7 @@
 # Trace coverage — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Trace coverage — the app degrades, so spans have to say so* · [roadmap.md](../../roadmap.md) — *The reranker has never run*
+
 - **Date:** 2026-09-16
 - **Status:** Draft — awaiting review
 - **Branch:** `feat/trace-coverage` (cut from `main`)

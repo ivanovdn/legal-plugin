@@ -4,11 +4,13 @@ One note per decision that someone would otherwise ask about again: a choice bet
 
 **What goes where:**
 - a **decision note** (here): what was chosen and why;
-- a **spec** (`docs/superpowers/specs/`): the design of something to build;
+- a **spec** ([`docs/superpowers/specs/`](../superpowers/specs/README.md)): the design of something to build;
 - a **follow-up** ([roadmap.md](../roadmap.md)): work still to do;
 - a **[shipped-log.md](../shipped-log.md) row**: what was built.
 
 A decision that leads to building something usually gets a note here *and* a spec. The note says why; the spec says how.
+
+**Every note links what it relates to**, on its `Related:` line under the header: the [roadmap.md](../roadmap.md) row it opens, closes or re-rates, and the [spec](../superpowers/specs/README.md) that carries it out. Roadmap rows have no anchors, so link the file and name the row in italics. A note that relates to neither says so: `Related: none`.
 
 ## File name
 
@@ -20,6 +22,8 @@ A decision that leads to building something usually gets a note here *and* a spe
 # <The decision, as a short statement>
 
 Date: YYYY-MM-DD · Decided by: <who> · Status: decided | superseded by <link>
+
+Related: [roadmap.md](../roadmap.md) — *<row title>* · [<spec title>](../superpowers/specs/<file>.md)
 
 ## Context
 What forced a choice: the problem, the constraint, and the evidence (traces, measurements, incidents),

@@ -79,7 +79,7 @@ Token **cost** stays null for local Ollama models unless a model price is regist
 
 Every skill invocation writes to `audit_log` table: timestamp, session_id, user_id, user_name, skill_name, task_type, request_summary, risk_level, review_status, review_notes, duration_ms, turn_id.
 
-Each row also carries the request's `turn_id`, which joins it to `turn_log` — the per-request record written by the request handler, failures and compaction included (`docs/feedback-loop.md`, *A session, turn by turn*).
+Each row also carries the request's `turn_id`, which joins it to `turn_log` — the per-request record written by the request handler, failures and compaction included ([`docs/feedback-loop.md`](feedback-loop.md), *A session, turn by turn*).
 
 ### Phoenix
 

@@ -1,5 +1,7 @@
 # Word add-in quick UX wins (go-to-clause + findings filters) — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Word add-in: click-to-jump navigation + findings filter/sort* · [roadmap.md](../../roadmap.md) — *Word add-in: bulk actions ("Apply all RED")*
+
 > **Status:** approved design, ready for an implementation plan.
 > **Scope:** two frontend-only quick wins in the Word add-in ("Bucket A"), shippable as
 > one small PR. **No backend, graph, prompt, or LLM change** — so zero risk to review quality.

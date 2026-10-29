@@ -1,5 +1,7 @@
 # Eval harness — Tier 1 (deterministic regression armor) — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Deterministic eval harness (Tier 1) — zero-LLM regression armor for the matcher and both edit parsers* · [roadmap.md](../../roadmap.md) — *Eval harness Tier 2 (LLM-scored)*; *Calibrate the Word fake against `edit_failed` rows*; *Eval harness (Tier 1) — known limitations*
+
 > Date: 2026-08-19 · Branch: `feat/eval-harness` · Status: design, approved for planning
 
 ## Why

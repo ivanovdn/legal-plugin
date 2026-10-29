@@ -1,5 +1,7 @@
 # Within-Session Conversation Memory — Design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Within-session conversation memory*
+
 > Date: 2026-05-19
 > Branch: `feat/within-session-memory`
 > Scope: within-session conversation history only. Cross-session memory (Qdrant `memory` collection) is a separate, follow-up spec.

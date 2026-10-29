@@ -1,5 +1,7 @@
 # Chat persistence across pane reopen — design
 
+**Related:** [roadmap.md](../../roadmap.md) — *A reopened pane shows an empty chat while the model still remembers the conversation*
+
 > **⚠️ SUPERSEDED (2026-07-14).** This localStorage approach was built and then reverted after
 > sideload smoke testing revealed (a) the preamble-hash identity drifts when the review workflow
 > fills fields in the opening block, and (b) the real deployment is multi-attorney on cloud docs

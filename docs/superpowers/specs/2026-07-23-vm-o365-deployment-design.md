@@ -1,5 +1,7 @@
 # VM / O365 deployment — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *VM deployment — Bucket A (buildable & testable now)* · [roadmap.md](../../roadmap.md) — *VM deployment + hosting — Bucket B (spec 2 of the O365/SharePoint effort)*
+
 - **Date:** 2026-07-23
 - **Status:** Draft — awaiting review
 - **Spec 2 of 2** in the "run on company O365 / SharePoint" effort. Spec 1 (Postgres store migration) is **shipped & merged** (`aceb470`) — this spec builds on it (the backend's durable stores now live in a Postgres `app-db` that travels with the docker-compose stack).

@@ -1,8 +1,10 @@
 # Per-user identity + memory verification — design
 
+**Related:** [shipped-log.md](../../shipped-log.md) — *Per-user identity (name bridge → SSO)* · [roadmap.md](../../roadmap.md) — *O365 SSO attorney identity (real authentication)*
+
 - **Date:** 2026-08-10
 - **Status:** Draft — awaiting review
-- **Context:** The add-in is deployed and validated on the VM (spec 2 / bucket B). Before handing to legal-team testers, we want (a) each user identified by a **human-readable name** instead of the opaque per-install UUID, and (b) confidence that **every memory system works per-user on the deployment**. This spec covers both. It is a slice of the deferred SSO work ([[2026-07-15-o365-sso-attorney-identity-design]]): it ships the near-term **name bridge** and tees up SSO with an admin request.
+- **Context:** The add-in is deployed and validated on the VM (spec 2 / bucket B). Before handing to legal-team testers, we want (a) each user identified by a **human-readable name** instead of the opaque per-install UUID, and (b) confidence that **every memory system works per-user on the deployment**. This spec covers both. It is a slice of the deferred SSO work ([2026-07-15-o365-sso-attorney-identity-design](2026-07-15-o365-sso-attorney-identity-design.md)): it ships the near-term **name bridge** and tees up SSO with an admin request.
 
 ## Problem
 
