@@ -142,7 +142,7 @@ legal-plugin/
 │   ├── build_manifest.py       # Word add-in manifest generation
 │   ├── ingest_demo_msa.py      # Ingest the demo MSA as doc_type="msa" (SOW-vs-MSA demo)
 │   ├── feedback_report.py      # Read feedback / turn_log / activity tables
-│   └── check_locks.py · check_degradation_vocabulary.py · document_changes.py · delete_document_data.py · test-windows-install.ps1
+│   └── check_locks.py · check_degradation_vocabulary.py · check_wiki.py · check_docs_links.py · document_changes.py · delete_document_data.py · test-windows-install.ps1
 │
 ├── evals/                      # Zero-LLM regression harness (parse + compaction-gate cases, baseline.json)
 ├── config.py                   # pydantic-settings — single config import

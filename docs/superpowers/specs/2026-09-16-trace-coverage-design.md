@@ -216,7 +216,7 @@ The original "40" was 36 application-directory sites plus the four `observabilit
 
 **So: 23 codes, 28 call sites** — five codes have two producers each (`checkpointer_unavailable`, `contract_generation_failed`, `compaction_failed`, `context_truncated`, `msa_lookup_failed`). As merged it was 22 codes and 26 sites; the 2026-10-08 pilot audit added one code and two sites. The earlier "22 codes across 23 sites" was wrong in both halves; the codes-to-sites ratio is not 1:1 and never was.
 
-> **Line numbers in the tables above are from design time and drift.** The live index is the `grep` in this section plus `scripts/check_degradation_vocabulary.py`. **Three rows were moved by rulings taken during execution — R12 (`checkpointer_unavailable`), Task 13 (`compaction_failed`) and the final fix wave (`context_truncated`'s second producer).** Every ruling, with its reasoning, is in the execution ledger: [`.superpowers/sdd/2026-09-16-trace-coverage/progress.md`](../../../.superpowers/sdd/2026-09-16-trace-coverage/progress.md). Where this spec and the merged code disagree, the code and the ledger win.
+> **Line numbers in the tables above are from design time and drift.** The live index is the `grep` in this section plus `scripts/check_degradation_vocabulary.py`. **Three rows were moved by rulings taken during execution — R12 (`checkpointer_unavailable`), Task 13 (`compaction_failed`) and the final fix wave (`context_truncated`'s second producer).** Every ruling, with its reasoning, is in the execution ledger: `.superpowers/sdd/2026-09-16-trace-coverage/progress.md` (git-ignored, so only on the machine that ran the plan). Where this spec and the merged code disagree, the code and the ledger win.
 
 ### Outcome derivation
 

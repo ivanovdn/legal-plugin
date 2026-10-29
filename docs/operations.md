@@ -81,7 +81,7 @@ Key settings:
 
 ## Tests
 
-The backend suite needs Docker running (`tests/conftest.py` starts an ephemeral Postgres via testcontainers). `bash scripts/check.sh` is the pre-push gate, and the only one (there is no CI): the locks, the backend tests, the degradation-vocabulary and wiki checks, the add-in typecheck and assertions, the evals, the backend image build and the Caddyfile check.
+The backend suite needs Docker running (`tests/conftest.py` starts an ephemeral Postgres via testcontainers). `bash scripts/check.sh` is the pre-push gate, and the only one (there is no CI): the locks, the backend tests, the degradation-vocabulary, wiki and docs-link checks, the add-in typecheck and assertions, the evals, the backend image build and the Caddyfile check.
 
 ```bash
 uv run pytest tests/ -q      # backend tests only

@@ -25,6 +25,11 @@ uv run python scripts/check_degradation_vocabulary.py
 echo "==> wiki reference sections"
 uv run python scripts/check_wiki.py
 
+# docs/ is one linked graph (read in GitHub, Obsidian and the IDE): every
+# relative link resolves, every anchor matches a heading, every doc is linked
+# from another, and nothing uses [[wikilinks]].
+uv run python scripts/check_docs_links.py
+
 echo "==> word add-in typecheck"
 cd clients/word
 npx tsc --noEmit
