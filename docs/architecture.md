@@ -7,13 +7,16 @@
 ```
 Attorney → Chainlit (:8080) / Word add-in (:3001) → FastAPI (:8000) → LangGraph graph
                                                     ├── Skills (5 capabilities)
-                                                    ├── RAG layer → Qdrant
+                                                    ├── RAG layer → Qdrant (dense search; Spark on the VM)
+                                                    ├── Embeddings → Ollama (embeddinggemma)
                                                     ├── LLM → Ollama
-                                                    ├── Reranker → llama-cpp
+                                                    ├── Reranker → Qwen3-Reranker-4B (llama.cpp local / vLLM VM)
                                                     ├── Checkpointer → Redis
                                                     ├── Audit/Review/Conversation → Postgres (app-db)
                                                     └── Tracing → OTel (Langfuse local / Phoenix VM)
 ```
+
+Retrieval in detail: which model runs where, the search pipeline, and the move to Qdrant's built-in hybrid search are covered in [rag.md](rag.md).
 
 **Two-process model:**
 - **Backend** (FastAPI, port 8000) — owns all business logic, graph execution, RAG, LLM calls, audit
@@ -84,12 +87,12 @@ legal-plugin/
 │   │   └── compaction.py       # Chat-history condensing into validated quote segments
 │   └── drafting.py             # Document generation prompt → shared nodes
 │
-├── rag/                        # RAG layer (ported from compliance-bot)
-│   ├── embeddings.py           # Ollama /api/embed
-│   ├── vector_store.py         # Qdrant client — all ops take collection param
-│   ├── bm25_index.py           # Pure-Python BM25 with JSON persistence
-│   ├── hybrid_search.py        # RRF fusion (vector + BM25) + reranker
-│   ├── reranker.py             # Multi-backend reranker (llama-cpp, vLLM)
+├── rag/                        # RAG layer (ported from compliance-bot) — see docs/rag.md
+│   ├── embeddings.py           # Ollama /api/embed (embeddinggemma, 768-d)
+│   ├── vector_store.py         # Qdrant client, dense vectors only — all ops take collection param
+│   ├── bm25_index.py           # Pure-Python BM25, off by default — to be replaced by Qdrant hybrid search
+│   ├── hybrid_search.py        # Dense search (+ BM25 if on), RRF fusion, then the reranker
+│   ├── reranker.py             # Qwen3-Reranker-4B client: llama-server or vLLM (/v1/rerank, /v1/score)
 │   ├── related_docs.py         # get_parent_msa — governing MSA for SOW reviews
 │   └── tools/                  # LangGraph @tool decorated functions
 │       ├── search_legal.py     # Hybrid search as agent tool

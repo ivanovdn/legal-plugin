@@ -4,7 +4,7 @@
 
 ## What Is This
 
-AI-powered legal assistant for an internal legal team. Attorneys submit requests through the Word add-in (the pilot's main surface), a Chainlit chat UI, or the REST API. A LangGraph supervisor graph routes requests to specialized skills, retrieves grounding context via hybrid RAG search, and returns structured legal output using a local LLM.
+AI-powered legal assistant for an internal legal team. Attorneys submit requests through the Word add-in (the pilot's main surface), a Chainlit chat UI, or the REST API. A LangGraph supervisor graph routes requests to specialized skills, retrieves grounding context from Qdrant (RAG), and returns structured legal output using a local LLM.
 
 **Air-gapped** — no external API calls. Production runs on a VM (SRV-AGENT-01, 172.20.1.10) with the model (qwen3.6 via Ollama) and Qdrant on a separate internal box (Spark, 172.20.0.22); local dev runs on the developer's Mac.
 
@@ -26,7 +26,7 @@ AI-powered legal assistant for an internal legal team. Attorneys submit requests
 
 - [architecture.md](architecture.md) — the system diagram, project tree, skills, graph flow and routing, the Chainlit client, the API endpoints and the data models.
 - [operations.md](operations.md) — how to run it, the Docker services (with the `app-db` tables), configuration, and the test suites.
-- [rag.md](rag.md) — the Qdrant collections and the ingest pipeline.
+- [rag.md](rag.md) — which model runs where (embeddings, Qdrant, reranker; local and VM), the search pipeline, the move to Qdrant's hybrid search, the collections and the ingest pipeline.
 - [observability.md](observability.md) — OpenTelemetry tracing, `app.outcome`, the closed degradation vocabulary, what spans carry, Phoenix.
 - [roadmap.md](roadmap.md) — every open follow-up, with its priority and the evidence behind it.
 - [shipped-log.md](shipped-log.md) — every shipped change, with the reasoning and the measurements that justified it.

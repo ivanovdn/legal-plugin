@@ -69,8 +69,8 @@ Key settings:
 - `LLM_MODEL` — Ollama model name (e.g., `qwen3.6:latest`)
 - `EMBEDDING_MODEL` — embedding model (e.g., `embeddinggemma:latest`)
 - `QDRANT_VECTOR_DIM` — must match embedding model (768 for embeddinggemma)
-- `RERANKER_ENABLED` — toggle reranker on/off
-- `BM25_ENABLED` — toggle BM25 keyword search
+- `RERANKER_ENABLED` — toggle reranker on/off; it also needs `RERANKER_BACKEND`, `RERANKER_URL` and `RERANKER_MODEL` ([rag.md](rag.md#where-each-piece-runs))
+- `BM25_ENABLED` — toggle the pure-Python BM25 keyword search; keep it off ([why](rag.md#why-keyword-search-is-off))
 - `DATABASE_URL` — Postgres DSN for the audit/review/conversation stores (default: `postgresql://legal:legal@localhost:5434/legal`, the `app-db` container)
 - `DB_POOL_TIMEOUT` — seconds to wait for a pooled connection before a store call fails and the turn degrades (default: `3.0`). `psycopg_pool`'s own default is 30s; measured against an unreachable host, that is 30.00s of dead pane per store call versus 3.00s. `@lru_cache`'d in `get_settings` → needs a `start.sh` restart.
 - `CHAT_CONTEXT_MAX_CHARS` — the doc-chat character budget (default `150000`, deliberately below `OLLAMA_NUM_CTX` × chars-per-token). This is the number the pane's gauge is a percentage of, and the only thing `_cap_chat_context` truncates when it is exceeded is the **document** — never the playbook, MSA or findings. Lowering it is the fastest way to exercise the truncation and compaction paths by hand; it is also how the fabricated-completion bug in the follow-ups below was reproduced deterministically, so put it back to `150000` when done.

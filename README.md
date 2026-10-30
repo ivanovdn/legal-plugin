@@ -13,7 +13,7 @@
 
 ## What it is
 
-Attorneys submit a contract or a question through one of three surfaces — a **Chainlit chat UI**, a **Microsoft Word task-pane add-in**, or the **REST API**. A **LangGraph** supervisor graph classifies the request, retrieves grounding context via **hybrid RAG** over the firm's document corpus, runs a **local LLM** (via Ollama), and returns a structured legal deliverable: a clause-by-clause review with risk ratings, redline suggestions, missing-context blockers, and business questions.
+Attorneys submit a contract or a question through one of three surfaces — a **Chainlit chat UI**, a **Microsoft Word task-pane add-in**, or the **REST API**. A **LangGraph** supervisor graph classifies the request, retrieves grounding context from the firm's document corpus (**RAG** over Qdrant), runs a **local LLM** (via Ollama), and returns a structured legal deliverable: a clause-by-clause review with risk ratings, redline suggestions, missing-context blockers, and business questions.
 
 The whole system runs on a single workstation. **No external API calls** — contracts, playbooks, and client data stay local.
 
@@ -21,7 +21,7 @@ The whole system runs on a single workstation. **No external API calls** — con
 
 - **Playbook-grounded, not improvised.** Reviews follow the legal team's own contract playbook verbatim (the `SKILL.md` files are the ceiling — the model may not fall back on pretraining). Per-type playbook bundles auto-detect NDA / MSA / SOW / BAA.
 - **Word add-in with native tracked changes.** Runs the review in-pane, applies redlines as real Office tracked changes (Accept/Reject preserved), fills placeholders, and offers a grounded doc-chat for follow-up edits.
-- **Hybrid RAG retrieval.** Dense vectors (Qdrant) + BM25 + an optional cross-encoder reranker, always tenant-filtered by `client_id`.
+- **RAG retrieval.** Dense search in Qdrant over `embeddinggemma` vectors, then a Qwen3-Reranker-4B reranker (llama.cpp locally, vLLM on the VM). Keyword search is moving into Qdrant's built-in hybrid search. The graph's retrieval step always filters by `client_id`; the agents' search tools don't enforce it yet. Current state and gaps: [`docs/rag.md`](docs/rag.md).
 - **SOW ↔ MSA cross-checking.** A SOW review automatically pulls in the governing MSA and flags conflicts per the playbook's precedence rules.
 - **Durable memory & audit.** Redis checkpointer for resumable sessions; a dedicated Postgres `app-db` holds the audit log of every turn, persisted reviews the chat tab remembers across turns, and per-attorney conversations. Degraded-memory states are surfaced loudly, never silent.
 - **Full observability, vendor-neutral.** Every node and LLM call is traced via **OpenTelemetry** (OpenInference conventions) with token usage. The trace backend is chosen by `OTEL_EXPORTER_OTLP_ENDPOINT` — `bash scripts/start.sh` traces to the local Langfuse v3 OTLP endpoint out of the box (provided `.env` carries `OTEL_EXPORTER_OTLP_HEADERS` for the Basic auth header, as `cp .env.example .env` does — otherwise the OTLP export silently 401s); the VM deploy points at a dedicated Phoenix service. Tracing is non-fatal: disabled (`TRACING_ENABLED=false`) or unreachable, the app behaves identically.
@@ -37,7 +37,7 @@ Attorney
    ├── Word add-in      (:3001)  ├──► FastAPI backend (:8000)  ──►  LangGraph supervisor graph
    └── REST API         (:8000)  ┘                                    │
                                                                       ├── Skills (review, generation, research, compliance, drafting)
-                                                                      ├── RAG layer ────► Qdrant (+ BM25 + reranker)
+                                                                      ├── RAG layer ────► Qdrant (dense search) + reranker
                                                                       ├── LLM ──────────► Ollama (local model)
                                                                       ├── Checkpointer ─► Redis
                                                                       ├── Stores ───────► Postgres app-db (audit, reviews, chat)
@@ -55,7 +55,8 @@ Attorney
 | Orchestration    | LangGraph + LangChain                                             |
 | LLM & embeddings | Ollama (local) — e.g. `qwen3.6`, `embeddinggemma`                 |
 | Backend          | FastAPI + Uvicorn (Python 3.12)                                   |
-| Vector store     | Qdrant (hybrid: dense + BM25 + optional reranker)                 |
+| Vector store     | Qdrant (dense search; built-in hybrid search planned)             |
+| Reranker         | Qwen3-Reranker-4B — llama.cpp (local) / vLLM (VM)                 |
 | Web client       | Chainlit                                                          |
 | Word client      | Office.js task pane — React + TypeScript + Vite                   |
 | Sessions         | Redis (LangGraph checkpointer)                                    |
@@ -81,7 +82,7 @@ legal-plugin/
 │   ├── contract_generation/
 │   ├── legal_research/   Direct ChatOllama (doc-chat) + ReAct agent (KB research)
 │   ├── compliance_check.py  drafting.py  grounding.py
-├── rag/                  Qdrant hybrid search, reranker, tenant filtering
+├── rag/                  Qdrant search, reranker client, the agents' RAG tools
 ├── ingest/               Document parsers + ingestion pipeline
 ├── memory/               Audit log, review store, document-id resolution
 ├── observability/        OpenTelemetry tracing (spans.py seam + otel.py bootstrap)
@@ -180,7 +181,7 @@ Ingest documents into the RAG corpus via `POST /api/ingest` (see `scripts/ingest
 All settings live in `.env` (loaded by `config.py` via `pydantic-settings`). Key groups:
 
 - **LLM** — `OLLAMA_BASE_URL`, `LLM_MODEL`, `EMBEDDING_MODEL`, `OLLAMA_NUM_CTX`
-- **Retrieval** — `RETRIEVAL_TOP_K`, `MIN_CONFIDENCE_SCORE`, hybrid + reranker knobs
+- **Retrieval** — `QDRANT_URL`, `QDRANT_VECTOR_DIM`, `RERANKER_*`, `HYBRID_VECTOR_CANDIDATES` ([`docs/rag.md`](docs/rag.md#settings) lists which retrieval settings the code actually reads)
 - **Memory** — Redis URL, checkpointer TTL, chat-history depth, context caps
 - **Observability** — `OTEL_EXPORTER_OTLP_ENDPOINT` (local Langfuse v3 OTLP / VM Phoenix), `OTEL_EXPORTER_OTLP_HEADERS` (Basic auth, local Langfuse only), `TRACING_ENABLED`
 - **App** — `API_PORT`, `CHAINLIT_PORT`, `DATABASE_URL` (e.g. `postgresql://legal:legal@localhost:5434/legal`)
