@@ -6,7 +6,10 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
+from langchain_core.messages import ToolMessage
+
 from config import get_settings
+from graph.nodes.risk_assessor import _check_citations
 from skills.compliance_check import compliance_check
 from skills.contract_generation import contract_generation
 from skills.contract_review.contract_review import contract_review
@@ -97,8 +100,7 @@ def test_contract_generation_extracts_source_docs(monkeypatch):
     from config import get_settings
     get_settings.cache_clear()
 
-    tool_msg = MagicMock()
-    tool_msg.content = "Found contract (doc_id: abc12345-6789-0000-1111-222233334444)"
+    tool_msg = ToolMessage(content="Found contract (doc_id: abc12345-6789-0000-1111-222233334444)", tool_call_id="call-1")
     final_msg = MagicMock()
     final_msg.content = "Generated contract based on doc_id: abc12345-6789-0000-1111-222233334444"
     fake_agent_result = {"messages": [tool_msg, final_msg]}
@@ -114,6 +116,90 @@ def test_contract_generation_extracts_source_docs(monkeypatch):
 
     assert len(result["retrieved_chunks"]) > 0
     assert result["retrieved_chunks"][0]["doc_id"] == "abc12345-6789-0000-1111-222233334444"
+
+
+def test_contract_generation_keeps_readable_doc_ids(monkeypatch):
+    """A doc_id that isn't a UUID is collected whole, not dropped.
+
+    The demo contracts in case_history have ids like svc_acme_2022; a hex-only
+    pattern found nothing in them, so every turn citing one looked unsourced.
+    """
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    tool_msg = ToolMessage(content="[1] Acme Services (doc_id: svc_acme_2022, type: contract, jurisdiction: US)", tool_call_id="call-1")
+    final_msg = MagicMock(content="Drafted from the Acme agreement (doc_id: svc_acme_2022).")
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [tool_msg, final_msg]}
+
+    with patch("skills.contract_generation.contract_generation._build_agent", return_value=fake_agent):
+        result = contract_generation(_make_state(request="Generate a contract"))
+
+    assert {c["doc_id"] for c in result["retrieved_chunks"]} == {"svc_acme_2022"}
+
+
+def test_legal_research_flags_answer_that_omits_a_readable_doc_id(monkeypatch):
+    """A readable doc_id must be cited in full for the citation check to pass.
+
+    A hex-only pattern kept just the leading "c" of "circ92-ch1-n1", and "c" is
+    in almost any answer, so the check passed whether or not the source was cited.
+    """
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    tool_msg = ToolMessage(content="[1] Circular 92 (doc_id: circ92-ch1-n1, type: legislation, jurisdiction: US)", tool_call_id="call-1")
+    final_msg = MagicMock(content="Fair use covers criticism and comment.")
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [tool_msg, final_msg]}
+
+    with patch("skills.legal_research.legal_research._build_agent", return_value=fake_agent):
+        result = legal_research(_make_state(request="What does fair use cover?", task_type="research"))
+
+    assert {c["doc_id"] for c in result["retrieved_chunks"]} == {"circ92-ch1-n1"}
+    flags = _check_citations(result["llm_response"], result["retrieved_chunks"])
+    assert [f["reason"] for f in flags] == [
+        "No citation found — response does not reference any retrieved document"
+    ]
+
+
+def test_contract_generation_ignores_doc_ids_only_the_answer_names(monkeypatch):
+    """Only search results count as sources; an id the draft names without any
+    search having returned it is not a retrieved document."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {
+        "messages": [MagicMock(content="Drafted from the Acme agreement (doc_id: made_up_id_42).")]
+    }
+
+    with patch("skills.contract_generation.contract_generation._build_agent", return_value=fake_agent):
+        result = contract_generation(_make_state(request="Generate a contract"))
+
+    assert result["retrieved_chunks"] == []
+
+
+def test_legal_research_flags_an_answer_citing_a_doc_id_no_search_returned(monkeypatch):
+    """An id the answer names without any search having returned it must not
+    satisfy the citation check: the turn has no source and is flagged."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {
+        "messages": [MagicMock(content="Per the Acme agreement (doc_id: made_up_id_42), the cap is 2x.")]
+    }
+
+    with patch("skills.legal_research.legal_research._build_agent", return_value=fake_agent):
+        result = legal_research(_make_state(request="What is the cap?", task_type="research"))
+
+    assert result["retrieved_chunks"] == []
+    flags = _check_citations(result["llm_response"], result["retrieved_chunks"])
+    assert [f["reason"] for f in flags] == ["No citation possible — no chunks retrieved"]
 
 
 # --- contract_review ---

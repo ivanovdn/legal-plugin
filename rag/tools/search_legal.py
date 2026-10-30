@@ -1,9 +1,34 @@
 # rag/tools/search_legal.py
 """Hybrid search tool for LangGraph agents."""
 
+import re
+from collections.abc import Iterable
+
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 
 from rag.hybrid_search import hybrid_search
+
+# The id in a result's "(doc_id: <id>, …)" line. Match the whole token: parsed
+# documents have UUIDs but the demo contracts have readable ids (svc_acme_2022),
+# and a hex-only pattern dropped those and cut others short ("circ92-…" → "c",
+# which appears in almost any answer, so the citation check passed regardless).
+_DOC_ID_RE = re.compile(r"doc_id:\s*([A-Za-z0-9_-]+)")
+
+
+def retrieved_doc_ids(messages: Iterable) -> set[str]:
+    """The doc_ids a ReAct agent's searches returned in this run.
+
+    Reads tool results only. The agent's own messages are not evidence of
+    retrieval: an id the answer names but no search returned would otherwise
+    count as a source, and `risk_assessor._check_citations` would pass the turn
+    because the answer "cites" it.
+    """
+    ids: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            ids.update(_DOC_ID_RE.findall(str(msg.content)))
+    return ids
 
 
 @tool

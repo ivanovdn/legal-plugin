@@ -2,6 +2,7 @@
 import time
 from unittest.mock import patch, MagicMock
 
+from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
@@ -100,11 +101,20 @@ _fake_chunks = [
 
 
 def _fake_agent():
-    """Mock agent that returns a simple response."""
+    """Mock agent whose run searched once and cites what the search returned.
+
+    The search result has to be a ToolMessage: only tool results count as
+    retrieved sources, so an answer naming d1 with no search behind it would
+    be flagged as unsourced and stop at attorney review.
+    """
     mock_agent = MagicMock()
+    search_result = ToolMessage(
+        content="[1] Contract A (doc_id: d1, type: contract, jurisdiction: US)",
+        tool_call_id="call-1",
+    )
     fake_msg = MagicMock()
     fake_msg.content = "Based on Contract A (doc_id: d1), the analysis shows relevant findings."
-    mock_agent.invoke.return_value = {"messages": [fake_msg]}
+    mock_agent.invoke.return_value = {"messages": [search_result, fake_msg]}
     return mock_agent
 
 

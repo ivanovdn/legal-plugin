@@ -2,7 +2,6 @@
 """Legal research — direct ChatOllama for doc-attached chats, ReAct agent for KB research."""
 
 import logging
-import re
 import time
 
 from langchain_ollama import ChatOllama
@@ -15,7 +14,7 @@ from observability.degradations import (
 )
 from observability.spans import mark_failed, record_degradation, traced
 from observability.tracing import message_usage, traced_agent_invoke, traced_invoke
-from rag.tools.search_legal import search_legal
+from rag.tools.search_legal import retrieved_doc_ids, search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
 from skills.grounding import preferences_block_for_state
@@ -402,13 +401,7 @@ def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]
         last_msg = messages[-1]
         content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
 
-    source_docs: set[str] = set()
-    for msg in messages:
-        msg_text = msg.content if hasattr(msg, "content") else str(msg)
-        ids = re.findall(r"doc_id:\s*([a-f0-9-]+)", msg_text)
-        source_docs.update(ids)
-
-    return content, _extract_proposed_edits(content), source_docs
+    return content, _extract_proposed_edits(content), retrieved_doc_ids(messages)
 
 
 @traced("legal_research")

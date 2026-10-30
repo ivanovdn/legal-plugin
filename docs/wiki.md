@@ -1,6 +1,6 @@
 # Legal Plugin — Project Wiki
 
-> Last updated: 2026-10-28 | Python 3.12 | In production on the VM (SRV-AGENT-01) for an attorney pilot since 2026-10-08 — Word add-in on Mac and Windows, model qwen3.6 on Spark, traces in Phoenix | What shipped, and when: [Shipped Log](shipped-log.md)
+> Last updated: 2026-10-30 | Python 3.12 | In production on the VM (SRV-AGENT-01) for an attorney pilot since 2026-10-08 — Word add-in on Mac and Windows, model qwen3.6 on Spark, traces in Phoenix | What shipped, and when: [Shipped Log](shipped-log.md)
 
 ## What Is This
 

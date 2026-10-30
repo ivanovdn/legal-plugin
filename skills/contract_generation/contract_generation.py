@@ -3,7 +3,6 @@
 Prompt loaded from SKILL.md (editable by legal team)."""
 
 import logging
-import re
 from pathlib import Path
 
 from langchain_ollama import ChatOllama
@@ -14,7 +13,7 @@ from graph.state import LegalAgentState
 from observability.degradations import CONTRACT_GENERATION_FAILED
 from observability.spans import mark_failed, traced
 from observability.tracing import traced_invoke, traced_agent_invoke
-from rag.tools.search_legal import search_legal
+from rag.tools.search_legal import retrieved_doc_ids, search_legal
 from rag.tools.get_document import get_document
 from rag.tools.extract_clauses import extract_clauses
 from rag.tools.escalate import escalate
@@ -155,12 +154,7 @@ def contract_generation(state: LegalAgentState) -> LegalAgentState:
         else:
             state["llm_response"] = "Error: Agent returned no messages."
 
-        # Collect source doc_ids from tool call results
-        source_docs = set()
-        for msg in messages:
-            msg_text = msg.content if hasattr(msg, "content") else str(msg)
-            ids = re.findall(r"doc_id:\s*([a-f0-9-]+)", msg_text)
-            source_docs.update(ids)
+        source_docs = retrieved_doc_ids(messages)
 
         state["retrieved_chunks"] = [
             {"doc_id": did, "doc_title": f"Source {did[:8]}"}
