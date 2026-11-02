@@ -179,3 +179,20 @@ def test_review_headroom_fits_a_real_contract():
         f"(123,446 chars): num_ctx={s.ollama_num_ctx}, "
         f"num_predict_review={s.ollama_num_predict_review}"
     )
+
+
+def test_book_settings_defaults(monkeypatch):
+    """The seven reference-book settings (spec D12) and their defaults."""
+    for var in ("BOOK_COLLECTION", "BOOK_CHUNK_MAX_TOKENS", "BOOK_SEARCH_TOP_K",
+                "BOOK_DENSE_CANDIDATES", "BOOK_SPARSE_CANDIDATES", "BOOK_MIN_SCORE",
+                "BOOK_LOOKUP_MAX_TOKENS"):
+        monkeypatch.delenv(var, raising=False)
+    # _env_file=None: assert the CODE defaults, not a developer's local .env.
+    s = Settings(_env_file=None)
+    assert s.book_collection == "legal_books"
+    assert s.book_chunk_max_tokens == 800
+    assert s.book_search_top_k == 8
+    assert s.book_dense_candidates == 30
+    assert s.book_sparse_candidates == 30
+    assert s.book_min_score == 0.0
+    assert s.book_lookup_max_tokens == 6000

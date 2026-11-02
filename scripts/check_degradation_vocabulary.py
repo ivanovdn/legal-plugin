@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO))
 
 import observability.degradations as D  # noqa: E402
 
-PACKAGES = ("api", "graph", "skills", "memory")
+PACKAGES = ("api", "graph", "skills", "memory", "rag")
 SEAM_CALLS = {"mark_failed", "record_degradation"}
 
 

@@ -47,6 +47,9 @@ RECORDED: frozenset[str] = frozenset({
     "sso_issuer", "sso_jwks_url", "otel_exporter_otlp_endpoint", "otel_service_name",
     "tracing_enabled", "otel_instrument_redis", "api_port", "chainlit_port",
     "db_pool_timeout", "log_level", "build_sha",
+    "book_collection", "book_chunk_max_tokens", "book_search_top_k",
+    "book_dense_candidates", "book_sparse_candidates", "book_min_score",
+    "book_lookup_max_tokens",
 })
 
 

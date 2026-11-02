@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     # BM25
     bm25_enabled: bool = False
 
+    # Reference books (spec 2026-10-30-reference-books-design.md, D12)
+    book_collection: str = "legal_books"      # the Qdrant collection holding the reference books; it holds no client data, so no client_id filter
+    book_chunk_max_tokens: int = 800          # chunk budget in embedding-model tokens, context header included
+    book_search_top_k: int = 8                # passages search_books returns to the agent
+    book_dense_candidates: int = 30           # dense hits fetched per query, before fusion
+    book_sparse_candidates: int = 30          # BM25 hits fetched per query, before fusion
+    book_min_score: float = 0.0               # drop hits scoring below this; compares the rerank score when the reranker ran, else the fused score; 0 = off until the test set calibrates it
+    book_lookup_max_tokens: int = 6000        # cap on the text one lookup_book call returns
+
     # Memory / checkpointer
     checkpointer_enabled: bool = True
     interrupt_enabled: bool = True

@@ -11,8 +11,8 @@ def test_vocabulary_is_closed_and_partitioned():
 
     assert len(D.FAILED_REASONS) == 8
     assert len(D.ANNOUNCED_REASONS) == 8
-    assert len(D.SILENT_REASONS) == 7
-    assert len(D.ALL_REASONS) == 23
+    assert len(D.SILENT_REASONS) == 8
+    assert len(D.ALL_REASONS) == 24
     # The three classes must not overlap — a code is failed, announced or
     # silent, never two of them.
     assert D.FAILED_REASONS & D.ANNOUNCED_REASONS == frozenset()
