@@ -5,7 +5,7 @@ The front end builds a `BookTree` of `Node`s (a section, a subdivision, a defini
 the chunker cuts it into `BookChunk`s, which is what Qdrant holds. A `ref_id` names a node, a
 chunk has its own key (ref_ids.py).
 """
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field, field_validator
@@ -89,10 +89,18 @@ class Node:
         return min(pages), max(pages)
 
 
+def plain_join(lines: Sequence[TextLine]) -> str:
+    """Lines -> running text with no cleaning: their texts, stripped, one space apart."""
+    return " ".join(text for line in lines if (text := line.text.strip()))
+
+
 @dataclass
 class BookTree:
     book: BookEntry
     nodes: list[Node]  # the roots, in document order
+    # How the book's lines read as running text. The front end supplies its own (Circular 92's cleans
+    # line-end hyphens and small caps); the plain join is for a tree built by hand.
+    join: Callable[[Sequence[TextLine]], str] = plain_join
 
     def walk(self) -> Iterator[Node]:
         for node in self.nodes:

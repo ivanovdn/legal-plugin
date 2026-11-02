@@ -1,4 +1,4 @@
-# ingest/books/circular92/labels.py
+# ingest/books/labels.py
 """U.S. Code subdivision labels, and the level each one sits at.
 
 Level 1 is a subsection (a), 2 a paragraph (1), 3 a subparagraph (A), 4 a clause (i), 5 a

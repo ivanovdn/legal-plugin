@@ -18,9 +18,9 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from ingest.books.circular92.labels import is_expected, resolve
 from ingest.books.circular92.layout import RawLine
 from ingest.books.circular92.text import HyphenDecider, clean_join
+from ingest.books.labels import is_expected, resolve
 from ingest.books.models import Node, TextLine
 from ingest.books.overrides import Override, OverrideLedger
 from ingest.books.ref_ids import slugify_term

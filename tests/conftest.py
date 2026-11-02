@@ -21,9 +21,11 @@ from testcontainers.postgres import PostgresContainer
 import memory.db as db
 from api.client_info import ClientInfo
 from config import get_settings
+from ingest.books.circular92 import parse_lines
 from ingest.books.circular92.layout import extract_lines
 from ingest.books.circular92.text import HyphenDecider
 from ingest.books.circular92.title17 import title17_nodes
+from ingest.books.golden import GOLDEN_PDF_PAGES
 from ingest.books.overrides import OverrideLedger, load_overrides
 from ingest.books.registry import get_book
 
@@ -131,13 +133,10 @@ def circ92_pdf() -> Path:
     return Path(__file__).resolve().parent / "fixtures" / "books" / "circular-92-2025-12.pdf"
 
 
-# Chapters 1 and 5 (PDF 23-188, 221-242: their sections and their notes), extracted once a session.
-CH1_CH5_PDF_PAGES = (*range(23, 189), *range(221, 243))
-
-
+# Chapters 1 and 5 (their sections and their notes: the golden file's pages), extracted once a session.
 @pytest.fixture(scope="session")
 def circ92_ch1_ch5_lines(circ92_pdf):
-    return extract_lines(circ92_pdf, CH1_CH5_PDF_PAGES)
+    return extract_lines(circ92_pdf, GOLDEN_PDF_PAGES)
 
 
 @pytest.fixture(scope="session")
@@ -159,6 +158,13 @@ def ch1_ch5_title17(circ92_ch1_ch5_lines, ch1_ch5_hyphens, ch1_ch5_ledger):
 @pytest.fixture(scope="session")
 def ch1_ch5_nodes(ch1_ch5_title17):
     return ch1_ch5_title17[0]
+
+
+@pytest.fixture(scope="session")
+def ch1_ch5_parse(circ92_ch1_ch5_lines):
+    """The whole back end on chapters 1 and 5 (the golden file's input), from the session's lines: a
+    ParseResult with its own ledger and hyphen decider, so the fixtures above are left as they are."""
+    return parse_lines(circ92_ch1_ch5_lines, get_book("circ92"))
 
 
 # Appendices A-T (PDF 389-481: their text and their notes), extracted once a session.

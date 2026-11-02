@@ -208,6 +208,15 @@ def test_override_text_owner_value_is_a_path(tmp_path):
             load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
 
 
+def test_override_xref_target_value_is_a_path(tmp_path):
+    # the value is what find_xrefs stores as the target, so it must be a path a ref_id can hold
+    ok = _entry(id="x-1", kind="xref_target", page=192, match="section 2 of such Act", value="usc15-s1114")
+    assert load_overrides(_write(tmp_path, [ok]))[0].value == "usc15-s1114"
+    for bad in ("", "15 U.S.C. 1114", "usc15-s1114-", "usc15 s1114"):
+        with pytest.raises(ValueError, match="value"):
+            load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
+
+
 def test_override_note_home_names_a_note_and_a_node(tmp_path):
     ok = _entry(id="h-1", kind="note_home", page=148, match="ch1-n15", value="usc17-s101-def-international-agreement")
     assert load_overrides(_write(tmp_path, [ok]))[0].match == "ch1-n15"

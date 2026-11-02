@@ -23,9 +23,9 @@ from pathlib import Path
 OVERRIDE_KINDS = frozenset({"label_level", "hyphen", "xref_target", "text_owner", "note_home"})
 HYPHEN_VALUES = frozenset({"join", "keep"})
 PREFIX_KINDS = frozenset({"label_level", "text_owner"})  # their match is a line prefix
-_PATH_RE = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*")  # a node path, as in a ref_id
+_PATH_RE = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*")  # a path, as in a ref_id
 _NOTE_PATH_RE = re.compile(r"(?:ch\d+|app[A-Z])-n\d+")  # a history note's path: ch1-n15, appB-n2
-PATH_VALUE_KINDS = frozenset({"text_owner", "note_home"})  # their value is a node path
+PATH_VALUE_KINDS = frozenset({"text_owner", "note_home", "xref_target"})  # their value is a path
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ def _parse(entry: object, index: int) -> Override:
             f"{label}: hyphen value must be one of {sorted(HYPHEN_VALUES)}, got {entry['value']!r}"
         )
     if entry["kind"] in PATH_VALUE_KINDS and not _PATH_RE.fullmatch(entry["value"]):
-        raise ValueError(f"{label}: {entry['kind']} value must be a node path, got {entry['value']!r}")
+        raise ValueError(f"{label}: {entry['kind']} value must be a path (as in a ref_id), got {entry['value']!r}")
     if entry["kind"] == "note_home" and not _NOTE_PATH_RE.fullmatch(entry["match"]):
         raise ValueError(f"{label}: note_home match must be a note's path (ch1-n15, appB-n2), got {entry['match']!r}")
     return Override(

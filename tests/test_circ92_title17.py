@@ -7,10 +7,10 @@ line, flush text after a list) runs on synthetic lines in the shape layout.py re
 """
 import pytest
 
-from ingest.books.circular92.labels import SEQ, expected_next, resolve, resolve_level
 from ingest.books.circular92.layout import RawLine, extract_lines
 from ingest.books.circular92.text import HyphenDecider, clean_join
 from ingest.books.circular92.title17 import UnitBuilder, section_heading_marks, title17_nodes, x_level
+from ingest.books.labels import SEQ, expected_next, resolve, resolve_level
 from ingest.books.overrides import Override, OverrideLedger, load_overrides
 from ingest.books.registry import get_book
 
