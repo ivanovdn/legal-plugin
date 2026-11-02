@@ -5,12 +5,15 @@ The tests on the real PDF extract only the pages they need (pdfplumber takes ~0.
 A rule the fixture cannot exercise (a footnote-font digit on a note line, the word-gap glue)
 runs on synthetic words in the shape pdfplumber returns them.
 """
+import pdfplumber
 import pytest
 
 from ingest.books.circular92.layout import (
+    APPENDICES_DIVIDER,
     BODY_PDF_PAGES,
     PAGE_OFFSET,
     SCOPE_STARTS,
+    WORD_SETTINGS,
     RawLine,
     extract_lines,
     lines_from_words,
@@ -46,8 +49,11 @@ def _body_page(words, pdf_page=60, notes_scopes=None):
 
 # --- the real PDF ----------------------------------------------------------------------------
 
-def test_the_body_is_pdf_23_to_481_and_the_printed_page_is_22_less():
-    assert BODY_PDF_PAGES == range(23, 482)
+def test_the_body_is_pdf_23_to_481_less_the_appendices_divider_and_the_printed_page_is_22_less():
+    assert APPENDICES_DIVIDER == range(387, 389)
+    assert list(BODY_PDF_PAGES) == [*range(23, 387), *range(389, 482)]
+    assert all(p in BODY_PDF_PAGES for p in (23, 385, 386, 389, 481))
+    assert not any(p in BODY_PDF_PAGES for p in (22, 387, 388, 482, 486))
     assert PAGE_OFFSET == 22
     assert [pdf for pdf, _ in SCOPE_STARTS] == sorted(pdf for pdf, _ in SCOPE_STARTS)
     assert SCOPE_STARTS[0] == (23, "Chapter 1") and SCOPE_STARTS[-1] == (481, "Appendix T")
@@ -93,11 +99,39 @@ def test_note_lines_keep_digits(circ92_pdf):
     assert not any(l.kind == "note" and l.top < heading[0].top for l in lines)
 
 
-def test_a_page_the_book_does_not_have_is_an_error(circ92_pdf):
-    with pytest.raises(ValueError, match="no PDF page 487"):
-        extract_lines(circ92_pdf, [487])
-    with pytest.raises(ValueError, match="no PDF page 0"):
-        extract_lines(circ92_pdf, [0])
+@pytest.mark.parametrize("page,why", [
+    (0, "front matter"), (22, "front matter"),
+    (387, "appendices divider"), (388, "appendices divider"),
+    (482, "back matter"), (486, "back matter"), (487, "back matter"),
+])
+def test_a_page_outside_the_body_is_refused_with_its_reason(circ92_pdf, page, why):
+    with pytest.raises(ValueError, match=rf"PDF page {page} is not body: it is .*{why}"):
+        extract_lines(circ92_pdf, [page])
+
+
+def test_a_range_over_the_divider_cannot_bring_it_back(circ92_pdf):
+    with pytest.raises(ValueError, match="PDF page 387 is not body"):
+        extract_lines(circ92_pdf, range(385, 390))
+
+
+def test_the_divider_is_the_appendices_part_title_and_contents(circ92_pdf):
+    # edition data, like the scope starts: PDF 387 opens with the "Appendices" title, 388 goes on with the contents
+    with pdfplumber.open(circ92_pdf) as pdf:
+        first = lines_from_words(pdf.pages[386].extract_words(**WORD_SETTINGS), 387, set())
+        second = lines_from_words(pdf.pages[387].extract_words(**WORD_SETTINGS), 388, set())
+    assert (first[0].kind, first[0].text) == ("title", "Appendices")
+    assert first[1].text == "appendix page"
+    assert any(l.text.startswith("n Title 18—Crimes") or l.text.startswith("o Title 28—Judiciary") for l in first + second)
+    assert not any(l.kind == "title" for l in second)
+
+
+def test_chapter_15_ends_at_pdf_385_and_no_note_is_a_title(circ92_pdf):
+    lines = extract_lines(circ92_pdf, [384, 385, 386, 389])  # 386 is blank
+    chapter_15 = [l for l in lines if l.scope == "Chapter 15"]
+    assert max(l.pdf_page for l in chapter_15) == 385
+    assert chapter_15[-1].kind == "note" and chapter_15[-1].text.endswith("2176–2199.")
+    assert not any(l.kind == "note" and l.font[0] == "TheMixOsF-ExtraBold" for l in lines)
+    assert [(l.scope, l.kind, l.text) for l in lines if l.pdf_page == 389][:1] == [("Appendix A", "title", "Appendix A")]
 
 
 def test_scopes(circ92_pdf):
@@ -124,6 +158,22 @@ def test_a_word_split_by_a_size_change_is_one_word(circ92_pdf):
     # "106" + "A" is set at two sizes, so pdfplumber returns two words; the book prints "106A"
     texts = [l.text for l in extract_lines(circ92_pdf, [42])]
     assert any("sections 106 and 106A," in t for t in texts)
+
+
+def test_a_word_cut_inside_one_typeface_is_one_word(circ92_pdf):
+    assert any("accordance with the following procedures:" in l.text for l in extract_lines(circ92_pdf, [58]))
+
+
+def test_small_caps_glued_to_the_roman_that_follows(circ92_pdf):
+    # a small-caps word and the roman after it are cut 0.15-0.3 pt apart: no space before "(" or a closing quote
+    texts = [l.text for l in extract_lines(circ92_pdf, [457])]
+    assert any("section 3663a(c)(1)(A)(ii) of this title" in t for t in texts)  # was "3663a (c)(1)(A)(ii)"
+    texts = [l.text for l in extract_lines(circ92_pdf, [409])]
+    assert any("by striking “Whoever” and inserting" in t for t in texts)  # was "“Whoever ”"
+    texts = [l.text for l in extract_lines(circ92_pdf, [464])]
+    assert any("“Random Assignment of Rate Court Proceedings” to the end" in t for t in texts)
+    texts = [l.text for l in extract_lines(circ92_pdf, [179])]
+    assert any("by inserting “in General” after" in t for t in texts)
 
 
 # --- line building, on synthetic words ------------------------------------------------------
@@ -231,13 +281,34 @@ def test_running_head_and_folio_are_dropped():
 def test_words_cut_at_a_font_or_size_change_are_glued_but_a_real_space_is_kept():
     glued = [_word("106", 100.0, width=14.6), _word("A", 114.6, size=9.4, width=6.4), _word(",", 121.1, width=2.5)]
     assert _body_page(glued)[0].text == "106A,"
-    # the narrowest real word space in the book is 0.22 pt ("(d)" then "For", p. 159)
+    # a word cut with no change of type at all: "pro" + "cedures:" (PDF 58), 0 and 0.1 pt apart
+    plain = [_word("pro", 100.0, width=14.1), _word("cedures:", 114.1, width=32.5)]
+    assert _body_page(plain)[0].text == "procedures:"
+    plain = [_word("copy", 100.0, width=19.5), _word("right", 119.6, width=20.2)]
+    assert _body_page(plain)[0].text == "copyright"
+    # the narrowest real word space with no change of type is 0.22 pt ("(d)" then "For", p. 159)
     tight = [_word("(d)", 100.0, width=11.8), _word("For", 112.02, width=14.1)]
     assert _body_page(tight)[0].text == "(d) For"
     # a marker between two words does not glue them
     words = [_word("features.", 100.0, width=30.0), _word("3", 130.0, font="MinionPro-Regular", size=10.5, width=5.0),
              _word("Next", 137.0, width=20.0)]
     assert [(l.text, l.marks) for l in _body_page(words)] == [("features. Next", [3])]
+
+
+def test_at_a_change_of_type_a_wider_cut_is_still_one_word_but_a_real_space_is_not():
+    def pair(gap, *, second_font="MinionC", second_size=10.2, second="”"):
+        return [_word("Whoever", 100.0, font="MinionSC", width=35.0), _word(second, 135.0 + gap, font=second_font, size=second_size, width=4.0)]
+
+    # small caps into roman, 0.16-0.29 pt apart (PDF 409 "Whoever" + "”"): one word
+    assert _body_page(pair(0.16))[0].text == "Whoever”"
+    assert _body_page(pair(0.29))[0].text == "Whoever”"
+    # a size change alone is a change of type
+    assert _body_page(pair(0.2, second_font="MinionSC", second_size=9.4))[0].text == "Whoever”"
+    # the same gap with no change of type is a space, and so is a mixed number's: "1" + "3/8" (0.38 pt, PDF 306)
+    same = [_word("one", 100.0, width=15.0), _word("two", 115.2, width=15.0)]
+    assert _body_page(same)[0].text == "one two"
+    assert _body_page(pair(0.38, second="3/8"))[0].text == "Whoever 3/8"
+    assert _body_page(pair(0.31))[0].text == "Whoever ”"
 
 
 def test_overlapping_boxes_are_not_one_word():

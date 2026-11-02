@@ -16,9 +16,12 @@ from pathlib import Path
 
 import pdfplumber
 
-# The body is PDF 23-481. PDF 1-22 is front matter; 482-486 is a folio page, three blanks
-# and the back cover, which would otherwise parse as Appendix T's notes.
-BODY_PDF_PAGES = range(23, 482)
+# The body is PDF 23-481 less the appendices divider. PDF 1-22 is front matter; 482-486 is a folio
+# page, three blanks and the back cover, which would otherwise parse as Appendix T's notes. PDF
+# 387-388 are the "Appendices" part title and the appendices' contents: they sit after Chapter 15's
+# notes and before Appendix A, so in Chapter 15's scope they would all read as its notes.
+APPENDICES_DIVIDER = range(387, 389)
+BODY_PDF_PAGES = (*range(23, 387), *range(389, 482))
 PAGE_OFFSET = 22  # printed page = PDF page - 22, on every page that prints a number
 
 # Scope starts are edition data, not detected, so any page range parses on its own; a test
@@ -38,13 +41,23 @@ LINE_TOP_TOLERANCE = 2.0  # a word whose top is this close to a line's top is on
 SUPERSCRIPT_OVERLAP = 2.0  # a small marker-font word sitting higher or lower must overlap the line by more
 SUPERSCRIPT_MAX_SIZE = 10.4
 
-# Two words closer than this were one word cut where the typeface or size changes ("106" + "A" at
-# 10.2 and 9.4 pt, "(" + "DMCA", "S" + "pecial" in small caps), which pdfplumber returns as two.
-# Every pair that close in the book is such a cut (checked over the whole body); the narrowest real
-# word space is 0.22 pt ("(d)" then "For", PDF 159), so the threshold sits between them. Boxes that
-# overlap by more than a point are not the two halves of one word.
+# pdfplumber returns a word as two when the typeface or size changes inside it ("106" + "A" at
+# 10.2 and 9.4 pt, "(" + "DMCA", "S" + "pecial" in small caps), so a join has to be told from a
+# real word space. Measured over the whole body:
+#   - Closer than 0.15 pt, whatever the type: always one word cut in two.
+#   - At a change of font or size the cut leaves 0.15 to 0.34 pt, a dense cluster (1,090 joints;
+#     small caps into roman before an em dash, a full stop, "”" or "(", e.g. "Whoever" + "”",
+#     "3663a" + "(c)(1)"). None is a space: every second word starts with punctuation. The 7 above
+#     0.3 are all em dashes and full stops, which the text cleaning closes up anyway.
+#   - The first real space at a change of type is 0.38 pt ("1" + "3/8", a mixed number).
+#   - With no change of type a real space can be as narrow as 0.22 pt ("(d)" then "For", PDF 159).
+# So the narrow glue (GLUE_GAP) is for any pair and the wide one (TYPE_CHANGE_GLUE_GAP) only where
+# the type changes. Boxes that overlap by more than a point are not the two halves of one word.
 GLUE_GAP = 0.15
+TYPE_CHANGE_GLUE_GAP = 0.3
 MIN_GLUE_GAP = -1.0
+
+WORD_SETTINGS = {"extra_attrs": ["fontname", "size"], "keep_blank_chars": False, "use_text_flow": True, "x_tolerance": 3}
 
 FOOTNOTE_FONT = "MinionPro-Regular"  # a digits-only word in this font is a footnote marker, at any size
 RUNNING_HEAD_FONT_PREFIX = "TheMixOsF"
@@ -116,11 +129,22 @@ def _overlaps(group: dict, word: dict) -> bool:
     )
 
 
+def _type(word: dict) -> tuple[str, float]:
+    return _font(word), round(word["size"], 1)
+
+
+def _is_cut(before: dict, word: dict) -> bool:
+    """True when `word` is the other half of the word `before` ends, not a new word."""
+    gap = word["x0"] - before["x1"]
+    if gap <= MIN_GLUE_GAP:
+        return False
+    return gap < GLUE_GAP or (gap < TYPE_CHANGE_GLUE_GAP and _type(before) != _type(word))
+
+
 def _join(words: Sequence[dict]) -> str:
     out = words[0]["text"]
     for before, word in zip(words, words[1:]):
-        gap = word["x0"] - before["x1"]
-        out += word["text"] if MIN_GLUE_GAP < gap < GLUE_GAP else " " + word["text"]
+        out += word["text"] if _is_cut(before, word) else " " + word["text"]
     return _SPACE_BEFORE_PUNCTUATION.sub(r"\1", out)
 
 
@@ -188,8 +212,20 @@ def lines_from_words(words: Sequence[dict], pdf_page: int, notes_scopes: set[str
     return lines
 
 
+def _check_body_page(pdf_page: int) -> None:
+    if pdf_page in BODY_PDF_PAGES:
+        return
+    if pdf_page < BODY_PDF_PAGES[0]:
+        why = "front matter"
+    elif pdf_page in APPENDICES_DIVIDER:
+        why = "the appendices divider (the \"Appendices\" part title and the appendices' contents)"
+    else:
+        why = "back matter (a folio page, blanks and the back cover)"
+    raise ValueError(f"PDF page {pdf_page} is not body: it is {why}")
+
+
 def extract_lines(pdf_path: Path, pdf_pages: Iterable[int] = BODY_PDF_PAGES) -> list[RawLine]:
-    """The classified lines of the given PDF pages (1-based, in reading order).
+    """The classified lines of the given PDF pages (1-based, in reading order; body pages only).
 
     What a scope's notes are is learnt from the pages given: a page extracted without the page that
     holds its scope's "· Notes" heading reads as body, so extract a notes page together with it.
@@ -198,12 +234,8 @@ def extract_lines(pdf_path: Path, pdf_pages: Iterable[int] = BODY_PDF_PAGES) -> 
     lines: list[RawLine] = []
     with pdfplumber.open(pdf_path) as pdf:
         for number in pdf_pages:
-            if not 1 <= number <= len(pdf.pages):
-                raise ValueError(f"{pdf_path}: no PDF page {number} (it has {len(pdf.pages)})")
+            _check_body_page(number)
             page = pdf.pages[number - 1]
-            words = page.extract_words(
-                extra_attrs=["fontname", "size"], keep_blank_chars=False, use_text_flow=True, x_tolerance=3
-            )
-            lines.extend(lines_from_words(words, number, notes_scopes))
+            lines.extend(lines_from_words(page.extract_words(**WORD_SETTINGS), number, notes_scopes))
             page.flush_cache()
     return lines
