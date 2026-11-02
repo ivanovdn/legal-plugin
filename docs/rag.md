@@ -69,6 +69,8 @@ Read from the code on 2026-10-30, today's BM25 can't simply be switched on:
 
 The work is tracked as the [roadmap](roadmap.md) row *Move keyword search into Qdrant's hybrid search*. The legal reference books (row *Index the legal reference books*) are the first corpus that needs it.
 
+**The legal reference books come next** (owner, 2026-10-30), starting with Circular 92 (Title 17 U.S.C.). They get their own collection with no `client_id`, built with the sparse vector from the start; their own parser and chunk model; and citations by `ref_id` that code checks and renders. The decisions are in [decisions/](decisions/README.md) (2026-10-30, *reference book* and *reference books*), and the design is [Reference books in RAG](superpowers/specs/2026-10-30-reference-books-design.md).
+
 ## Qdrant collections
 
 | Collection | Content | Chunking |

@@ -16,7 +16,7 @@ AI-powered legal assistant for an internal legal team. Attorneys submit requests
 2. **SKILL.md is the ceiling** — LLM strictly follows the playbook, no improvising from pretraining
 3. **Every research answer must cite a source** — no citation = high risk → escalate (`risk_assessor._check_citations`). A user-attached document counts as the source, and `contract_review` is rated from its own verdict rather than citations
 4. **contract_generation and drafting always → human_review** — no exceptions
-5. **client_id filter always applied** on retrieval — no cross-client data leakage
+5. **client_id filter always applied** on retrieval — no cross-client data leakage. The `client_id` filter applies to collections that hold client documents. The book collection holds no client data ([decision](decisions/2026-10-30-reference-book-chunk-model.md))
 6. **Every skill invocation → Postgres audit log** before returning — with one *explicit, visible* exception: when the audit store itself is unreachable, `memory_writer` writes the entry to the application log at ERROR and flags the turn `memory_degraded` (amber banner) rather than killing it. The record is never silently dropped; it moves sinks. Rationale: a turn does not need Postgres to answer, and this codebase's established answer to "the record didn't persist" is to surface it loudly (`review_persist_error`), not to withhold the attorney's work.
 7. **No external network calls at runtime** — Ollama, Qdrant and Postgres are all internal. The one exception waiting in the code is the O365 JWKS fetch, which only happens once `SSO_ENABLED` is turned on
 

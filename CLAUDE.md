@@ -42,8 +42,8 @@ scripts/build_playbook.py   .docx + team skill folders → playbook/ markdown (i
 
 1. **All imports at top of file.** No lazy imports inside functions.
 2. **SKILL.md is the ceiling.** Skill prompts must follow the playbook verbatim — never improvise from pretraining.
-3. **Always filter by `client_id`** in RAG tools. Never cross-tenant.
-4. **Cite with `doc_id` and `doc_title`** in research output — the parser greps for `doc_id:` patterns.
+3. **Always filter by `client_id`** in RAG tools. Never cross-tenant. The `client_id` filter applies to collections that hold client documents. The book collection holds no client data ([decision](docs/decisions/2026-10-30-reference-book-chunk-model.md)).
+4. **Client documents cite `doc_id`; reference books cite `ref_id`** in research output — the parser greps for `doc_id:` patterns (`ref_id:` arrives with the reference-books build; [decision](docs/decisions/2026-10-30-reference-book-citations.md)).
 5. **Don't add backwards-compat shims.** Change call sites instead.
 6. **Build or deploy on the VM only after the owner's OK for that deploy** — `up --build`, recreating or restarting containers, updating its checkout. When one is due, ask: *will you run it yourself (then give the exact commands and what to check after), or shall I?* A "yes" to a design or plan that lists a deploy step is not that OK — ask when the deploy is due. Read-only checks (SQL `SELECT`s, logs, `docker inspect`, Phoenix REST) need no ask.
 7. **Working files we make on the VM (deploy logs, backups, exported certs) go in `data/deploy-logs/` or `data/backups/`** — never loose in `~` or elsewhere in the checkout. `data/` is excluded from both git and the backend image; the image takes the rest of the checkout (`COPY . .`, minus `.dockerignore`), so a backup dropped in the repo root ships inside it. What goes where: [docs/deploy-vm.md](docs/deploy-vm.md) Step 4, *Working files*.
