@@ -25,6 +25,9 @@ from ingest.books.registry import get_book
 
 LETTERS = [chr(c) for c in range(ord("A"), ord("T") + 1)]
 S304_OWNERS = {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}  # text_owner: a chapter 3 parse uses them
+# xref_target: the cross-references use them (tests/test_book_golden.py)
+XREF_TARGETS = {"usc17-s115-d-1-C-iii-clause-i", "usc17-s121-c-idea-sections", "ch1-n42-section-4c",
+                "ch1-n42-section-4c-repealed"}
 
 
 def _index(roots):
@@ -195,8 +198,9 @@ def test_a_note_about_a_whole_definition_names_it(ch_notes, path, definition):
 
 
 def test_every_note_home_override_is_used(ch1_ch5_notes, notes_ledger):
-    # This ledger saw only the notes; the text_owner entries are chapter 3's (tests/test_circ92_title17.py).
-    assert {o.id for o in notes_ledger.unused()} == S304_OWNERS
+    # This ledger saw only the notes; the text_owner entries are chapter 3's (tests/test_circ92_title17.py),
+    # the xref_target entries the cross-references' (tests/test_book_golden.py).
+    assert {o.id for o in notes_ledger.unused()} == S304_OWNERS | XREF_TARGETS
 
 
 def _home(match, value, page=266, oid="h1"):

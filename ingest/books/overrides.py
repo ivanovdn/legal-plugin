@@ -6,7 +6,9 @@ overruled. `match` and `value` mean, by kind:
 
   label_level   match: a line prefix                 value: the level
   hyphen        match: "<word->|<next word>"         value: "join" or "keep"
-  xref_target   match: the raw reference text        value: the target path
+  xref_target   match: the raw reference text        value: the target path, several paths separated by
+                page: a page the passage is on              commas, or "unparsed" (the reference names law
+                                                            with no path: its raw text is kept, no target)
   text_owner    match: a line prefix                 value: the path of the unit the line's text is
                                                             (flush text set at another unit's indent)
   note_home     match: a note's path ("ch1-n15")     value: the path of the node the note is about
@@ -25,7 +27,8 @@ HYPHEN_VALUES = frozenset({"join", "keep"})
 PREFIX_KINDS = frozenset({"label_level", "text_owner"})  # their match is a line prefix
 _PATH_RE = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*")  # a path, as in a ref_id
 _NOTE_PATH_RE = re.compile(r"(?:ch\d+|app[A-Z])-n\d+")  # a history note's path: ch1-n15, appB-n2
-PATH_VALUE_KINDS = frozenset({"text_owner", "note_home", "xref_target"})  # their value is a path
+PATH_VALUE_KINDS = frozenset({"text_owner", "note_home"})  # their value is a node path
+XREF_UNPARSED = "unparsed"  # an xref_target value: no path, the reference's raw text is kept (ruling R12)
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,17 @@ class Override:
     match: str
     value: str
     reason: str
+
+
+def xref_target_paths(value: str) -> list[str]:
+    """The paths an `xref_target` value names, in order; none for "unparsed"."""
+    return [] if value == XREF_UNPARSED else [part.strip() for part in value.split(",")]
+
+
+def _is_xref_target(value: str) -> bool:
+    if value == XREF_UNPARSED:
+        return True
+    return all(_PATH_RE.fullmatch(path) and path != XREF_UNPARSED for path in xref_target_paths(value))
 
 
 def _parse(entry: object, index: int) -> Override:
@@ -66,6 +80,9 @@ def _parse(entry: object, index: int) -> Override:
         )
     if entry["kind"] in PATH_VALUE_KINDS and not _PATH_RE.fullmatch(entry["value"]):
         raise ValueError(f"{label}: {entry['kind']} value must be a path (as in a ref_id), got {entry['value']!r}")
+    if entry["kind"] == "xref_target" and not _is_xref_target(entry["value"]):
+        raise ValueError(f"{label}: xref_target value must be a path, paths separated by commas, or "
+                         f"{XREF_UNPARSED!r}, got {entry['value']!r}")
     if entry["kind"] == "note_home" and not _NOTE_PATH_RE.fullmatch(entry["match"]):
         raise ValueError(f"{label}: note_home match must be a note's path (ch1-n15, appB-n2), got {entry['match']!r}")
     return Override(

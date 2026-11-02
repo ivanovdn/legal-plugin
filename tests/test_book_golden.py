@@ -48,6 +48,26 @@ def test_known_bugs_fixed(idx):
         assert f"usc17-s506-{path}" in idx
 
 
+def test_shipped_xref_targets_fix_three_misreadings(idx):
+    # §115(d)(1)(C)(iii), p. 76: "clause (i) and clause (ii) of subsection (c)(2)(A)": both are (c)(2)(A)'s.
+    # Read alone, clause (i) was §115(d)(1)(C)(i), a node that exists.
+    assert idx["usc17-s115-d-1-C-iii"].xrefs[:2] == ["usc17-s115-c-2-A-i", "usc17-s115-c-2-A-ii"]
+    assert "usc17-s115-d-1-C-i" not in idx["usc17-s115-d-1-C-iii"].xrefs
+    # §121(c), p. 137: the Individuals with Disabilities Education Act's sections; the book prints no location
+    assert not [x for x in idx["usc17-s121-c"].xrefs if x.startswith(("usc17-s612", "usc17-s613"))]
+    assert "sections 612(a)(23) (C), 613(a)(6)" in idx["usc17-s121-c"].xrefs_unparsed
+    # ch.1 n.42, p. 151: the Record Rental Amendment's §4(c); the note prints its number, Pub. L. No. 98-450
+    assert "usc17-s4-c" not in idx["ch1-n42"].xrefs
+    assert "pl98-450-s4-c" in idx["ch1-n42"].xrefs
+    assert not [raw for raw in idx["ch1-n42"].xrefs_unparsed if "4(c)" in raw]
+
+
+def test_the_whole_parse_uses_every_override_on_its_pages(ch1_ch5_parse):
+    # One ledger serves the parse (title17, notes, cross-references), so only chapter 3's two §304
+    # text_owner entries are left unused by chapters 1 and 5.
+    assert {o.id for o in ch1_ch5_parse.ledger.unused()} == {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}
+
+
 def test_note_links(idx, rows):
     # ch.5 n.1 sits on the contents entry "509 [Repealed]" (ruling R9), n.8 on the stub's heading.
     assert idx["usc17-s509"].history_notes == ["ch5-n1", "ch5-n8"]

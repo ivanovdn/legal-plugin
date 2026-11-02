@@ -38,5 +38,37 @@
     "match": "ch1-n25",
     "value": "usc17-s101-def-work-of-visual-art",
     "reason": "ch. 1 n.25 is about the whole definition (\"amended section 101 by adding the definition of “work of visual art.”\"); its marker closes the definition's last item, (C) of its exclusions, p. 7"
+  },
+  {
+    "id": "usc17-s115-d-1-C-iii-clause-i",
+    "kind": "xref_target",
+    "page": 76,
+    "match": "clause (i)",
+    "value": "usc17-s115-c-2-A-i",
+    "reason": "§115(d)(1)(C)(iii): \"the second sentence of clause (i) and clause (ii) of subsection (c)(2)(A)\", p. 76: the parent named after clause (ii) is clause (i)'s too; read alone, clause (i) is §115(d)(1)(C)(i), which exists"
+  },
+  {
+    "id": "usc17-s121-c-idea-sections",
+    "kind": "xref_target",
+    "page": 137,
+    "match": "sections 612(a)(23) (C), 613(a)(6)",
+    "value": "unparsed",
+    "reason": "§121(c): \"sections 612(a)(23)(C), 613(a)(6), and section 674(e) of the Individuals with Disabilities Education Act\", p. 137: all three are the IDEA's, not Title 17's; the book prints no Public Law or U.S.C. location for the IDEA (ch. 1 n.63's Pub. L. No. 108-446 is the 2004 Improvement Act)"
+  },
+  {
+    "id": "ch1-n42-section-4c",
+    "kind": "xref_target",
+    "page": 151,
+    "match": "section 4(c)",
+    "value": "pl98-450-s4-c",
+    "reason": "ch. 1 n.42: \"the Record Rental Amendment Act of 1984 was amended to extend the time period in section 4(c)\", p. 151: that Act's section, not 17 U.S.C. §4(c); the note prints its number, \"The Record Rental Amendment of 1984 … Pub. L. No. 98-450\""
+  },
+  {
+    "id": "ch1-n42-section-4c-repealed",
+    "kind": "xref_target",
+    "page": 151,
+    "match": "section 4(c) of the Record Rental Amendment of 1984",
+    "value": "pl98-450-s4-c",
+    "reason": "ch. 1 n.42: \"repealed section 4(c) of the Record Rental Amendment of 1984\", p. 151: the same section as ch1-n42-section-4c, named with its Act; the note prints that Act's number, Pub. L. No. 98-450"
   }
 ]

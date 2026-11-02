@@ -16,7 +16,8 @@ A reference that names law yet gives no path (a named Act, the Code of Federal R
 Act", a "such" with nothing named before it) is returned as its raw text, `unparsed` (ruling R1). A
 relative reference with nowhere to sit (in a note, which has no section) names nothing and is
 dropped. Ranges give both ends: what lies between is not known from the text. An `xref_target`
-override (match: the raw reference text, on its printed page) names the target the rules cannot.
+override (match: the raw reference text, on its printed page) names the targets the rules cannot, or
+marks the reference unparsed.
 
 Ported from the prototype's xref.py (research vault, 2026-10-30), with its two known bugs fixed: a
 chapter between a section and its title ("section 2323, chapter 113 of title 18" is 18 U.S.C.),
@@ -34,7 +35,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from ingest.books.labels import levels_of
-from ingest.books.overrides import OverrideLedger
+from ingest.books.overrides import XREF_UNPARSED, OverrideLedger, xref_target_paths
 from ingest.books.ref_ids import slugify_term
 
 
@@ -387,8 +388,10 @@ def find_xrefs(text: str, ctx: XrefContext, ledger: OverrideLedger | None = None
     paths: dict[str, None] = {}
     unparsed: dict[str, None] = {}
     for _, (raw, targets, is_unparsed) in sorted(found, key=lambda f: f[0]):
-        if (value := _override(raw, ctx, ledger)) is not None:
-            paths[value] = None
+        if (value := _override(raw, ctx, ledger)) is not None:  # one path, several, or "unparsed" (R12)
+            if value == XREF_UNPARSED:
+                unparsed[raw] = None
+            paths.update(dict.fromkeys(xref_target_paths(value)))
         elif is_unparsed:
             unparsed[raw] = None
         else:

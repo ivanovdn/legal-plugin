@@ -364,6 +364,23 @@ def test_xref_target_override_needs_its_page_and_whole_text():
     assert [o.id for o in ledger.unused()] == ["x1"]
 
 
+def test_xref_target_override_can_name_several_paths():
+    ledger = OverrideLedger([_override(5, "section 32 of such Act", "usc15-s1114, usc15-s1125")])
+    assert find_xrefs("to section 32 of such Act and section 107", _ctx("503", pages=(5,)), ledger) == (
+        ["usc15-s1114", "usc15-s1125", "usc17-s107"], []
+    )
+
+
+def test_xref_target_override_unparsed_drops_a_wrong_target():
+    # "unparsed": the reference names law the book gives no place for, so it yields no path (R12)
+    ledger = OverrideLedger([_override(137, "sections 612(a)(23) (C), 613(a)(6)", "unparsed")])
+    text = "the files described in sections 612(a)(23) (C), 613(a)(6), and section 107"
+    ctx = _ctx("121", ("c",), (1,), pages=(136, 137))
+    assert find_xrefs(text, ctx) == (["usc17-s612-a-23-C", "usc17-s613-a-6", "usc17-s107"], [])
+    assert find_xrefs(text, ctx, ledger) == (["usc17-s107"], ["sections 612(a)(23) (C), 613(a)(6)"])
+    assert ledger.unused() == []
+
+
 def test_xref_target_override_replaces_a_parsed_target():
     ledger = OverrideLedger([_override(9, "section 2323", "usc18-s2323")])
     assert find_xrefs("subject to section 2323, to the extent", _ctx("205", act="pl110-403", pages=(9,)),

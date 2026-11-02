@@ -34,6 +34,9 @@ def idx(ch1_ch5_nodes):
 
 S304_OWNERS = {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}  # the shipped text_owner overrides
 NOTE_HOMES = {"ch1-n15-home", "ch1-n22-home", "ch1-n25-home"}  # the shipped note_home overrides (notes.py)
+# the shipped xref_target overrides (xrefs.py, read by the whole parse: tests/test_book_golden.py)
+XREF_TARGETS = {"usc17-s115-d-1-C-iii-clause-i", "usc17-s121-c-idea-sections", "ch1-n42-section-4c",
+                "ch1-n42-section-4c-repealed"}
 
 
 @pytest.fixture(scope="module")
@@ -726,9 +729,10 @@ def test_section_304_a_1_flush_text_has_its_owners(ch3):
 def test_every_shipped_override_is_used(ch3, ch1_ch5_title17, ch1_ch5_ledger):
     # The two §304 entries sit on printed p. 177 (chapter 3): the chapter 3 parse uses both, and
     # the chapter 1 + 5 parse leaves only them unused, with the note_home entries, which only the
-    # notes read (tests/test_circ92_notes_appendices.py shows the ch. 1 notes use all three).
-    assert {o.id for o in ch3[2].unused()} == NOTE_HOMES
-    assert {o.id for o in ch1_ch5_ledger.unused()} == S304_OWNERS | NOTE_HOMES
+    # notes read (tests/test_circ92_notes_appendices.py shows the ch. 1 notes use all three), and the
+    # xref_target entries, which only the cross-references read (tests/test_book_golden.py).
+    assert {o.id for o in ch3[2].unused()} == NOTE_HOMES | XREF_TARGETS
+    assert {o.id for o in ch1_ch5_ledger.unused()} == S304_OWNERS | NOTE_HOMES | XREF_TARGETS
 
 
 # --- quoted text is the appendices' rule, not Title 17's (ruling R11) -----------------------------

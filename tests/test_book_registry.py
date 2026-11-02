@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from ingest.books.overrides import OVERRIDE_KINDS, Override, OverrideLedger, load_overrides
+from ingest.books.overrides import (
+    OVERRIDE_KINDS,
+    XREF_UNPARSED,
+    Override,
+    OverrideLedger,
+    load_overrides,
+    xref_target_paths,
+)
 from ingest.books.registry import (
     BOOKS,
     PdfHashMismatch,
@@ -208,13 +215,22 @@ def test_override_text_owner_value_is_a_path(tmp_path):
             load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
 
 
-def test_override_xref_target_value_is_a_path(tmp_path):
-    # the value is what find_xrefs stores as the target, so it must be a path a ref_id can hold
+def test_override_xref_target_value_is_paths_or_unparsed(tmp_path):
+    # The value is what find_xrefs stores (ruling R12): one path, several (comma-separated), or
+    # "unparsed", which keeps the reference's raw text and gives no path.
     ok = _entry(id="x-1", kind="xref_target", page=192, match="section 2 of such Act", value="usc15-s1114")
-    assert load_overrides(_write(tmp_path, [ok]))[0].value == "usc15-s1114"
-    for bad in ("", "15 U.S.C. 1114", "usc15-s1114-", "usc15 s1114"):
+    for good in ("usc15-s1114", "usc15-s1114,usc15-s1125", "usc15-s1114, usc15-s1125", "unparsed"):
+        assert load_overrides(_write(tmp_path, [{**ok, "value": good}]))[0].value == good
+    for bad in ("", "15 U.S.C. 1114", "usc15-s1114-", "usc15 s1114", "usc15-s1114,", ",usc15-s1114",
+                "usc15-s1114,,usc15-s1125", "usc15-s1114;usc15-s1125", "unparsed,usc15-s1114"):
         with pytest.raises(ValueError, match="value"):
             load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
+
+
+def test_xref_target_paths():
+    assert xref_target_paths("usc15-s1114") == ["usc15-s1114"]
+    assert xref_target_paths("usc15-s1114, usc15-s1125") == ["usc15-s1114", "usc15-s1125"]
+    assert xref_target_paths(XREF_UNPARSED) == []
 
 
 def test_override_note_home_names_a_note_and_a_node(tmp_path):
