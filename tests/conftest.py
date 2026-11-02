@@ -1,14 +1,18 @@
 # tests/conftest.py
-"""Shared test fixtures: an ephemeral Postgres for the store layer.
+"""Shared test fixtures: an ephemeral Postgres for the store layer, and a Qdrant on demand.
 
-A single container is started for the whole test session; every test runs
-against clean tables (truncated before each test). Docker must be running.
+A single Postgres container is started for the whole test session; every test runs
+against clean tables (truncated before each test). The Qdrant container starts only
+for a test that asks for `book_qdrant`. Docker must be running.
 """
 import os
+import time
+import uuid
 from pathlib import Path
 
 os.environ.setdefault("TRACING_ENABLED", "false")
 
+import httpx
 import pytest
 import yaml
 from fastapi import BackgroundTasks
@@ -16,6 +20,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from testcontainers.core.container import DockerContainer
 from testcontainers.postgres import PostgresContainer
 
 import memory.db as db
@@ -28,14 +33,18 @@ from ingest.books.circular92.title17 import title17_nodes
 from ingest.books.golden import GOLDEN_PDF_PAGES
 from ingest.books.overrides import OverrideLedger, load_overrides
 from ingest.books.registry import get_book
+from rag.book_store import get_book_client, reset_book_client
 
 
 # The test database is the image production runs, read from the compose file
 # that pins it so the two cannot drift: a floating "postgres:17" had the suite
 # on 17.9 while app-db ran 17.10 (found 2026-10-08).
-_APP_DB_IMAGE = yaml.safe_load(
+_COMPOSE_SERVICES = yaml.safe_load(
     (Path(__file__).resolve().parent.parent / "docker-compose.yml").read_text()
-)["services"]["app-db"]["image"]
+)["services"]
+_APP_DB_IMAGE = _COMPOSE_SERVICES["app-db"]["image"]
+# Likewise Qdrant: the server-side BM25 under test is that version's feature.
+_QDRANT_IMAGE = _COMPOSE_SERVICES["qdrant"]["image"]
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -51,6 +60,50 @@ def _pg_container():
         yield pg
         db.reset_pool()
         os.environ.pop("DATABASE_URL", None)
+
+
+@pytest.fixture(scope="session")
+def qdrant_url():
+    """A Qdrant at the image compose pins, started once for the session that asks for it."""
+    with DockerContainer(_QDRANT_IMAGE).with_exposed_ports(6333) as qdrant:
+        url = f"http://{qdrant.get_container_host_ip()}:{qdrant.get_exposed_port(6333)}"
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                if httpx.get(f"{url}/readyz", timeout=2).status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"Qdrant at {url} was not ready within 30 s")
+            time.sleep(0.5)
+        yield url
+
+
+@pytest.fixture
+def book_qdrant(qdrant_url):
+    """Points the book store at the session's Qdrant, in a collection of this test's own.
+
+    Yields the collection's name; drops the collection afterwards. The vector size is pinned
+    to what the tests' fake vectors have, so a checkout without a .env still runs them. The
+    environment is put back here, before the settings cache is cleared for the last time: with
+    the `monkeypatch` fixture that order is not ours, and the next test would read this one's
+    container URL out of a stale cache."""
+    collection = f"test_books_{uuid.uuid4().hex[:8]}"
+    with pytest.MonkeyPatch.context() as env:
+        env.setenv("QDRANT_URL", qdrant_url)
+        env.setenv("BOOK_COLLECTION", collection)
+        env.setenv("QDRANT_VECTOR_DIM", "768")
+        get_settings.cache_clear()
+        reset_book_client()
+        try:
+            yield collection
+        finally:
+            client = get_book_client()
+            if client.collection_exists(collection):
+                client.delete_collection(collection)
+            reset_book_client()
+    get_settings.cache_clear()
 
 
 # Every store table init_db() creates. The truncate below names them all, and
