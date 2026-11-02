@@ -137,6 +137,28 @@ def test_override_missing_field_is_refused(tmp_path):
         load_overrides(_write(tmp_path, [entry]))
 
 
+@pytest.mark.parametrize(
+    "field, bad",
+    [("id", 5), ("kind", 5), ("match", 5), ("value", 5), ("reason", None)],
+)
+def test_override_text_fields_must_be_strings(tmp_path, field, bad):
+    # without the guard a number in match or value loads as if it were text,
+    # and a null reason or id dies later with an AttributeError instead of a ValueError
+    with pytest.raises(ValueError, match=f"field '{field}' must be a string"):
+        load_overrides(_write(tmp_path, [_entry(**{field: bad})]))
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_override_id_must_not_be_blank(tmp_path, blank):
+    with pytest.raises(ValueError, match="field 'id' is empty"):
+        load_overrides(_write(tmp_path, [_entry(id=blank)]))
+
+
+def test_override_entry_must_be_an_object(tmp_path):
+    with pytest.raises(ValueError, match="expected an object, got str"):
+        load_overrides(_write(tmp_path, ["x"]))
+
+
 def test_override_page_must_be_an_integer(tmp_path):
     with pytest.raises(ValueError, match="page"):
         load_overrides(_write(tmp_path, [_entry(page="204")]))
