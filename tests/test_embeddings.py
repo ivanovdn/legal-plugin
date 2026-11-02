@@ -219,6 +219,15 @@ def test_prompt_token_count(settings, monkeypatch):
     assert emb.prompt_token_count("some text") == 4
 
 
+def test_prompt_token_count_counts_the_passage_prefix(settings, monkeypatch):
+    # The chunker's budget is in the tokens ingest embeds, and ingest embeds with the passage prefix.
+    settings.embedding_passage_prefix = "passage: "
+    bodies = _fake_post(monkeypatch, lambda body: _response(
+        200, {"embeddings": [[0.1]], "prompt_eval_count": 6}))
+    emb.prompt_token_count("some text")
+    assert bodies[0]["input"] == ["passage: some text"]
+
+
 def test_prompt_token_count_is_none_over_the_window(settings, monkeypatch):
     _fake_post(monkeypatch, lambda body: _over_length())
     assert emb.prompt_token_count("x" * 9000) is None
