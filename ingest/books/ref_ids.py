@@ -37,12 +37,24 @@ _PARTS_RE = re.compile(rf"({_BOOK})-({_EDITION}):({_PATH})", re.ASCII)
 
 # How a model writes a cited id: bare, in backticks, after a `ref_id:` marker (with or without
 # a space), or both. Each alternative has exactly one group, so `lastgroup` names the id.
+#
+# After an explicit marker the model MEANT to cite, so a token that is off the grammar
+# (`ref_id: usc17-s107`, `ref_id: circ92:usc17-s107`) is cited verbatim too: it is never in the
+# citations, so it renders as unverified and is counted. That is the whole-token rule the
+# retrieved side already uses (D8). The grammar forms come first; a grammar id must also end its
+# token, or the loose form takes the whole token instead of a cut-off id. Without a marker only a
+# grammar id counts: ordinary prose is full of tokens.
 _MARKER = r"(?<![A-Za-z0-9_])ref_id:"
+_TOKEN = r"[A-Za-z0-9_:-]*[A-Za-z0-9]"
+_ENDS_TOKEN = r"(?![A-Za-z0-9_:-]*[A-Za-z0-9])"
 _CITED_RE = re.compile(
     rf"`(?:{_MARKER}\s*)?(?P<wrapped>{REF_ID_PATTERN})`"  # `id`  `ref_id: id`
     rf"|{_MARKER}\s*`(?P<marker_wrapped>{REF_ID_PATTERN})`"  # ref_id: `id`
-    rf"|{_MARKER}\s*(?P<marker>{REF_ID_PATTERN})"  # ref_id: id   ref_id:id
-    rf"|{_NOT_AFTER_ID_CHAR}(?P<bare>{REF_ID_PATTERN})",  # id
+    rf"|{_MARKER}\s*(?P<marker>{REF_ID_PATTERN}){_ENDS_TOKEN}"  # ref_id: id   ref_id:id
+    rf"|{_NOT_AFTER_ID_CHAR}(?P<bare>{REF_ID_PATTERN})"  # id
+    rf"|`{_MARKER}\s*(?P<loose_wrapped>{_TOKEN})`"  # `ref_id: token`
+    rf"|{_MARKER}\s*`(?P<loose_marker_wrapped>{_TOKEN})`"  # ref_id: `token`
+    rf"|{_MARKER}\s*(?P<loose_marker>{_TOKEN})",  # ref_id: token
     re.ASCII,
 )
 

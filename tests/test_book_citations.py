@@ -143,6 +143,27 @@ def test_render_response_handles_several_ids_and_leaves_other_text_alone():
     assert render_response("", c) == ""
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("x ref_id: usc17-s107.", "x [unverified reference: usc17-s107]."),
+        ("x (ref_id: circ92:usc17-s107)", "x ([unverified reference: circ92:usc17-s107])"),
+        ("x `ref_id: usc17-s107`", "x [unverified reference: usc17-s107]"),
+        ("x ref_id: `usc17-s107`.", "x [unverified reference: usc17-s107]."),
+        (
+            "x ref_id: circ92-2025-12:usc17:s107.",
+            "x [unverified reference: circ92-2025-12:usc17:s107].",
+        ),
+    ],
+)
+def test_an_off_grammar_id_after_the_marker_renders_unverified(text, expected):
+    assert render_response(text, {"circ92-2025-12:usc17-s107": "CITE"}) == expected
+
+
+def test_a_bare_off_grammar_token_is_left_alone():
+    assert render_response("see usc17-s107 and circ92:usc17-s107", {}) == "see usc17-s107 and circ92:usc17-s107"
+
+
 def test_an_empty_citation_renders_as_unverified_not_as_nothing():
     assert render_response("x circ92-2025-12:usc17-s107.", {"circ92-2025-12:usc17-s107": ""}) == (
         "x [unverified reference: circ92-2025-12:usc17-s107]."
@@ -166,6 +187,7 @@ def test_render_response_leaves_backticks_that_do_not_wrap_the_id():
         "Fair use (ref_id: circ92-2025-12:usc17-s107). See `circ92-2025-12:ch1-n40`, and circ92-2025-12:usc17-s101-def-joint-work.",
         "ref_id:circ92-2025-12:usc17-s107 and ref_id: `circ92-2025-12:ch1-n40`.",
         "`ref_id: circ92-2025-12:usc17-s107` then my-circ92-2025-12:usc17-s106 then x_circ92-2025-12:usc17-s108",
+        "ref_id: usc17-s107, `ref_id: circ92:ch1-n40`, ref_id: `usc17-s106`. and ref_id:circ92-2025-12:usc17:s109",
     ],
 )
 def test_every_id_the_check_finds_is_one_the_renderer_replaces(text):

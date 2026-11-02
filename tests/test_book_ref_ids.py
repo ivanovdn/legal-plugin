@@ -101,6 +101,47 @@ def test_an_id_glued_to_other_id_characters_is_not_cited():
     assert find_cited_ref_ids("my-circ92-2025-12:usc17-s106 and x_circ92-2025-12:usc17-s108") == []
 
 
+@pytest.mark.parametrize(
+    "text,token",
+    [
+        ("ref_id: usc17-s107", "usc17-s107"),  # no book and edition
+        ("ref_id:usc17-s107", "usc17-s107"),
+        ("ref_id: circ92:usc17-s107", "circ92:usc17-s107"),  # the edition dropped
+        ("ref_id: circ92-2025:usc17-s107", "circ92-2025:usc17-s107"),
+        ("ref_id: circ92-2025-12:usc17:s107", "circ92-2025-12:usc17:s107"),  # the whole token, not a cut-off id
+        ("see (ref_id: usc17-s107).", "usc17-s107"),
+        ("`ref_id: usc17-s107`", "usc17-s107"),
+        ("ref_id: `usc17-s107`.", "usc17-s107"),
+        ("ref_id: usc17-s107: the text", "usc17-s107"),
+    ],
+)
+def test_an_off_grammar_token_after_the_marker_is_cited_verbatim(text, token):
+    assert find_cited_ref_ids(text) == [token]
+
+
+def test_a_token_is_cited_only_after_the_marker():
+    assert find_cited_ref_ids("usc17-s107 and circ92:usc17-s107 and `usc17-s107`") == []
+    # a marker glued to a longer word is not the marker
+    assert find_cited_ref_ids("retrieved_ref_id: usc17-s107") == []
+    assert find_cited_ref_ids("`retrieved_ref_id: usc17-s107`") == []
+
+
+def test_grammar_ids_after_the_marker_are_unchanged_by_the_loose_form():
+    r = "circ92-2025-12:usc17-s107"
+    assert find_cited_ref_ids(f"ref_id: {r}") == [r]
+    assert find_cited_ref_ids(f"ref_id: {r}: the text") == [r]
+    assert find_cited_ref_ids(f"ref_id: usc17-s106 then {r} then `ref_id: circ92-2025-12:ch1-n40`") == [
+        "usc17-s106",
+        r,
+        "circ92-2025-12:ch1-n40",
+    ]
+
+
+def test_the_retrieved_side_marker_regex_stays_grammar_only():
+    assert REF_MARKER_RE.search("ref_id: usc17-s107") is None
+    assert REF_MARKER_RE.search("ref_id: circ92:usc17-s107") is None
+
+
 def test_no_ids_in_plain_text():
     assert find_cited_ref_ids("Fair use is in section 107; Pub. L. No. 105-304.") == []
     assert find_cited_ref_ids("") == []
