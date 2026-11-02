@@ -162,3 +162,19 @@ def test_tokens_may_be_minus_one_for_text_over_the_window():
 def test_book_chunk_refuses_an_unknown_kind_or_source_type(over):
     with pytest.raises(ValidationError):
         _chunk(**over)
+
+
+def test_ancestor_labels_pair_with_ancestor_ref_ids():
+    # Ruling R13: a node with no chunk of its own is cited from a chunk below it, so the chunk names it.
+    c = _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107-1", "circ92-2025-12:usc17-s107"],
+               ancestor_labels=["17 U.S.C. §107(1)", "17 U.S.C. §107"])
+    assert c.ancestor_labels == ["17 U.S.C. §107(1)", "17 U.S.C. §107"]
+    assert BookChunk.model_validate(c.model_dump()) == c
+    assert _chunk().ancestor_labels == []
+
+
+@pytest.mark.parametrize("labels", [[], ["17 U.S.C. §107(1)"], ["a", "b", "c"]])
+def test_book_chunk_refuses_ancestor_lists_of_unequal_length(labels):
+    with pytest.raises(ValidationError, match="ancestor_labels"):
+        _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107-1", "circ92-2025-12:usc17-s107"],
+               ancestor_labels=labels)

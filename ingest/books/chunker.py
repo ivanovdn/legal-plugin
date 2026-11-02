@@ -279,6 +279,7 @@ class _Chunker:
             tokens=OVER_WINDOW if tokens is None else tokens,
             order=len(self.chunks),
             ancestor_ref_ids=[ref_id, *(self.ref(a.path) for a in reversed(ancestors))],
+            ancestor_labels=[node.label, *(a.label for a in reversed(ancestors))],
             sub_refs=sub_refs,
             sub_ref_ids=[s.ref_id for s in sub_refs],
             xrefs=list(dict.fromkeys(x for n in (node, *inside) for x in n.xrefs)),

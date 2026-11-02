@@ -143,6 +143,16 @@ def test_header():
     assert keys(chunks) == [P + "usc17-s122-f-1~lead", P + "usc17-s122-f-1-A~lead", P + "usc17-s122-f-1-A-i"]
 
     c = chunk(chunks, P + "usc17-s122-f-1-A-i")
+    # Every node above the chunk is named in it, index for index (R13): a citation of one with no chunk
+    # of its own, like §122 or §122(f), is checked and rendered from here.
+    assert list(zip(c.ancestor_ref_ids, c.ancestor_labels)) == [
+        (P + "usc17-s122-f-1-A-i", "17 U.S.C. §122(f)(1)(A)(i)"),
+        (P + "usc17-s122-f-1-A", "17 U.S.C. §122(f)(1)(A)"),
+        (P + "usc17-s122-f-1", "17 U.S.C. §122(f)(1)"),
+        (P + "usc17-s122-f", "17 U.S.C. §122(f)"),
+        (P + "usc17-s122", "17 U.S.C. §122"),
+    ]
+    assert len(c.ancestor_ref_ids) == len(c.ancestor_labels)
     # (A) has no heading, so it adds nothing to the path.
     path = f"{TITLE_122} › Violation of Territorial Restrictions on Statutory License › Individual violations"
     assert c.heading == path
@@ -520,6 +530,12 @@ def test_ch1_ch5_every_node_is_reachable_and_under_budget(ch1_ch5_parse):
     assert over == []
     assert all(c.body.strip() for c in chunks)
     assert len({c.chunk_key for c in chunks}) == len(chunks)
+    # Each chunk names every node above it (R13), so a node with no chunk of its own is still renderable.
+    labels = {n.path: n.label for n in nodes}
+    for c in chunks:
+        assert len(c.ancestor_labels) == len(c.ancestor_ref_ids)
+        assert c.ancestor_labels[0] == c.label
+        assert c.ancestor_labels == [labels[r.removeprefix(P)] for r in c.ancestor_ref_ids]
     # Every note linked to a node is carried by some chunk, so no amendment history goes unflagged.
     carried = {r for c in chunks for r in c.history_notes}
     linked = {P + p for n in t.walk() for p in n.history_notes}

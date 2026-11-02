@@ -8,7 +8,7 @@ chunk has its own key (ref_ids.py).
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ingest.books.ref_ids import point_id
 from ingest.books.registry import BookEntry
@@ -143,7 +143,10 @@ class BookChunk(BaseModel):
     # The embedding model's count of `text`; -1 when the counter reported the text over the embedding window.
     tokens: int
     order: int
-    ancestor_ref_ids: list[str] = Field(default_factory=list)
+    ancestor_ref_ids: list[str] = Field(default_factory=list)  # self, then parent, … root
+    # The labels of the same nodes, index for index: a node with no chunk of its own (a section with no
+    # text before its first subsection) is cited and rendered from a chunk below it.
+    ancestor_labels: list[str] = Field(default_factory=list)
     sub_refs: list[SubRef] = Field(default_factory=list)
     sub_ref_ids: list[str] = Field(default_factory=list)
     xrefs: list[str] = Field(default_factory=list)
@@ -159,6 +162,15 @@ class BookChunk(BaseModel):
     @classmethod
     def _source_type_is_known(cls, source_type: str) -> str:
         return _check_source_type(source_type)
+
+    @model_validator(mode="after")
+    def _ancestor_lists_pair_up(self) -> "BookChunk":
+        if len(self.ancestor_labels) != len(self.ancestor_ref_ids):
+            raise ValueError(
+                f"ancestor_labels has {len(self.ancestor_labels)} entries and ancestor_ref_ids "
+                f"{len(self.ancestor_ref_ids)}: they name the same nodes, index for index"
+            )
+        return self
 
     @property
     def point_id(self) -> str:
