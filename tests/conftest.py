@@ -21,6 +21,11 @@ from testcontainers.postgres import PostgresContainer
 import memory.db as db
 from api.client_info import ClientInfo
 from config import get_settings
+from ingest.books.circular92.layout import extract_lines
+from ingest.books.circular92.text import HyphenDecider
+from ingest.books.circular92.title17 import title17_nodes
+from ingest.books.overrides import OverrideLedger, load_overrides
+from ingest.books.registry import get_book
 
 
 # The test database is the image production runs, read from the compose file
@@ -124,3 +129,33 @@ def call_handler(fn, *args, **kwargs):
 def circ92_pdf() -> Path:
     """The Circular 92 (Dec. 2025) fixture. Tests extract only the pages they need."""
     return Path(__file__).resolve().parent / "fixtures" / "books" / "circular-92-2025-12.pdf"
+
+
+# Chapters 1 and 5 (PDF 23-188, 221-242: their sections and their notes), extracted once a session.
+CH1_CH5_PDF_PAGES = (*range(23, 189), *range(221, 243))
+
+
+@pytest.fixture(scope="session")
+def circ92_ch1_ch5_lines(circ92_pdf):
+    return extract_lines(circ92_pdf, CH1_CH5_PDF_PAGES)
+
+
+@pytest.fixture(scope="session")
+def ch1_ch5_ledger():
+    return OverrideLedger(load_overrides(get_book("circ92").overrides_path))
+
+
+@pytest.fixture(scope="session")
+def ch1_ch5_hyphens(circ92_ch1_ch5_lines, ch1_ch5_ledger):
+    return HyphenDecider(circ92_ch1_ch5_lines, ch1_ch5_ledger)
+
+
+@pytest.fixture(scope="session")
+def ch1_ch5_title17(circ92_ch1_ch5_lines, ch1_ch5_hyphens, ch1_ch5_ledger):
+    """`title17_nodes` on chapters 1 and 5: (the section nodes in order, out_of_sequence)."""
+    return title17_nodes(circ92_ch1_ch5_lines, ch1_ch5_hyphens, ch1_ch5_ledger)
+
+
+@pytest.fixture(scope="session")
+def ch1_ch5_nodes(ch1_ch5_title17):
+    return ch1_ch5_title17[0]
