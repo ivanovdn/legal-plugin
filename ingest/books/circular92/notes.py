@@ -6,8 +6,10 @@ explains one footnote marker in the scope's text. A note is a node of its own ki
 amendment history, not law (the history-notes decision). It keeps a link to where its marker sits,
 `annotates`: the path of the node whose own text holds the marker, or the section whose heading
 holds it, or the section a table-of-contents entry names (ruling R9). A marker on a chapter's or an
-appendix's title annotates nothing (None). A note that says when a provision takes or took effect
-is flagged (`effective_date`, spec D5).
+appendix's title annotates nothing (None). Where the marker's place names the wrong node (a note
+about a whole definition whose marker closes the definition's last item), a `note_home` override
+names the right one (ruling R10). A note that says when a provision takes or took effect is flagged
+(`effective_date`, spec D5).
 
 A note starts on a line "<n>. " (or "<n> . ") where n is the next number expected and the line is
 set near the margin (x0 < 70: note 1 sits at the margin, later notes one indent in); every other
@@ -28,6 +30,7 @@ from ingest.books.circular92.title17 import (
     section_path,
 )
 from ingest.books.models import Node, TextLine
+from ingest.books.overrides import OverrideLedger
 
 EFFECTIVE_DATE_RE = re.compile(r"tak(e|es|en) effect|took effect|effective (date|upon|on)", re.I)
 
@@ -89,13 +92,12 @@ def _contents_marks(lines: Sequence[RawLine]) -> Iterator[tuple[str, int, str | 
             yield line.scope, n, entry, line
 
 
-def _marker_sites(lines: Sequence[RawLine], placed: Sequence[Node]) -> dict[tuple[str, int], str | None]:
+def _marker_sites(lines: Sequence[RawLine], nodes: dict[str, Node]) -> dict[tuple[str, int], str | None]:
     """(scope, marker) -> the path of what the marker annotates (None: a chapter or appendix title).
 
     Every marker lifted from `lines` must have a place: on a placed node's own lines, on a section
     heading, on a title or in a table of contents. One that has none is a parse error, raised, so a
     note cannot lose its link unseen."""
-    nodes = {node.path: node for root in placed for node in root.walk()}
     sites: dict[tuple[str, int], str | None] = {}
 
     def put(scope: str, number: int, path: str | None) -> None:
@@ -158,11 +160,31 @@ def _note(scope: str, number: int, raw: list[RawLine], annotates: str | None, hy
     )
 
 
-def history_notes(lines: list[RawLine], placed: list[Node], hyphens: HyphenDecider) -> list[Node]:
+def _home(note: Node, page: int, nodes: dict[str, Node], ledger: OverrideLedger) -> str | None:
+    """What the note annotates: its marker's place, unless a `note_home` override (match: the note's
+    path, page: the page it starts on) names the node it is about, which must be placed."""
+    override = ledger.find("note_home", page, note.path)
+    if override is None:
+        return note.annotates
+    if override.value not in nodes:
+        raise ValueError(f"override {override.id!r} (p. {page}): {note.path} is about {override.value!r}, "
+                         f"which is not a placed node")
+    return override.value
+
+
+def history_notes(lines: list[RawLine], placed: list[Node], hyphens: HyphenDecider, ledger: OverrideLedger
+                  ) -> list[Node]:
     """The notes of every chapter and appendix in `lines`, in order, each linked to its marker's place.
 
     `placed` holds the roots built from the same lines (Title 17's sections, the appendices' nodes):
     a marker's place is looked up among them. A note whose marker is not in `lines` annotates None.
+    `ledger` supplies the `note_home` overrides, applied after the marker's place.
     """
-    sites = _marker_sites(lines, placed)
-    return [_note(scope, number, raw, sites.get((scope, number)), hyphens) for scope, number, raw in _runs(lines)]
+    nodes = {node.path: node for root in placed for node in root.walk()}
+    sites = _marker_sites(lines, nodes)
+    notes = []
+    for scope, number, raw in _runs(lines):
+        note = _note(scope, number, raw, sites.get((scope, number)), hyphens)
+        note.annotates = _home(note, raw[0].page, nodes, ledger)
+        notes.append(note)
+    return notes

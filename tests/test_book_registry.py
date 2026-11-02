@@ -197,13 +197,25 @@ def test_load_overrides_reads_every_field(tmp_path):
             reason="§506(a)(3): list set one level too deep, p. 204",
         )
     ]
-    assert OVERRIDE_KINDS == {"label_level", "hyphen", "xref_target", "text_owner"}
+    assert OVERRIDE_KINDS == {"label_level", "hyphen", "xref_target", "text_owner", "note_home"}
 
 
 def test_override_text_owner_value_is_a_path(tmp_path):
     ok = _entry(id="o-1", kind="text_owner", page=177, match="the proprietor of", value="usc17-s304-a-1-B")
     assert load_overrides(_write(tmp_path, [ok]))[0].value == "usc17-s304-a-1-B"
     for bad in ("", "usc17 s304", "-usc17-s304", "usc17-s304-", "§304(a)"):
+        with pytest.raises(ValueError, match="value"):
+            load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
+
+
+def test_override_note_home_names_a_note_and_a_node(tmp_path):
+    ok = _entry(id="h-1", kind="note_home", page=148, match="ch1-n15", value="usc17-s101-def-international-agreement")
+    assert load_overrides(_write(tmp_path, [ok]))[0].match == "ch1-n15"
+    assert load_overrides(_write(tmp_path, [{**ok, "match": "appB-n2"}]))[0].match == "appB-n2"
+    for bad in ("ch1-15", "ch1 n15", "usc17-s101", "n15", "appBB-n2", "ch1-n15 "):
+        with pytest.raises(ValueError, match="match"):
+            load_overrides(_write(tmp_path, [{**ok, "match": bad}]))
+    for bad in ("", "usc17 s101", "§101"):
         with pytest.raises(ValueError, match="value"):
             load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
 
@@ -235,6 +247,14 @@ def test_ledger_find_matches_a_text_owner_by_line_prefix():
     ledger = OverrideLedger([o])
     assert ledger.find("text_owner", 177, "the proprietor of such copyright shall be") is o
     assert ledger.find("text_owner", 177, "of such copyright") is None
+
+
+def test_ledger_find_matches_a_note_home_whole():
+    o = Override("o", "note_home", 146, "ch1-n1", "usc17-s101", "because")
+    ledger = OverrideLedger([o])
+    assert ledger.find("note_home", 146, "ch1-n15") is None  # n.1's override is not n.15's
+    assert ledger.find("note_home", 147, "ch1-n1") is None
+    assert ledger.find("note_home", 146, "ch1-n1") is o
 
 
 def test_ledger_with_no_overrides_finds_nothing():

@@ -19,11 +19,12 @@ from ingest.books.circular92.layout import RawLine
 from ingest.books.circular92.notes import EFFECTIVE_DATE_RE, history_notes
 from ingest.books.circular92.text import HyphenDecider
 from ingest.books.circular92.title17 import title17_nodes
-from ingest.books.overrides import OverrideLedger, load_overrides
+from ingest.books.overrides import Override, OverrideLedger, load_overrides
 from ingest.books.ref_ids import slugify_term
 from ingest.books.registry import get_book
 
 LETTERS = [chr(c) for c in range(ord("A"), ord("T") + 1)]
+S304_OWNERS = {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}  # text_owner: a chapter 3 parse uses them
 
 
 def _index(roots):
@@ -35,8 +36,14 @@ def _texts(lines):
 
 
 @pytest.fixture(scope="module")
-def ch1_ch5_notes(circ92_ch1_ch5_lines, ch1_ch5_nodes, ch1_ch5_hyphens):
-    return history_notes(circ92_ch1_ch5_lines, ch1_ch5_nodes, ch1_ch5_hyphens)
+def notes_ledger():
+    """The shipped overrides, for the ch.1 + ch.5 notes only (the session ledger is the Title 17 parse's)."""
+    return OverrideLedger(load_overrides(get_book("circ92").overrides_path))
+
+
+@pytest.fixture(scope="module")
+def ch1_ch5_notes(circ92_ch1_ch5_lines, ch1_ch5_nodes, ch1_ch5_hyphens, notes_ledger):
+    return history_notes(circ92_ch1_ch5_lines, ch1_ch5_nodes, ch1_ch5_hyphens, notes_ledger)
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +62,8 @@ def app_parse(app_lines):
     ledger = OverrideLedger(load_overrides(get_book("circ92").overrides_path))
     hyphens = HyphenDecider(app_lines, ledger)
     out_of_sequence: list[str] = []
-    return appendix_nodes(app_lines, hyphens, ledger, out_of_sequence=out_of_sequence), out_of_sequence, hyphens
+    roots = appendix_nodes(app_lines, hyphens, ledger, out_of_sequence=out_of_sequence)
+    return roots, out_of_sequence, hyphens, ledger
 
 
 @pytest.fixture(scope="module")
@@ -70,8 +78,8 @@ def app(app_nodes):
 
 @pytest.fixture(scope="module")
 def app_notes(app_lines, app_parse):
-    roots, _, hyphens = app_parse
-    return history_notes(app_lines, roots, hyphens)
+    roots, _, hyphens, ledger = app_parse
+    return history_notes(app_lines, roots, hyphens, ledger)
 
 
 @pytest.fixture(scope="module")
@@ -109,16 +117,16 @@ def _parse(*lines):
     hyphens = HyphenDecider(lines, ledger)
     out_of_sequence: list[str] = []
     roots = appendix_nodes(lines, hyphens, ledger, out_of_sequence=out_of_sequence)
-    return _index(roots), out_of_sequence, history_notes(lines, roots, hyphens)
+    return _index(roots), out_of_sequence, history_notes(lines, roots, hyphens, ledger)
 
 
-def _chapter(*lines):
+def _chapter(*lines, overrides=()):
     """Chapter lines -> (index, notes)."""
     lines = list(lines)
-    ledger = OverrideLedger([])
+    ledger = OverrideLedger(list(overrides))
     hyphens = HyphenDecider(lines, ledger)
     roots, _ = title17_nodes(lines, hyphens, ledger)
-    return _index(roots), history_notes(lines, roots, hyphens)
+    return _index(roots), history_notes(lines, roots, hyphens, ledger)
 
 
 # --- the notes of chapters 1 and 5 -------------------------------------------------------------
@@ -172,6 +180,51 @@ def test_a_note_drops_its_number_and_keeps_its_paragraphs(ch_notes):
 ])
 def test_a_note_annotates_where_its_marker_sits(ch_notes, path, annotates):
     assert ch_notes[path].annotates == annotates
+
+
+@pytest.mark.parametrize("path, definition", [
+    ("ch1-n15", "international-agreement"),  # "… by adding the definition of “international agreement.”"
+    ("ch1-n22", "united-states-work"),  # "… changing it to a definition for “United States work,” …"
+    ("ch1-n25", "work-of-visual-art"),  # "… by adding the definition of “work of visual art.”"
+])
+def test_a_note_about_a_whole_definition_names_it(ch_notes, path, definition):
+    # Its marker closes the definition's last item, so the marker's place alone would name that item
+    # (ruling R10: a note_home override). Notes whose marker closes an item they are about stay put.
+    assert ch_notes[path].annotates == f"usc17-s101-def-{definition}"
+    assert ch_notes["ch1-n27"].annotates == "usc17-s101-def-wto-agreement"
+
+
+def test_every_note_home_override_is_used(ch1_ch5_notes, notes_ledger):
+    # This ledger saw only the notes; the text_owner entries are chapter 3's (tests/test_circ92_title17.py).
+    assert {o.id for o in notes_ledger.unused()} == S304_OWNERS
+
+
+def _home(match, value, page=266, oid="h1"):
+    return Override(id=oid, kind="note_home", page=page, match=match, value=value, reason="test")
+
+
+_HOMED = (
+    _line("§ 901 · Definitions", 53.7, 264, kind="heading", scope="Chapter 9"),
+    _line("(a) The owner may act.", 66.0, 264, scope="Chapter 9"),
+    _line("(b) The owner may not act.", 66.0, 264, scope="Chapter 9", marks=[1]),
+    _notes_heading("Chapter 9", 266),
+    _note("1. The Act added section 901, and its note runs", 53.7, 266, scope="Chapter 9"),
+    _note("onto the next page.", 54.1, 267, scope="Chapter 9"),  # the override names the page it starts on
+)
+
+
+def test_a_note_home_override_replaces_where_the_marker_sits():
+    _, notes = _chapter(*_HOMED)
+    assert notes[0].annotates == "usc17-s901-b"
+    _, notes = _chapter(*_HOMED, overrides=[_home("ch9-n1", "usc17-s901")])
+    assert notes[0].annotates == "usc17-s901"
+    _, notes = _chapter(*_HOMED, overrides=[_home("ch9-n1", "usc17-s901", page=265)])  # another page: not this note
+    assert notes[0].annotates == "usc17-s901-b"
+
+
+def test_a_note_home_naming_no_placed_node_is_an_error():
+    with pytest.raises(ValueError, match="override 'h1'.*usc17-s999"):
+        _chapter(*_HOMED, overrides=[_home("ch9-n1", "usc17-s999")])
 
 
 # --- the appendices ----------------------------------------------------------------------------
@@ -465,7 +518,7 @@ def test_a_marker_on_the_heading_of_a_section_not_placed_is_an_error():
              _line("The owner may act.", 66.0, 264, scope="Chapter 9")]
     ledger = OverrideLedger([])
     with pytest.raises(ValueError, match="usc17-s901 was not placed"):
-        history_notes(lines, [], HyphenDecider(lines, ledger))
+        history_notes(lines, [], HyphenDecider(lines, ledger), ledger)
 
 
 def test_a_marker_on_a_line_no_node_holds_is_an_error():
@@ -473,7 +526,7 @@ def test_a_marker_on_a_line_no_node_holds_is_an_error():
              _line("The owner may act.", 66.0, 264, scope="Chapter 9", marks=[1])]
     ledger = OverrideLedger([])
     with pytest.raises(ValueError, match="marker 1"):
-        history_notes(lines, [], HyphenDecider(lines, ledger))
+        history_notes(lines, [], HyphenDecider(lines, ledger), ledger)
 
 
 def test_an_elision_lets_the_next_label_skip_ahead():

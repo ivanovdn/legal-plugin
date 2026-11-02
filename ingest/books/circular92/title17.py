@@ -75,10 +75,12 @@ HEADING_RE = re.compile(r"^\[?(?:\([A-Za-z0-9]{1,5}\)\s?)+\s*([^“‘]{3,120}?)
 HEADING_LINES = 2
 REPEALED_UNIT_RE = re.compile(r"^\[\([A-Za-z0-9]{1,5}\)\s*Repealed\.?\]$")
 
-# Quoted text: the words an amendment inserts (in the appendices) open with a quote mark on each of
-# their paragraphs and close once, at the end ("… paid when the order is filed.”."). Title 17 quotes
-# no amendment: of its 15 lines that open with a quote mark, 14 start §101 definitions (the restart
-# rule reads them first) and one wraps a quoted term (p. 303); its tree is the same with the rule.
+# Quoted text, read only in the appendices (UnitBuilder's `quotations`): the words an amendment inserts
+# open with a quote mark on each of their paragraphs and close once, at the end ("… paid when the
+# order is filed.”."). From a line that opens with a quote mark until a line closes the quotation or a
+# label opens a unit, every line is the current unit's text: no flush, no inline labels. Title 17
+# quotes no amendment, and its lines that open with a quote mark (§101's definitions, a wrapped
+# quoted term) are read by its own rules.
 QUOTE_OPEN_RE = re.compile(r"[“‘\"]")
 QUOTE_CLOSE_RE = re.compile(r"(”|’’)[.;,:]*(\s+(and|or))?\s*$")
 
@@ -158,11 +160,12 @@ class UnitBuilder:
 
     The units take the root's source type, jurisdiction and appendix; `label_of` cites a unit from
     its labels (by default the root's label followed by "(a)(1)…"). The appendices' sections are
-    built by it too (appendices.py)."""
+    built by it too (appendices.py), with `quotations` on: there an amendment quotes the words it
+    inserts, set to the indents of the law it amends."""
 
     def __init__(self, root: Node, kind: str, ledger: OverrideLedger, out_of_sequence: list[str],
                  paragraphs_restart: bool = False,
-                 label_of: Callable[[tuple[str, ...]], str] | None = None):
+                 label_of: Callable[[tuple[str, ...]], str] | None = None, quotations: bool = False):
         self.root = root
         self.kind = kind
         self.ledger = ledger
@@ -182,6 +185,7 @@ class UnitBuilder:
         self.prev: RawLine | None = None
         self.last: _Last | None = None
         self.elided = False  # an elision ("* * *") came before the line now being read
+        self.quotations = quotations
         self.quoting = False  # inside quoted text that has not closed yet
 
     # --- reading one line ----------------------------------------------------------------------
@@ -210,7 +214,7 @@ class UnitBuilder:
             self._own(raw, para_start, owner)
         elif self.paragraphs_restart and self._restarts(raw):
             self._paragraph(raw, para_start)
-        elif self.quoting or QUOTE_OPEN_RE.match(raw.text):
+        elif self.quotations and (self.quoting or QUOTE_OPEN_RE.match(raw.text)):
             self._quoted(raw, para_start)
         elif self.block_x is not None and raw.x0 < self.block_x - INDENT_STEP - PARA_INDENT:
             self._flush(raw, para_start)

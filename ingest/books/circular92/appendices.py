@@ -250,7 +250,7 @@ def _section_node(spec: AppendixSpec, section: _Section, hyphens: HyphenDecider,
         _place_paragraphs(node, spec, section.number, section.body, starts)
         return node
     builder = UnitBuilder(node, "rule", ledger, out_of_sequence,
-                          label_of=lambda labels: _label(spec, section.number, labels))
+                          label_of=lambda labels: _label(spec, section.number, labels), quotations=True)
     for line, para_start in zip(section.body, starts):
         if _is_elision(line):
             builder.elide()

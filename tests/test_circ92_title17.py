@@ -10,7 +10,7 @@ import pytest
 from ingest.books.circular92.labels import SEQ, expected_next, resolve, resolve_level
 from ingest.books.circular92.layout import RawLine, extract_lines
 from ingest.books.circular92.text import HyphenDecider, clean_join
-from ingest.books.circular92.title17 import section_heading_marks, title17_nodes, x_level
+from ingest.books.circular92.title17 import UnitBuilder, section_heading_marks, title17_nodes, x_level
 from ingest.books.overrides import Override, OverrideLedger, load_overrides
 from ingest.books.registry import get_book
 
@@ -33,6 +33,7 @@ def idx(ch1_ch5_nodes):
 
 
 S304_OWNERS = {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}  # the shipped text_owner overrides
+NOTE_HOMES = {"ch1-n15-home", "ch1-n22-home", "ch1-n25-home"}  # the shipped note_home overrides (notes.py)
 
 
 @pytest.fixture(scope="module")
@@ -724,6 +725,33 @@ def test_section_304_a_1_flush_text_has_its_owners(ch3):
 
 def test_every_shipped_override_is_used(ch3, ch1_ch5_title17, ch1_ch5_ledger):
     # The two §304 entries sit on printed p. 177 (chapter 3): the chapter 3 parse uses both, and
-    # the chapter 1 + 5 parse leaves only them unused.
-    assert ch3[2].unused() == []
-    assert {o.id for o in ch1_ch5_ledger.unused()} == S304_OWNERS
+    # the chapter 1 + 5 parse leaves only them unused, with the note_home entries, which only the
+    # notes read (tests/test_circ92_notes_appendices.py shows the ch. 1 notes use all three).
+    assert {o.id for o in ch3[2].unused()} == NOTE_HOMES
+    assert {o.id for o in ch1_ch5_ledger.unused()} == S304_OWNERS | NOTE_HOMES
+
+
+# --- quoted text is the appendices' rule, not Title 17's (ruling R11) -----------------------------
+
+def test_a_line_opening_with_a_quote_is_placed_by_the_title_17_rules():
+    # In the appendices this line would open quoted text and keep the next one in (1); Title 17 quotes
+    # no amendment, so the flush rule moves both to (a)'s tail.
+    idx, _, _ = _parse(
+        _heading("§ 900 · Test"),
+        _line("(a) In this section, the terms—", 66.0),
+        _line("(1) the term", 78.0),
+        _line("“copy” has its meaning in section 101; and", 63.3),
+        _line("the owner may act.", 54.2),
+    )
+    assert _texts(idx["usc17-s900-a"].tail) == ["“copy” has its meaning in section 101; and", "the owner may act."]
+    assert _texts(idx["usc17-s900-a-1"].lead) == ["(1) the term"]
+
+
+def test_title_17_never_reads_quoted_text(circ92_ch1_ch5_lines, monkeypatch):
+    # Chapter 1's §101 has 11 definitions whose first line opens with a quote mark.
+    def refuse(self, raw, para_start):
+        raise AssertionError(f"Title 17 read p.{raw.page} {raw.text!r} as quoted text")
+
+    monkeypatch.setattr(UnitBuilder, "_quoted", refuse)
+    ledger = OverrideLedger(load_overrides(get_book("circ92").overrides_path))
+    title17_nodes(circ92_ch1_ch5_lines, HyphenDecider(circ92_ch1_ch5_lines, ledger), ledger)
