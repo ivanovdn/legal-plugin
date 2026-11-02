@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "id": "usc17-s304-a-1-B-flush",
+    "kind": "text_owner",
+    "page": 177,
+    "match": "the proprietor of such copyright shall be entitled to a renewal",
+    "value": "usc17-s304-a-1-B",
+    "reason": "§304(a)(1)(B): its flush text (\"the proprietor of such copyright shall be entitled to a renewal and extension …\") is set at (ii)'s continuation indent, p. 177, so layout reads it as (B)(ii)'s"
+  },
+  {
+    "id": "usc17-s304-a-1-C-flush",
+    "kind": "text_owner",
+    "page": 177,
+    "match": "shall be entitled to a renewal and extension of the copyright in such work for",
+    "value": "usc17-s304-a-1-C",
+    "reason": "§304(a)(1)(C): its flush text (\"shall be entitled to a renewal and extension … a further term of 67 years\") is set at (a)(1)'s indent, p. 177, so layout reads it as (a)(1)'s"
+  }
+]

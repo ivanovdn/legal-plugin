@@ -22,7 +22,7 @@ from ingest.books.circular92.labels import is_expected, resolve
 from ingest.books.circular92.layout import RawLine
 from ingest.books.circular92.text import HyphenDecider, clean_join
 from ingest.books.models import Node, TextLine
-from ingest.books.overrides import OverrideLedger
+from ingest.books.overrides import Override, OverrideLedger
 from ingest.books.ref_ids import slugify_term
 
 TITLE = 17
@@ -181,7 +181,9 @@ class _Builder:
             # Read as a wrapped cross-reference, yet indented like a unit: a wrapped reference sits
             # under the line before (so do all 86 refused in Title 17), so report it.
             self.out_of_sequence.append(f"p.{raw.page}: {raw.text}")
-        if self.paragraphs_restart and self._restarts(raw):
+        if owner := self.ledger.find("text_owner", raw.page, raw.text):
+            self._own(raw, para_start, owner)
+        elif self.paragraphs_restart and self._restarts(raw):
             self._paragraph(raw, para_start)
         elif self.block_x is not None and raw.x0 < self.block_x - INDENT_STEP - PARA_INDENT:
             self._flush(raw, para_start)
@@ -333,8 +335,7 @@ class _Builder:
         line before moves with it when it is the paragraph's first line (one indent to the right,
         and running on into this one)."""
         owner_level = x_level(raw.x0) + 1
-        self.closed = {k: v for k, v in self.stack.items() if k == owner_level + 1}
-        self.stack = {k: v for k, v in self.stack.items() if k <= owner_level}
+        self._close_below(owner_level)
         owner = self.nodes[self._labels(self.stack)]
         last = self.last
         if (
@@ -350,6 +351,27 @@ class _Builder:
         self.block, self.block_x = [raw], INDENT_ORIGIN + INDENT_STEP * owner_level
         self._add(owner, self._text_line(raw, raw.text, para_start, raw.marks), raw)
 
+    def _own(self, raw: RawLine, para_start: bool, override: Override) -> None:
+        """A `text_owner` override: the line is the text of the unit at `override.value`, which must be
+        open here (the current unit or one above it), or the text would land out of order.
+
+        The owner then reads as after flush text: the units below it close, and the paragraph's
+        indent is this line's. So the lines that continue it (any non-label line not set more than
+        INDENT_STEP + PARA_INDENT left of it) follow it into the owner, until a label opens a unit
+        or the text drops below.
+        """
+        open_labels = self._labels(self.stack)
+        labels = next((key for key, node in self.nodes.items() if node.path == override.value), None)
+        if labels is None or open_labels[: len(labels)] != labels:
+            raise ValueError(
+                f"override {override.id!r} (p. {raw.page}): {override.value!r} is not a unit open at "
+                f"its line in {self.root.label}"
+            )
+        self._close_below(sorted(self.stack)[len(labels) - 1] if labels else 0)
+        self.current = self.nodes[labels]
+        self.block, self.block_x = [raw], raw.x0
+        self._add(self.current, self._text_line(raw, raw.text, para_start, raw.marks), raw)
+
     def _paragraph(self, raw: RawLine, para_start: bool) -> None:
         self.stack, self.closed, self.current = {}, {}, self.root
         self.lead_in = bool(self.root.children)
@@ -357,6 +379,12 @@ class _Builder:
         self._add(self.root, self._text_line(raw, raw.text, para_start, raw.marks), raw)
 
     # --- helpers -----------------------------------------------------------------------------
+
+    def _close_below(self, level: int) -> None:
+        """Close the open units below `level`; the first of them stays as the closed sibling."""
+        below = sorted(k for k in self.stack if k > level)
+        self.closed = {below[0]: self.stack[below[0]]} if below else {}
+        self.stack = {k: v for k, v in self.stack.items() if k <= level}
 
     @staticmethod
     def _labels(stack: dict[int, str]) -> tuple[str, ...]:

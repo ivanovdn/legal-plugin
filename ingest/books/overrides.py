@@ -7,16 +7,21 @@ overruled. `match` and `value` mean, by kind:
   label_level   match: a line prefix                 value: the level
   hyphen        match: "<word->|<next word>"         value: "join" or "keep"
   xref_target   match: the raw reference text        value: the target path
+  text_owner    match: a line prefix                 value: the path of the unit the line's text is
+                                                            (flush text set at another unit's indent)
 
 A fix that nothing consumed is reported by the ledger, so a stale one (the parser
 learned to do it alone, or the page moved) cannot sit in the file unnoticed.
 """
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-OVERRIDE_KINDS = frozenset({"label_level", "hyphen", "xref_target"})
+OVERRIDE_KINDS = frozenset({"label_level", "hyphen", "xref_target", "text_owner"})
 HYPHEN_VALUES = frozenset({"join", "keep"})
+PREFIX_KINDS = frozenset({"label_level", "text_owner"})  # their match is a line prefix
+_PATH_RE = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*")  # a node path, as in a ref_id
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,8 @@ def _parse(entry: object, index: int) -> Override:
         raise ValueError(
             f"{label}: hyphen value must be one of {sorted(HYPHEN_VALUES)}, got {entry['value']!r}"
         )
+    if entry["kind"] == "text_owner" and not _PATH_RE.fullmatch(entry["value"]):
+        raise ValueError(f"{label}: text_owner value must be a node path, got {entry['value']!r}")
     return Override(
         id=entry["id"],
         kind=entry["kind"],
@@ -88,12 +95,12 @@ class OverrideLedger:
     def find(self, kind: str, page: int, text: str) -> Override | None:
         """The override for this kind, page and text, marked used; None if there is none.
 
-        A `label_level` match is a line prefix; the other kinds match the whole text.
+        A `label_level` or `text_owner` match is a line prefix; the other kinds match the whole text.
         """
         for override in self._overrides:
             if override.kind != kind or override.page != page:
                 continue
-            hit = text.startswith(override.match) if kind == "label_level" else text == override.match
+            hit = text.startswith(override.match) if kind in PREFIX_KINDS else text == override.match
             if hit:
                 self._used.add(override.id)
                 return override

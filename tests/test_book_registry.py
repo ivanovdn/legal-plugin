@@ -197,7 +197,15 @@ def test_load_overrides_reads_every_field(tmp_path):
             reason="§506(a)(3): list set one level too deep, p. 204",
         )
     ]
-    assert OVERRIDE_KINDS == {"label_level", "hyphen", "xref_target"}
+    assert OVERRIDE_KINDS == {"label_level", "hyphen", "xref_target", "text_owner"}
+
+
+def test_override_text_owner_value_is_a_path(tmp_path):
+    ok = _entry(id="o-1", kind="text_owner", page=177, match="the proprietor of", value="usc17-s304-a-1-B")
+    assert load_overrides(_write(tmp_path, [ok]))[0].value == "usc17-s304-a-1-B"
+    for bad in ("", "usc17 s304", "-usc17-s304", "usc17-s304-", "§304(a)"):
+        with pytest.raises(ValueError, match="value"):
+            load_overrides(_write(tmp_path, [{**ok, "value": bad}]))
 
 
 def test_ledger_reports_unused():
@@ -220,6 +228,13 @@ def test_ledger_find_matches_kind_page_and_text():
     assert ledger.find("label_level", 10, "(3) the work is infringing") is a
     assert ledger.find("hyphen", 10, "co-|operate and more") is None
     assert ledger.unused() == []
+
+
+def test_ledger_find_matches_a_text_owner_by_line_prefix():
+    o = Override("o", "text_owner", 177, "the proprietor of such", "usc17-s304-a-1-B", "because")
+    ledger = OverrideLedger([o])
+    assert ledger.find("text_owner", 177, "the proprietor of such copyright shall be") is o
+    assert ledger.find("text_owner", 177, "of such copyright") is None
 
 
 def test_ledger_with_no_overrides_finds_nothing():

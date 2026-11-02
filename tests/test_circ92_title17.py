@@ -8,10 +8,11 @@ line, flush text after a list) runs on synthetic lines in the shape layout.py re
 import pytest
 
 from ingest.books.circular92.labels import SEQ, expected_next, resolve, resolve_level
-from ingest.books.circular92.layout import RawLine
+from ingest.books.circular92.layout import RawLine, extract_lines
 from ingest.books.circular92.text import HyphenDecider, clean_join
 from ingest.books.circular92.title17 import section_heading_marks, title17_nodes, x_level
-from ingest.books.overrides import Override, OverrideLedger
+from ingest.books.overrides import Override, OverrideLedger, load_overrides
+from ingest.books.registry import get_book
 
 CH1 = ["101", "102", "103", "104", "104a", "105", "106", "106a", "107", "108", "109", "110", "111",
        "112", "113", "114", "115", "116", "117", "118", "119", "120", "121", "121a", "122"]
@@ -29,6 +30,18 @@ def _text(lines, hyphens=None):
 @pytest.fixture(scope="module")
 def idx(ch1_ch5_nodes):
     return _index(ch1_ch5_nodes)
+
+
+S304_OWNERS = {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}  # the shipped text_owner overrides
+
+
+@pytest.fixture(scope="module")
+def ch3(circ92_pdf):
+    """Chapter 3 (PDF 195-206), parsed with the shipped overrides: (index, out_of_sequence, ledger)."""
+    lines = extract_lines(circ92_pdf, range(195, 207))
+    ledger = OverrideLedger(load_overrides(get_book("circ92").overrides_path))
+    nodes, out_of_sequence = title17_nodes(lines, HyphenDecider(lines, ledger), ledger)
+    return _index(nodes), out_of_sequence, ledger
 
 
 # --- synthetic lines ---------------------------------------------------------------------------
@@ -623,3 +636,94 @@ def test_contents_and_titles_never_join_a_section():
     )
     assert _texts(idx["usc17-s900-a"].lead) == ["(a) The owner may act."]
     assert "usc17-s900-b" in idx
+
+
+# --- text_owner overrides (ruling R8) ------------------------------------------------------------
+
+def _owner(match, value, oid="o1"):
+    return Override(id=oid, kind="text_owner", page=30, match=match, value=value, reason="test")
+
+
+def test_a_text_owner_override_puts_the_line_and_its_continuation_in_the_owners_tail():
+    # §304(a)(1)(B)'s shape: (a)'s flush text is set at (2)'s continuation indent.
+    lines = (
+        _heading("§ 900 · Test"),
+        _line("(a) In the case of—", 66.0),
+        _line("(1) any posthumous work, or", 78.0),
+        _line("(2) any work copyrighted by an employer", 78.0),
+        _line("for whom it is made for hire,", 66.3),
+        _line("the proprietor shall be entitled to a re-", 66.2),
+        _line("newal of the copyright for 67 years.", 66.2),
+        _line("(b) Other works.", 66.0),
+    )
+    idx, _, _ = _parse(*lines)  # by layout alone, all of it is (2)'s
+    assert _texts(idx["usc17-s900-a-2"].lead)[-1] == "newal of the copyright for 67 years."
+    idx, oos, ledger = _parse(*lines, overrides=[_owner("the proprietor shall", "usc17-s900-a")])
+    assert _texts(idx["usc17-s900-a"].tail) == [
+        "the proprietor shall be entitled to a re-", "newal of the copyright for 67 years."]
+    assert _texts(idx["usc17-s900-a-2"].lead) == ["(2) any work copyrighted by an employer", "for whom it is made for hire,"]
+    assert "usc17-s900-b" in idx and oos == [] and ledger.unused() == []
+
+
+def test_lines_under_owned_text_keep_its_indent():
+    # §304(a)(1)(C): the owned line sits two indents left of the open clause; its next line follows it.
+    idx, _, _ = _parse(
+        _heading("§ 900 · Test"),
+        _line("(1) In the case of any other work—", 78.0),
+        _line("(A) the author,", 90.0),
+        _line("(i) if living, or", 102.0),
+        _line("(ii) if not living,", 102.0),
+        _line("shall be entitled to a renewal and extension of the copyright for", 66.5),
+        _line("a further term of 67 years.", 66.3),
+        overrides=[_owner("shall be entitled to a renewal", "usc17-s900-1-A")],
+    )
+    assert _texts(idx["usc17-s900-1-A"].tail) == [
+        "shall be entitled to a renewal and extension of the copyright for", "a further term of 67 years."]
+    assert idx["usc17-s900-1"].tail == []
+
+
+def test_units_below_the_owner_close_as_after_flush_text():
+    idx, _, _ = _parse(
+        _heading("§ 900 · Test"),
+        _line("(a) In the case of—", 66.0),
+        _line("(1) any work, or", 78.0),
+        _line("(2) any work made for hire,", 78.0),
+        _line("the owner shall be entitled to", 78.0),
+        _line("(A) a renewal; and", 90.0),  # a list inside the owner's text, not (2)'s
+        overrides=[_owner("the owner shall be entitled", "usc17-s900-a")],
+    )
+    assert _texts(idx["usc17-s900-a"].tail) == ["the owner shall be entitled to", "(A) a renewal; and"]
+    assert "usc17-s900-a-2-A" not in idx
+
+
+@pytest.mark.parametrize("owner", ["usc17-s900-d", "usc17-s900-b"])  # no such unit; a closed one
+def test_a_text_owner_that_is_not_an_open_unit_is_an_error(owner):
+    with pytest.raises(ValueError, match="override 'o1'"):
+        _parse(
+            _heading("§ 900 · Test"),
+            _line("(a) The owner may act.", 66.0),
+            _line("(b) The owner may not act.", 66.0),
+            _line("(c) The owner shall act—", 66.0),
+            _line("(1) at once;", 78.0),
+            _line("the act being in writing.", 66.0),
+            overrides=[_owner("the act being", owner)],
+        )
+
+
+def test_section_304_a_1_flush_text_has_its_owners(ch3):
+    idx, oos, _ = ch3
+    b, c = idx["usc17-s304-a-1-B"], idx["usc17-s304-a-1-C"]
+    assert _texts(b.tail) == ["the proprietor of such copyright shall be entitled to a renewal and ex-",
+                              "tension of the copyright in such work for the further term of 67 years."]
+    assert _texts(idx["usc17-s304-a-1-B-ii"].all_lines())[-1] == "such work is made for hire,"
+    assert _texts(c.tail) == ["shall be entitled to a renewal and extension of the copyright in such work for",
+                              "a further term of 67 years."]
+    assert idx["usc17-s304-a-1"].tail == [] and "usc17-s304-a-2-A" in idx
+    assert oos == []
+
+
+def test_every_shipped_override_is_used(ch3, ch1_ch5_title17, ch1_ch5_ledger):
+    # The two §304 entries sit on printed p. 177 (chapter 3): the chapter 3 parse uses both, and
+    # the chapter 1 + 5 parse leaves only them unused.
+    assert ch3[2].unused() == []
+    assert {o.id for o in ch1_ch5_ledger.unused()} == S304_OWNERS
