@@ -159,3 +159,12 @@ def ch1_ch5_title17(circ92_ch1_ch5_lines, ch1_ch5_hyphens, ch1_ch5_ledger):
 @pytest.fixture(scope="session")
 def ch1_ch5_nodes(ch1_ch5_title17):
     return ch1_ch5_title17[0]
+
+
+# Appendices A-T (PDF 389-481: their text and their notes), extracted once a session.
+APPENDIX_PDF_PAGES = range(389, 482)
+
+
+@pytest.fixture(scope="session")
+def circ92_app_lines(circ92_pdf):
+    return extract_lines(circ92_pdf, APPENDIX_PDF_PAGES)

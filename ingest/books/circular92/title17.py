@@ -15,7 +15,7 @@ belongs to a unit above it.
 """
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from ingest.books.circular92.labels import is_expected, resolve
@@ -69,10 +69,18 @@ LABEL_LIST_END_RE = re.compile(r"\([A-Za-z0-9]{1,5}\),?\s+(or|and)\s*$")
 # A line that runs on into the next one: it ends no sentence, clause or list item.
 CLOSED_RE = re.compile(r"[.,;:—\]”]\s*$")
 # A labelled unit's small-caps heading: "(a) Criminal Infringement.—", read on cleaned text (no
-# space before the dash).
-HEADING_RE = re.compile(r"^\[?(?:\([A-Za-z0-9]{1,5}\)\s?)+\s*(.{3,120}?)\.—")
+# space before the dash). A heading holds no opening quote: a ".—" after one is the heading of the
+# quoted text ("(A) by striking “Whoever” and inserting “Offense.—”"), not the unit's own.
+HEADING_RE = re.compile(r"^\[?(?:\([A-Za-z0-9]{1,5}\)\s?)+\s*([^“‘]{3,120}?)\.—")
 HEADING_LINES = 2
 REPEALED_UNIT_RE = re.compile(r"^\[\([A-Za-z0-9]{1,5}\)\s*Repealed\.?\]$")
+
+# Quoted text: the words an amendment inserts (in the appendices) open with a quote mark on each of
+# their paragraphs and close once, at the end ("… paid when the order is filed.”."). Title 17 quotes
+# no amendment: of its 15 lines that open with a quote mark, 14 start §101 definitions (the restart
+# rule reads them first) and one wraps a quoted term (p. 303); its tree is the same with the rule.
+QUOTE_OPEN_RE = re.compile(r"[“‘\"]")
+QUOTE_CLOSE_RE = re.compile(r"(”|’’)[.;,:]*(\s+(and|or))?\s*$")
 
 # §101: a definition starts at the definitions' indent, with a quoted term near the start of its
 # first line, after a line that closes the one before. 54 definitions, after the intro sentence.
@@ -145,15 +153,21 @@ class _Last:
     raw: RawLine
 
 
-class _Builder:
-    """Places the body lines of one section, or of one §101 definition, in a tree under `root`."""
+class UnitBuilder:
+    """Places the body lines of one section, or of one §101 definition, in a tree under `root`.
+
+    The units take the root's source type, jurisdiction and appendix; `label_of` cites a unit from
+    its labels (by default the root's label followed by "(a)(1)…"). The appendices' sections are
+    built by it too (appendices.py)."""
 
     def __init__(self, root: Node, kind: str, ledger: OverrideLedger, out_of_sequence: list[str],
-                 paragraphs_restart: bool = False):
+                 paragraphs_restart: bool = False,
+                 label_of: Callable[[tuple[str, ...]], str] | None = None):
         self.root = root
         self.kind = kind
         self.ledger = ledger
         self.out_of_sequence = out_of_sequence
+        self.label_of = label_of or (lambda labels: root.label + "".join(f"({label})" for label in labels))
         # In a definition, a new paragraph at the definition's own indent is the definition's, and
         # it introduces the list that follows it ("A work of visual art does not include—").
         self.paragraphs_restart = paragraphs_restart
@@ -167,10 +181,21 @@ class _Builder:
         self.block_x: float | None = None  # the x of its first line
         self.prev: RawLine | None = None
         self.last: _Last | None = None
+        self.elided = False  # an elision ("* * *") came before the line now being read
+        self.quoting = False  # inside quoted text that has not closed yet
 
     # --- reading one line ----------------------------------------------------------------------
 
+    def elide(self) -> None:
+        """Text left out here ("* * *", in the appendices): the next line follows no line, so a label
+        on it is read as a label, and the sequence it takes up again may skip ahead."""
+        self.prev, self.last, self.elided, self.quoting = None, None, True, False
+
     def feed(self, raw: RawLine, para_start: bool) -> None:
+        self._feed(raw, para_start)
+        self.elided = False
+
+    def _feed(self, raw: RawLine, para_start: bool) -> None:
         as_text = False
         if m := self._label_start(raw):
             if self._open(raw, m, para_start):
@@ -185,6 +210,8 @@ class _Builder:
             self._own(raw, para_start, owner)
         elif self.paragraphs_restart and self._restarts(raw):
             self._paragraph(raw, para_start)
+        elif self.quoting or QUOTE_OPEN_RE.match(raw.text):
+            self._quoted(raw, para_start)
         elif self.block_x is not None and raw.x0 < self.block_x - INDENT_STEP - PARA_INDENT:
             self._flush(raw, para_start)
         else:
@@ -232,7 +259,8 @@ class _Builder:
         before it on the line (both reported), and when the first label lies deeper than the
         closed sibling: after flush text, a label that cannot be the next child of the text's
         owner is a list inside that text (§110's "accreditation— (A) … (B) …"), so it stays text.
-        A label no rule (and no override) placed is reported in `out_of_sequence`.
+        A label no rule (and no override) placed is reported in `out_of_sequence`; after an elision the
+        first label may skip ahead without being reported, as the labels it skips were left out.
         """
         stack, closed = dict(self.stack), dict(self.closed)
         unplaced = False
@@ -243,7 +271,8 @@ class _Builder:
                 level = override
             else:
                 level, decided = resolve(label, view, first_x_level if i == 0 else above + 1)
-                unplaced |= not decided or not is_expected(label, view, level)
+                skipped = i == 0 and self.elided
+                unplaced |= not decided or not (skipped or is_expected(label, view, level))
             if i == 0 and closed and level > max(closed):
                 return None
             stack = {k: v for k, v in stack.items() if k < level}
@@ -275,6 +304,7 @@ class _Builder:
             self._add(opened[-1], self._text_line(raw, raw.text[cut:], False, raw.marks), raw)
         self.stack, self.closed, self.current = stack, {}, opened[-1]
         self.block, self.block_x = [raw], raw.x0
+        self.quoting = False
         return True
 
     def _make_units(self, stack: dict[int, str], count: int) -> list[Node]:
@@ -287,11 +317,12 @@ class _Builder:
         node = Node(
             path=self.root.path + "".join(f"-{label}" for label in labels),
             kind=self.kind,
-            source_type=SOURCE_TYPE,
-            jurisdiction=JURISDICTION,
-            label=self.root.label + "".join(f"({label})" for label in labels),
+            source_type=self.root.source_type,
+            jurisdiction=self.root.jurisdiction,
+            label=self.label_of(labels),
             heading="",
             scope=self.root.scope,
+            appendix=self.root.appendix,
         )
         if parent.tail:
             # Text between two children: a definition's new paragraph leads the list it introduces;
@@ -328,6 +359,15 @@ class _Builder:
                 self.stack, self.current = stack, opened[-1]
                 return
         self._add(self.current, self._text_line(raw, raw.text, para_start, raw.marks), raw)
+
+    def _quoted(self, raw: RawLine, para_start: bool) -> None:
+        """Quoted text is set to the indents of the law it amends, not to this one's: it is the current
+        unit's text, whatever its indent, until a line closes the quotation (or a label opens a unit),
+        and a flush line after it never takes its last line along."""
+        self.block.append(raw)
+        self._add(self.current, self._text_line(raw, raw.text, para_start, raw.marks), raw)
+        self.quoting = QUOTE_CLOSE_RE.search(raw.text) is None
+        self.last = None
 
     def _flush(self, raw: RawLine, para_start: bool) -> None:
         """A line below the open unit's other lines: the text after a list, at the level of a unit
@@ -438,7 +478,7 @@ def _definition_start(line: RawLine, prev: RawLine | None) -> re.Match | None:
 def _place_definitions(section: Node, body: list[RawLine], starts: list[bool], ledger: OverrideLedger,
                        out_of_sequence: list[str]) -> None:
     """§101: the intro sentence is the section's lead; each definition is a child, with its own units."""
-    builder = _Builder(section, "rule", ledger, out_of_sequence)
+    builder = UnitBuilder(section, "rule", ledger, out_of_sequence)
     prev = None
     for line, para_start in zip(body, starts):
         if term_match := _definition_start(line, prev):
@@ -454,12 +494,14 @@ def _place_definitions(section: Node, body: list[RawLine], starts: list[bool], l
                 term=term,
             )
             section.children.append(definition)
-            builder = _Builder(definition, "definition", ledger, out_of_sequence, paragraphs_restart=True)
+            builder = UnitBuilder(definition, "definition", ledger, out_of_sequence, paragraphs_restart=True)
         builder.feed(line, para_start)
         prev = line
 
 
-def _set_headings(section: Node, hyphens: HyphenDecider) -> None:
+def set_unit_headings(section: Node, hyphens: HyphenDecider) -> None:
+    """Each unit under `section` whose lead opens "(a) Heading.—" gets that heading; a childless
+    "[(x) Repealed.]" unit is kind `repealed`."""
     for node in section.walk():
         if node is section:
             continue
@@ -494,9 +536,9 @@ def title17_nodes(lines: list[RawLine], hyphens: HyphenDecider, ledger: Override
         if section.number == DEFINITIONS_SECTION:
             _place_definitions(node, section.body, starts, ledger, out_of_sequence)
         else:
-            builder = _Builder(node, "rule", ledger, out_of_sequence)
+            builder = UnitBuilder(node, "rule", ledger, out_of_sequence)
             for line, para_start in zip(section.body, starts):
                 builder.feed(line, para_start)
-        _set_headings(node, hyphens)
+        set_unit_headings(node, hyphens)
         nodes.append(node)
     return nodes, out_of_sequence
