@@ -118,3 +118,9 @@ def call_handler(fn, *args, **kwargs):
     for task in tasks.tasks:
         task.func(*task.args, **task.kwargs)
     return response
+
+
+@pytest.fixture(scope="session")
+def circ92_pdf() -> Path:
+    """The Circular 92 (Dec. 2025) fixture. Tests extract only the pages they need."""
+    return Path(__file__).resolve().parent / "fixtures" / "books" / "circular-92-2025-12.pdf"
