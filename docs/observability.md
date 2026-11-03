@@ -39,7 +39,7 @@ There are three request roots: **`query:<task_type>`** (renamed from `query` by 
 
 Afterwards, **`status = ERROR` on the root means exactly "the attorney did not get their answer."** Expect ERROR on *two* spans on a failed turn — the node says where it broke, the root says the attorney got nothing.
 
-### The vocabulary — closed, 23 codes, gated both ways
+### The vocabulary — closed, 25 codes, gated both ways
 
 Free-text reasons fragment into things you cannot filter on, so the codes are constants in `observability/degradations.py`, in three classes:
 
@@ -47,14 +47,20 @@ Free-text reasons fragment into things you cannot filter on, so the codes are co
 |---|---|---|---|
 | **1 — Failed** | No answer, or an error string as the answer | `mark_failed()` → span `ERROR` | 8 — `llm_call_failed`, `legal_research_failed`, `contract_generation_failed`, `compaction_failed`, `graph_invoke_failed`, `stateless_fallback_failed`, `resume_state_load_failed`, `resume_failed` |
 | **2 — Announced** | Answer lands, quality worse, attorney **meant** to be told — a banner only if that tab renders it ([drills 2 and 3](testing-observability.md)) | `record_degradation(announced=True)` | 8 — `checkpointer_unavailable`, `audit_write_failed`, `review_persist_failed`, `prior_review_load_failed`, `summary_load_failed`, `prior_conversation_load_failed`, `context_truncated`, `edit_retry_failed` |
-| **3 — Silent** | Answer lands, quality quietly worse, **nobody told** | `record_degradation(announced=False)` | 7 — `chat_grounding_failed`, `review_reconciliation_failed`, `compressible_history_read_failed`, `preferences_load_failed`, `msa_lookup_failed`, `intent_classification_failed`, `planning_failed` |
+| **3 — Silent** | Answer lands, quality quietly worse, **nobody told** | `record_degradation(announced=False)` | 9 — `chat_grounding_failed`, `review_reconciliation_failed`, `compressible_history_read_failed`, `preferences_load_failed`, `msa_lookup_failed`, `intent_classification_failed`, `planning_failed`, `embedding_query_truncated`, `book_search_failed` |
 | **4 — Telemetry self-catch** | Observability failing to observe | **nothing, on principle** | none — tracing reporting its own best-effort catches as application degradations is how a dashboard becomes decoration |
 
 `announced` has **no default**, on purpose: whether the attorney was told is exactly the thing you must not get wrong by accident. The convention is not invented here — `skills/legal_research/context.py` already used `memory_degraded` to mean *"the attorney was told"*, setting it on a store read failure and pointedly **not** on a reconciliation failure.
 
 **Class 3 is why this work exists.** A grounding failure answers with no playbook and no MSA — fluent, confident, ungrounded, with no banner and (until now) no queryable record anywhere.
 
-A unit test structurally cannot catch an unwired site: a green `test_record_degradation_emits_event` passes with 22 of 23 codes missing, because the call sites simply do not exist. So **`scripts/check_degradation_vocabulary.py` runs in `scripts/check.sh`** and checks both directions — a declared constant at no call site is *a site you forgot to wire*; a reason string at a call site that is not declared is *a typo silently creating a new category*. It reads both positional and keyword `reason=` forms.
+A unit test structurally cannot catch an unwired site: a green `test_record_degradation_emits_event` passes with 24 of 25 codes missing, because the call sites simply do not exist. So **`scripts/check_degradation_vocabulary.py` runs in `scripts/check.sh`** and checks both directions — a declared constant at no call site is *a site you forgot to wire*; a reason string at a call site that is not declared is *a typo silently creating a new category*. It reads both positional and keyword `reason=` forms, and scans `api`, `graph`, `skills`, `memory` and `rag` (`rag` joined the list with the reference-books build, when two codes were produced there).
+
+The two newest codes, both from the reference-books build ([rag.md](rag.md#reference-books)):
+- **`embedding_query_truncated`** (`rag/embeddings.py::embed_query`): a query was past the embedding model's window, so it was retried once with truncation allowed. Recorded only after the cut vector is in hand, with the query's length as the detail. The answer lands; the search ran on the front of the question.
+- **`book_search_failed`** (`rag/tools/search_books.py::unavailable`, which both book tools call): the book couldn't be read, so the tool told the agent "Book search is unavailable right now" and the detail names the exception class. The agent may answer without the book.
+
+An **unverified book citation is a risk flag, not a degradation**: the attorney sees it through review (*Cites a reference that was not retrieved*, *Could not verify a cited reference*, *The answer states a page itself*), so no code records it.
 
 Two more sources of signal on the spans:
 
@@ -68,6 +74,7 @@ Two more sources of signal on the spans:
 Every request creates a trace with:
 - **Nested spans** for each graph node (intake → intent_router → skill → rag_retriever → llm_caller → ...)
 - **LLM spans with token usage + model** on every LLM call. The httpx nodes (`llm_caller`, `intent_router`, `planner`) carry `@traced(kind="LLM")` and attach Ollama's `prompt_eval_count`/`eval_count` (`observability/tracing.py::ollama_usage`) plus the four `llm.ollama.*_ms` latencies. The skill LLM calls — the Word chat-tab direct `ChatOllama` (`legal_research._run_doc_chat`), its `format='json'` retry, and both ReAct agents — run inside `traced_invoke`/`traced_agent_invoke`, which record a nested LLM span with usage read from the returned `AIMessage.usage_metadata`. These were previously **invisible**.
+- **Book tool spans** — `tool.search_books` and `tool.lookup_book` carry the query (or the reference) and `book.ref_ids`, the ids the result marked as retrieved (`book.more_ref_ids` on a lookup: the chunks that didn't fit).
 - **Skill spans** — all five skills (`legal_research`, `contract_generation`, `contract_review`, `drafting`, `compliance_check`) carry their own `@traced` span.
 - **User and session tracking** (`user.id`, `session.id` from the request), **`turn_id`** in metadata — the join key for `feedback` / `interaction_event` rows and for `scripts/feedback_report`.
 - **Task type tags**, **model metadata** (model name, temperature, chunk count), `contract_type_detected`, `review_risk_level` / `requires_attorney`.

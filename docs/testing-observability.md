@@ -2,7 +2,7 @@
 
 ## What this document is for
 
-`scripts/check.sh` proves the seam is *wired*: every one of the 23 reason codes
+`scripts/check.sh` proves the seam is *wired*: every one of the 25 reason codes
 is declared and used, `mark_failed` sets a span ERROR, `record_degradation`
 emits an event, `app.outcome` derives correctly from a reason list. What it
 cannot prove is that a **real outage** reaches a trace — that the exception
@@ -11,7 +11,9 @@ container produces `audit_write_failed` and not a hang, that a turn which loses
 its grounding still answers and still says nothing to the attorney.
 
 Those are four drills. This document is how to run them, and what happened when
-they were run.
+they were run. The two codes the reference-books build added
+(`embedding_query_truncated`, `book_search_failed`) have no drill here yet:
+tests wire them, and this document records no real-outage run against a book search.
 
 Read it alongside [docs/testing-compaction.md](testing-compaction.md), which is
 the same kind of document for the other feature with no automatable gate.

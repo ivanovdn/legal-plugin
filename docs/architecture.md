@@ -7,7 +7,7 @@
 ```
 Attorney → Chainlit (:8080) / Word add-in (:3001) → FastAPI (:8000) → LangGraph graph
                                                     ├── Skills (5 capabilities)
-                                                    ├── RAG layer → Qdrant (dense search; Spark on the VM)
+                                                    ├── RAG layer → Qdrant (dense search; Spark on the VM) + the reference-books collection (dense + BM25)
                                                     ├── Embeddings → Ollama (embeddinggemma)
                                                     ├── LLM → Ollama
                                                     ├── Reranker → Qwen3-Reranker-4B (llama.cpp local / vLLM VM)
@@ -16,7 +16,7 @@ Attorney → Chainlit (:8080) / Word add-in (:3001) → FastAPI (:8000) → Lang
                                                     └── Tracing → OTel (Langfuse local / Phoenix VM)
 ```
 
-Retrieval in detail: which model runs where, the search pipeline, and the move to Qdrant's built-in hybrid search are covered in [rag.md](rag.md).
+Retrieval in detail: which model runs where, the search pipeline, the move to Qdrant's built-in hybrid search, and the reference books (Circular 92) are covered in [rag.md](rag.md).
 
 **Two-process model:**
 - **Backend** (FastAPI, port 8000) — owns all business logic, graph execution, RAG, LLM calls, audit
@@ -62,11 +62,11 @@ legal-plugin/
 │       ├── skill_dispatcher.py # Routes to correct skill node
 │       ├── rag_retriever.py    # Calls hybrid_search (skips if agent skill already ran)
 │       ├── llm_caller.py       # Calls Ollama with context, records prompt+response on an LLM span
-│       ├── risk_assessor.py    # contract_review: verdict-based risk; other skills: citation check
+│       ├── risk_assessor.py    # contract_review: verdict-based risk; other skills: citation check (client doc_ids + book ref_ids, resolved once)
 │       ├── human_review.py     # LangGraph interrupt() for blocking review
-│       ├── output_formatter.py # Builds structured report dict
+│       ├── output_formatter.py # Builds structured report dict; renders book citations from state
 │       ├── history_appender.py # Appends the turn to chat_history (capped)
-│       └── memory_writer.py    # Writes audit log + review + conversation (Postgres)
+│       └── memory_writer.py    # Writes audit log (with `sources`) + review + conversation (Postgres)
 │
 ├── skills/                     # Legal capabilities — each in its own folder
 │   ├── base.py                 # load_skill_prompt() / load_bundle() with ceiling constraint
@@ -94,16 +94,23 @@ legal-plugin/
 │   ├── hybrid_search.py        # Dense search (+ BM25 if on), RRF fusion, then the reranker
 │   ├── reranker.py             # Qwen3-Reranker-4B client: llama-server or vLLM (/v1/rerank, /v1/score)
 │   ├── related_docs.py         # get_parent_msa — governing MSA for SOW reviews
+│   ├── book_store.py           # Reference-book collection: create (dense + BM25), upsert, delete an edition, count
+│   ├── book_search.py          # Book search (Query API, RRF, rerank), lookup by citation, fetch_nodes for the citation check
+│   ├── book_citations.py       # check_book_citations — one resolution of every cited ref_id per turn
 │   └── tools/                  # LangGraph @tool decorated functions
 │       ├── search_legal.py     # Hybrid search as agent tool
 │       ├── get_document.py     # Retrieve full doc by doc_id
 │       ├── extract_clauses.py  # Query case_history by clause_type
+│       ├── search_books.py     # Search the reference book; its result format marks what counts as retrieved
+│       ├── lookup_book.py      # One passage of the book by citation or ref_id
 │       └── escalate.py         # Flag for attorney review
 │
 ├── ingest/                     # Document ingestion
 │   ├── chunk_models.py         # LegalChunk Pydantic model
 │   ├── pipeline.py             # parse → chunk → embed → upsert
 │   ├── numbering.py            # Word auto-numbering resolver
+│   ├── books/                  # Reference books — registry, parser front end + overrides, chunker, ref_ids, citation renderer, dry-run report
+│   │   └── circular92/         # Circular 92's front end (Title 17 + appendices) and overrides-2025-12.json
 │   └── parsers/
 │       ├── docx_parser.py      # DOCX parser (ported from compliance-bot)
 │       ├── pdf_parser.py       # PDF parser (pdfplumber, section-based)
@@ -126,7 +133,7 @@ legal-plugin/
 │   ├── otel.py                 # init_observability() — TracerProvider + OTLP exporter + auto-instrumentors
 │   ├── spans.py                # THE SEAM — @traced, set_trace_attributes/set_gen_attributes,
 │   │                           #   mark_failed, record_degradation, set_outcome, degradations
-│   ├── degradations.py         # the closed 23-code vocabulary + derive_outcome()
+│   ├── degradations.py         # the closed 25-code vocabulary + derive_outcome()
 │   ├── log_context.py          # current turn id on every app log line ([turn=...])
 │   └── tracing.py              # traced_invoke/traced_agent_invoke (LangChain) +
 │                               #   ollama_usage / ollama_timings — token counts + ns→ms latencies
@@ -135,6 +142,7 @@ legal-plugin/
 │   ├── create_collections.py   # Create 3 Qdrant collections
 │   ├── generate_demo_contracts.py  # Generate + ingest 5 synthetic contracts
 │   ├── ingest_all.py           # Batch ingest from directory
+│   ├── ingest_book.py          # Admin: ingest one registered reference book (`python -m scripts.ingest_book <book_id> <pdf> [--dry-run]`)
 │   ├── start.sh                # Start backend + frontend
 │   ├── test_api.sh             # Curl-based API verification
 │   ├── test_contract_gen.py    # Contract generation e2e test
@@ -148,12 +156,13 @@ legal-plugin/
 │   └── check_locks.py · check_degradation_vocabulary.py · check_wiki.py · check_docs_links.py · document_changes.py · delete_document_data.py · test-windows-install.ps1
 │
 ├── evals/                      # Zero-LLM regression harness (parse + compaction-gate cases, baseline.json)
+│   └── books/run_retrieval.py  # Retrieval scores for the book test set (needs Ollama + Qdrant; not in check.sh)
 ├── config.py                   # pydantic-settings — single config import
 ├── docker-compose.yml          # Local stack: Qdrant, Redis, app-db, Langfuse v3 (+ its Postgres/ClickHouse/MinIO)
 ├── docker-compose.remote.yml   # VM overlay: backend, Phoenix, Caddy (serves the built Word pane)
 ├── Dockerfile · Caddyfile      # Backend image · reverse proxy + pane
 ├── requirements*.txt           # Hand-edited inputs (ranges); requirements*.lock = exact pins (runtime lock = image)
-└── tests/                      # pytest suite (needs Docker — testcontainers Postgres)
+└── tests/                      # pytest suite (needs Docker — testcontainers Postgres and Qdrant)
 ```
 
 ---
@@ -178,7 +187,7 @@ This means: **the legal team controls exactly what the LLM outputs by editing SK
 | Skill | Tools | What it does |
 |---|---|---|
 | **contract_generation** | search_legal, get_document, extract_clauses, escalate | Searches case history for clause patterns, generates contracts with deviation report. Always → human_review. |
-| **legal_research** | search_legal, get_document, escalate (KB path only) | No document attached: multi-hop retrieval to answer legal questions, cites sources, flags conflicts. Document attached (Word Chat tab): direct LLM call, no tools, grounded on the document + prior review. |
+| **legal_research** | search_legal, get_document, escalate, search_books, lookup_book (KB path only) | No document attached: multi-hop retrieval to answer legal questions, cites sources, flags conflicts. The two book tools search and look up Circular 92; this is the only agent that has them. Document attached (Word Chat tab): direct LLM call, no tools, grounded on the document + prior review. |
 
 **Plain Skills** — set a system prompt, then the shared `rag_retriever` + `llm_caller` nodes handle retrieval and generation:
 
@@ -250,6 +259,9 @@ Attorney sends request
     │              │  Context / "Do not send" = high, Yellow = medium, else low)
     │              │  other skills: no cited source = high risk (an attached
     │              │  document counts as the source) → human_review
+    │              │  also resolves every cited book ref_id once into
+    │              │  book_citations; each invalid one is a high flag
+    │              │  (skipped when a document is attached)
     └──────┬───────┘
            │
       ┌────┴────┐
@@ -274,8 +286,9 @@ Attorney sends request
               └────────┬────────┘
                        ▼
                 ┌──────────────┐
-                │MEMORY_WRITER │  Writes to Postgres audit_log table
-                └──────┬───────┘  Every invocation; if app-db is unreachable the entry is logged in full and the turn flagged memory_degraded, never fatal
+                │MEMORY_WRITER │  Writes to Postgres audit_log table, with the turn's
+                └──────┬───────┘  `sources` (client doc_ids, book ref_ids retrieved and cited)
+                       │          Every invocation; if app-db is unreachable the entry is logged in full and the turn flagged memory_degraded, never fatal
                        │
                        ▼
                       END → Response to attorney (or interrupt_payload if paused)
@@ -291,6 +304,15 @@ Attorney sends request
 | other `task_type`, `risk_level` = high or medium | → human_review |
 | `risk_level` = low | → output_formatter (skip review) |
 | `skill_plan` has multiple skills | → planner first (wired, but nothing populates a multi-skill plan today — `intent_router` and `POST /api/query` always set a single entry, so every turn goes straight to skill_dispatcher) |
+
+### Reference-book tools and the citation check
+
+`search_books` and `lookup_book` ([`rag/tools/`](../rag/tools/search_books.py)) are in the research agent's tool list and nowhere else; the search itself is in [rag.md](rag.md#reference-books).
+- **Retrieved.** A book ref_id counts as retrieved when a book tool's result prints it after a `ref_id:` marker. `legal_research` reads those from the agent's messages into `book_refs_turn` and `book_refs_retrieved` (the conversation's, kept by the checkpointer).
+- **Checked once.** `risk_assessor` resolves every `ref_id` the answer cites against the retrieved ids and the stored book (`rag/book_citations.py`) into `book_citations`. Each invalid one is a high-severity flag, so the turn goes to `human_review`. A page the model writes itself is flagged too. `output_formatter` and `memory_writer` read the same list, so the flags, the rendered text and the audit row cannot disagree.
+- **Skipped on a doc-chat turn.** When a document is attached the book isn't wired in, so neither the book check nor the page check runs and nothing is rendered; a `ref_id`-shaped string in a contract must not flag the turn.
+- **Rendered.** `output_formatter` replaces each cited id in `report["response"]` with the citation built from the stored node; an invalid one becomes `[unverified reference: <id>]`. `llm_response` keeps the raw ids.
+- **Audited.** `memory_writer` writes `audit_log.sources` (JSONB): `{"doc_ids": […], "ref_ids_retrieved": […], "ref_ids_cited": […]}`, this turn's only.
 
 ### human_review verdicts (after resume)
 
@@ -368,6 +390,20 @@ chunk_id, doc_id, doc_title, doc_filename, doc_type, client_id,
 jurisdiction, sensitivity, section, section_number, clause,
 clause_number, clause_type, section_display, text, char_count,
 chunk_index, chunk_strategy, last_updated
+```
+
+### BookChunk (ingest/books/models.py)
+
+What the book collection holds. No `client_id`.
+
+```python
+chunk_key, ref_id, book, edition, path, kind, source_type, jurisdiction,
+label, heading, appendix, page_start, page_end,
+text,                      # context header + body: what is embedded
+body,                      # what BM25 indexes and the tools show
+tokens, order,
+ancestor_ref_ids, ancestor_labels, sub_refs, sub_ref_ids,
+xrefs, history_notes, effective_date_notes
 ```
 
 ### LegalAgentState (graph/state.py)

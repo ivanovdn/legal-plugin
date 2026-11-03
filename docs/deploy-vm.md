@@ -230,7 +230,7 @@ What we make on the VM by hand — deploy logs, backups, the exported root certi
 | `data/backups/` | A copy of production data taken right before something that could destroy it (below). Named `<what>-<UTC date>-<reason>`, e.g. `app-db-2026-10-15-pre-sp2.sql.gz`. | Until the operation it protected is verified, then deleted — most hold contract text. The Caddy CA stays. |
 | `data/caddy-logs/` | Written by Caddy, not by hand: `access.log` (every request to the site) and `tls-errors.log` (handshakes our certificate failed). JSON lines, `0644`. | Rolled by Caddy at 10 MB, 10 kept, 90 days at most; rolled files are gzipped. |
 
-**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build.context: .` in compose, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` (into the backend) and `data/caddy-logs` (into caddy, which writes it) are mounted into containers, so `deploy-logs` and `backups` are invisible to the stack. `data/` itself belongs to root (Docker created it for those mounts), so those two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`. `data/caddy-logs/` is not made by hand: Docker creates it on the first start of caddy, owned by root, `0755`, with `0644` files, so the deploy user reads it without `sudo`:
+**Why `data/`:** it is excluded by both `.gitignore` and `.dockerignore`. The backend image is built from the whole checkout (`build.context: .` in compose, then `COPY . .`), so a file anywhere else in the repo goes into the image on the next build — a Phoenix backup there would put client contract text inside an image layer. Only `data/attorneys` (into the backend) and `data/caddy-logs` (into caddy, which writes it) are mounted into containers, so `deploy-logs` and `backups` are invisible to the stack. (A reference-book ingest needs `data/books` and `data/deploy-logs` mounted too: see *Reference books*, below.) `data/` itself belongs to root (Docker created it for those mounts), so those two folders are made once, owned by the deploy user and closed to everyone else — files inside need no `chmod`. `data/caddy-logs/` is not made by hand: Docker creates it on the first start of caddy, owned by root, `0755`, with `0644` files, so the deploy user reads it without `sudo`:
 
 ```bash
 sudo install -d -o "$USER" -g "$USER" -m 700 data/backups data/deploy-logs
@@ -583,6 +583,39 @@ Pick the hostname and use the **same string everywhere** — this doc uses
 > [`docs/deploy-it-request.md`](deploy-it-request.md) lands (real DNS + a cert from
 > the internal CA), steps 2–4 of the user guide disappear and this whole hand-off pack
 > reduces to sending `manifest.prod.xml`.
+
+---
+
+## Reference books (not yet rolled out)
+
+Circular 92 is built on `feat/reference-books` ([rag.md](rag.md#reference-books)) and has **never been run on the VM**. Nothing below is a record of what was done; it is what the rollout needs, in order. Each step that touches the VM needs the owner's OK when it is due, and CLAUDE.md rule 6 says to ask whether the owner runs it or I do. The book is reachable on the VM through the API only, because Chainlit isn't deployed there and the Word Chat tab can't reach it.
+
+**1. Check server-side BM25 on Spark's Qdrant 1.17.1.** The book's keyword vector is computed by Qdrant itself, verified on the local 1.17.0 only. Use a throwaway collection, created and then deleted, and leave compliance-bot's collections alone. It is a write on a shared host. If it fails, the fallbacks are on the [roadmap](roadmap.md) row *Index the legal reference books*.
+
+**2. What the backend needs.** The image excludes `data/` and `tests/` (`.dockerignore`), and the overlay mounts only `./data/attorneys` into the backend. So the ingest command, run inside the backend container, finds neither the PDF nor a place for its dry-run files, until:
+- the PDF is at `data/books/circular-92-2025-12.pdf` on the host. The checkout already holds the same bytes at `tests/fixtures/books/circular-92-2025-12.pdf`, so there is no download (constraint 7); the command checks the SHA-256 anyway. Make the folder like the others (*Working files*): `sudo install -d -o "$USER" -g "$USER" -m 700 data/books`;
+- `./data/books` is mounted into the backend at `/app/data/books` (read-only is enough);
+- `./data/deploy-logs` is mounted at `/app/data/deploy-logs`, or the dry run's four files land in the container and go when it is recreated.
+
+Those two volume lines under `backend` in `docker-compose.remote.yml` are part of the deploy, not made ahead of it. Then deploy with Step 4's command.
+
+**3. Ingest** (the owner's OK again: it creates `legal_books` on Spark's Qdrant, beside compliance-bot's collections, and has Spark's Ollama embed about 1,245 chunks):
+
+```bash
+DC="docker compose -f docker-compose.yml -f docker-compose.remote.yml"
+cp tests/fixtures/books/circular-92-2025-12.pdf data/books/
+$DC exec -T backend python -m scripts.ingest_book circ92 data/books/circular-92-2025-12.pdf --dry-run
+# read the bar (all seven PASS) and check data/deploy-logs/circ92-2025-12-<stamp>-sample20.tsv against the printed pages
+$DC exec -T backend python -m scripts.ingest_book circ92 data/books/circular-92-2025-12.pdf
+```
+
+The backend container's `QDRANT_URL` is Spark's Qdrant (`QDRANT_REMOTE_URL`) and its `OLLAMA_BASE_URL` is Spark's Ollama, so nothing is passed. `QDRANT_VECTOR_DIM` must be `768`. The whole-book dry run on a Mac gave 1,245 chunks; Spark's Ollama may cut chunk boundaries a little differently, because the token counts come from the model server. The nodes, and so the `ref_id`s, are the same.
+
+**After the ingest:**
+- the command exits `0` and logs `ingested circ92 2025-12: <n> chunks (…); largest chunk … tokens`, and its own count check passed;
+- put five questions to `POST /api/query` with `task_type: "research"` and no `uploaded_text`: a section lookup ("What does §107 say?"), a definition ("What is a joint work?"), an effective-date note ("When did paragraph (5) of 'international agreement' take effect?"), a TRIPs question (the answer labels the treaty), and a Ukrainian-law question (not found);
+- on each turn read the rendered citations against the printed book, the risk flags, and the audit row: `$DC exec -T app-db psql -U legal -d legal -c "SELECT turn_id, sources FROM audit_log ORDER BY id DESC LIMIT 5;"`;
+- read the first book traces in Phoenix for a thinking loop at temperature 0, and the backend log for an Ollama 500: the research agent now sends tool calls at `num_ctx` 131072 with thinking on, one condition away from the crash in ollama#17434 (CLAUDE.md, *Spark's Ollama is shared*).
 
 ---
 

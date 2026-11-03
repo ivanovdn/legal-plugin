@@ -10,6 +10,8 @@ Two signals, by task:
     with no retrievable source is flagged for attorney review. Book citations are
     resolved here, once, into `book_citations` (spec D8, ruling 13): each invalid
     ref_id is flagged, and output_formatter and memory_writer read the same list.
+    Not on a turn with an attached document (Word doc-chat): the book isn't wired
+    there, so neither the book check nor the stated-page check runs (ruling R15).
 
 Detection mirrors the Word add-in parser (clients/word/src/parser.ts) so the
 server-side verdict and the client-rendered blockers always reconcile.

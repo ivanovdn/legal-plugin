@@ -18,6 +18,8 @@
 > - **Tracing:** moved to OpenTelemetry (Langfuse locally, Phoenix on the VM).
 > - **Records:** six tables arrived. Four of them keep contract text.
 > - **Code layout:** `skills/legal_research.py` is now the package `skills/legal_research/`.
+>
+> **Since the audit date (branch `feat/reference-books`, 2026-11-03, not merged or on the VM):** the legal reference books. A fourth Qdrant collection (`legal_books`), two research-agent tools, `book_refs_retrieved` in the checkpoint, the research prompt's book rules, and `audit_log.sources`. Their rows are marked below; the design is in [rag.md](rag.md#reference-books).
 
 ---
 
@@ -37,14 +39,15 @@ The stores fall into three kinds. Some feed a prompt. Some are records that no m
 | **`conversation_store`** | Postgres | every doc-chat message, raw | `(document_id, attorney_id)` | permanent | chat: the messages after the last condensed one. Also compaction's input |
 | **`conversation_summary`** | Postgres | condensed segments of extractive quotes, each over a fixed row-id range | `(document_id, attorney_id)` | permanent, append-only | chat: the newest segments as system messages, below the grounding |
 | **Redis `chat_history`** | Redis, inside the checkpoint | last 10 messages; assistant replies cut to 300 chars | `thread_id = session_id` | 24 h, refreshed each turn | chat: **fallback only**. The no-document research path: its only history. Never a review |
-| **Checkpointer** | Redis | the whole `LegalAgentState`, document text included | `session_id` | 24 h; some keys never expire (§8) | indirectly: restores `chat_history`, and the Chainlit resume |
+| **Checkpointer** | Redis | the whole `LegalAgentState`, document text included, and `book_refs_retrieved` (the book ids the conversation retrieved, last 500) | `session_id` | 24 h; some keys never expire (§8) | indirectly: restores `chat_history`, and the Chainlit resume; `book_refs_retrieved` is what lets a later turn cite an earlier turn's passage |
 | **Qdrant `legal_docs` / `case_history`** | Qdrant | RAG corpus / past clauses | `client_id` filter | long-lived | no-document research / contract generation. **Empty on the VM** |
+| **Qdrant `legal_books`** | Qdrant | Circular 92 (Title 17 U.S.C. and related laws), in chunks | none: it holds no client data | long-lived | no-document research only, through `search_books` / `lookup_book`; never a doc-chat or review prompt. **Not ingested on the VM yet** |
 
 **Records: never fed back to a model**
 
 | Store | Backing | What it holds | Key | Contract text? | Lifetime |
 |---|---|---|---|---|---|
-| `audit_log` | Postgres | one row per completed graph run | `session_id`, `user_id`, `turn_id` | the question's first 200 chars | permanent |
+| `audit_log` | Postgres | one row per completed graph run, with `sources`: the turn's client `doc_ids` and the book `ref_ids` it retrieved and cited | `session_id`, `user_id`, `turn_id` | the question's first 200 chars | permanent |
 | `turn_log` | Postgres | one row per `/api/query`, resume and `/api/compact`. Holds the outcome, degradations, model timings and tokens, effective settings and the context breakdown | `turn_id` | request up to 2,000 chars; the document only as hash and length | permanent |
 | `feedback` | Postgres | an attorney's flag and comment, plus a replay snapshot | `turn_id` | yes: the snapshot holds the document, answer and request | permanent |
 | `interaction_event` | Postgres | pane actions (Apply / Discard / failed), per-turn counters, pane lifecycle | `turn_id`, `document_id`, `attorney_id` | yes: `applied` holds the full text an Apply put in | permanent; `applied` is cleared on deletion |
@@ -83,7 +86,7 @@ The stores fall into three kinds. Some feed a prompt. Some are records that no m
 3. **Everything relational is one Postgres database**, the `app-db` service (`memory/db.py`; §5 lists its tables). Redis holds only the 24-hour session checkpoint.
 
 **Production (the VM) differs from a local run in three ways that change what the model sees:**
-- **No MSA, no RAG.** Spark's Qdrant `legal_docs` collection is empty (0 points, checked 2026-10-28). No MSA is ever attached, and no-document research retrieves nothing.
+- **No MSA, no RAG.** Spark's Qdrant `legal_docs` collection is empty (0 points, checked 2026-10-28). No MSA is ever attached, and no-document research retrieves nothing. The reference book isn't ingested there yet either.
 - **Phoenix, not Langfuse.** Traces go to Phoenix at `http://172.20.1.10:6007`.
 - **Redis keys that never expire** (§8).
 
@@ -172,10 +175,10 @@ intake → intent_router → skill_dispatcher → legal_research
 | `intent_router` | keeps a valid `research`; no model call |
 | `legal_research` | **every memory read happens here**, along with the model call: review store, summaries, conversation store, `USER.md`, playbook, MSA (Qdrant). Writes state only |
 | `rag_retriever`, `llm_caller` | skip, because `llm_response` is already set |
-| `risk_assessor` | always rates doc-chat `low`, so it never reaches `human_review` |
-| `output_formatter` | builds `report` from state |
+| `risk_assessor` | always rates doc-chat `low`, so it never reaches `human_review`. Its book-citation and stated-page checks are skipped when a document is attached |
+| `output_formatter` | builds `report` from state (and, on the research path, renders book citations) |
 | `history_appender` | appends `[user, assistant ≤300 chars]` to Redis `chat_history`. **It runs for every task type**, so review turns land there too. That is how the Redis fallback can replay a review into chat ([roadmap](roadmap.md): *`chat_history` bleed — residual scope*) |
-| `memory_writer` | writes `audit_log` (degrades on failure). On research it appends the raw turn to `conversation_store` (best-effort; needs `document_id` and `attorney_id`). On contract_review it calls `save_review` (loud) |
+| `memory_writer` | writes `audit_log`, with `sources` (degrades on failure). On research it appends the raw turn to `conversation_store` (best-effort; needs `document_id` and `attorney_id`). On contract_review it calls `save_review` (loud) |
 
 After the graph:
 1. `refresh_ttl(session_id)` runs, on the success path only.
@@ -222,10 +225,13 @@ After the graph:
 - **Preference retry** fires when the attorney asked for something to be remembered (or the model said it would remember) and no preference block came back.
   - It is one plain call with the request and the first answer.
   - **Not wrapped:** if it fails, the error reaches `legal_research`'s catch-all, which replaces a good answer with `Error: Legal research failed` (§10).
-- **No document attached** (`_run_kb_research`): the ReAct agent runs with `search_legal`, `get_document` and `escalate`.
+- **No document attached** (`_run_kb_research`): the ReAct agent runs with `search_legal`, `get_document`, `escalate`, `search_books` and `lookup_book`. Its `ChatOllama` sets `num_ctx = ollama_num_ctx` (the server's resident window, so the model isn't reloaded for it); thinking is as it was.
   - Its only history is Redis `chat_history`.
   - It gets no preferences, playbook, review or stored conversation.
   - An uncited answer can trigger `human_review`.
+  - **The book rules in `RESEARCH_SYSTEM_PROMPT`:** step 3 sends a copyright question to `search_books` (or `lookup_book` when the citation is known); cite a book passage as `ref_id: <id>`, exactly as the tool printed it; never write a page or an edition, because those are added for the attorney; a history note is amendment history, not statutory text, and a treaty is not U.S. law. The `client_id` rule now applies to client documents only (`search_legal`, `get_document`). It has no worked example, on purpose.
+  - **`book_refs_retrieved`** is the conversation's list of book ids the tools returned, kept in the checkpoint (a union reducer, the last 500). `book_refs_turn` is this turn's, reset each turn. Without Redis (the stateless fallback) only this turn's retrievals count, so an earlier turn's passage cited now is flagged: rare, and it errs toward review.
+  - **Not budgeted.** Nothing caps the agent's accumulated tool results: one `search_books` call is up to `BOOK_SEARCH_TOP_K` × 800 tokens, one `lookup_book` up to `BOOK_LOOKUP_MAX_TOKENS`. A run of several fits the window; nothing checks it, and Ollama cuts overflow silently.
 - **Cached prefix.** A code comment calls the system messages a "stable … cached prefix". Ollama's cross-turn prefix reuse doesn't engage here, and the prefix isn't stable anyway. Rows 3–4 come and go with the question, and row 5 is reconciled again after every edit.
 
 ---
@@ -244,7 +250,7 @@ All of these tables live in one database: the `app-db` compose service.
 | `review_store` | one review; every `save_review` call appends | `document_id` | `memory_writer` → `review_store.save_review` | **loud**: `review_persist_error`, a red line on the Findings tab | chat (latest only) |
 | `conversation_store` | one raw message; a turn is a `user` + `assistant` pair | `(document_id, attorney_id)` | `memory_writer` → `conversation_store.append_turn` | quiet: logged | chat; compaction's input (`load_rows_after`) |
 | `conversation_summary` | one condensed segment over `from_id..to_id` | `(document_id, attorney_id)` | `POST /api/compact` → `compaction.py::compact_conversation` → `append_segment` | loud: `compaction_failed`, HTTP 500 | chat |
-| `audit_log` | one completed graph run | `session_id`, `user_id`, `turn_id` | `memory_writer` → `audit.write_audit_log` | degrades: the full entry is logged, `memory_degraded` is set | no |
+| `audit_log` | one completed graph run; `sources` JSONB: `{doc_ids, ref_ids_retrieved, ref_ids_cited}`, this turn's only (`{}` before it existed) | `session_id`, `user_id`, `turn_id` | `memory_writer` → `audit.write_audit_log` | degrades: the full entry is logged, `memory_degraded` is set | no |
 | `turn_log` | one `/api/query`, resume or `/api/compact` | `turn_id` (unique) | `api/turn_record.py::finish_turn`, after the response | quiet: the row is logged | no |
 | `feedback` | one *Send feedback* | `turn_id` | `POST /api/feedback` → `feedback_store.save_feedback` | loud (500) | no |
 | `interaction_event` | one pane event | `turn_id`, `document_id`, `attorney_id` | `POST /api/events` → `feedback_store.record_events` | quiet (always 200) | no |
@@ -256,7 +262,7 @@ All of these tables live in one database: the `app-db` compose service.
 - **Retention: no table is ever pruned.**
   - `scripts.delete_document_data --document <id> | --attorney <id>` (`memory/document_store.py::delete_document_data`) deletes `document_version` and `document_snapshot` rows and clears `interaction_event.applied`.
   - It reports, but does not touch, the rest: reviews, conversations, summaries, feedback and turn rows, plus the traces and nightly dumps that also hold the text.
-- **Tests** run against an ephemeral testcontainers Postgres (`tests/conftest.py`). Every table in `STORE_TABLES` is truncated between tests, so a write the test forgot to patch can't reach the dev database. The suite needs Docker, and a new table must be added to `STORE_TABLES` (`tests/test_db.py` checks).
+- **Tests** run against an ephemeral testcontainers Postgres (`tests/conftest.py`), plus an ephemeral Qdrant for the book-store, book-search and book-ingest tests. Every table in `STORE_TABLES` is truncated between tests, so a write the test forgot to patch can't reach the dev database. The suite needs Docker, and a new table must be added to `STORE_TABLES` (`tests/test_db.py` checks).
 
 ---
 
@@ -333,6 +339,10 @@ $PSQL "SELECT id, timestamp, attorney_id, role, substr(content,1,80) AS preview
 # Recent turns
 $PSQL "SELECT timestamp, kind, task_type, outcome, degradations, doc_kept_pct, trace_id
        FROM turn_log ORDER BY id DESC LIMIT 20;"
+
+# Turns that cited a reference-book passage
+$PSQL "SELECT timestamp, turn_id, sources->'ref_ids_cited' AS cited
+       FROM audit_log WHERE sources->'ref_ids_cited' <> '[]' ORDER BY id DESC LIMIT 20;"
 ```
 
 **The feedback-loop reader**, a readable view of the record tables:
@@ -435,6 +445,13 @@ All of these live in `config.py` and can be overridden from the environment.
 | `compaction_keep_recent_messages` | `2` | the newest messages are never condensed |
 | `compaction_min_quotes` / `_max_quotes` | `4` / `24` | bounds on segment size |
 | `compaction_max_injected_segments` | `3` | summaries per prompt |
+
+**Reference books** (no-document research only; [rag.md](rag.md#book-settings) has them all)
+
+| Setting | Default | Effect |
+|---|---|---|
+| `book_search_top_k` | `8` | passages one `search_books` call puts in the agent's context (up to 800 tokens each) |
+| `book_lookup_max_tokens` | `6000` | the most text one `lookup_book` call returns |
 
 **Preferences, records and infrastructure**
 
