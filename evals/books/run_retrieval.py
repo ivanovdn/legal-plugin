@@ -22,6 +22,15 @@ lines are skipped. Types:
 
 A failing search or lookup (Ollama or Qdrant down) stops the run. Scoring it as a miss would put an outage
 into the recall number.
+
+Run with `BOOK_SEARCH_TOP_K=10` or more. `search_book_chunks` returns at most `BOOK_SEARCH_TOP_K` chunks
+(8 by default), so under the shipped setting Recall@10 would equal Recall@8 and the nDCG@10 window would be 8
+ranks, under a label that says 10: a number that reads as a finding about the retrieval. `main` refuses (exit 2,
+before it reads the file or searches) when the setting is below ten, and names the command to run:
+
+    BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval <questions file>
+
+It never changes the setting itself, and the report's first line prints the value the run used.
 """
 import argparse
 import math
@@ -30,6 +39,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from config import get_settings
 from ingest.books.ref_ids import is_under, parse_reference
 from rag.book_search import BookHit, LookupResult, lookup_book_chunks, search_book_chunks
 
@@ -243,9 +253,10 @@ _COLUMNS = (
 )
 
 
-def format_report(result: dict) -> str:
-    """The per-type table (n, then the metrics each type has), then every question that came out wrong."""
-    lines = [f"{result['n']} questions", ""]
+def format_report(result: dict, top_k: int) -> str:
+    """The questions and the `BOOK_SEARCH_TOP_K` they were searched with, the per-type table (n, then the
+    metrics each type has), then every question that came out wrong."""
+    lines = [f"{result['n']} questions, BOOK_SEARCH_TOP_K={top_k}", ""]
     lines.append(f"{'type':<9}{'n':>5}" + "".join(f"{heading:>11}" for heading, _, _ in _COLUMNS))
     for kind in QUESTION_TYPES:
         n = result["counts"][kind]
@@ -270,6 +281,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("questions", type=Path, help="question | gold ref_ids | type, one per line")
     opts = parser.parse_args(argv)
 
+    top_k = get_settings().book_search_top_k
+    needed = max(_CUTOFFS)
+    if top_k < needed:
+        print(
+            f"refused: BOOK_SEARCH_TOP_K is {top_k}, so search returns at most {top_k} chunks and "
+            f"Recall@{needed} and nDCG@{needed} would be computed over {top_k} results under a label that says "
+            f"{needed}. Run with BOOK_SEARCH_TOP_K={needed} (or more): "
+            f"BOOK_SEARCH_TOP_K={needed} uv run python -m evals.books.run_retrieval {opts.questions}",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         questions = load_questions(opts.questions)
     except (OSError, ValueError) as exc:
@@ -278,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     if not questions:
         print(f"no questions in {opts.questions}")
         return 0
-    print(format_report(run(questions)))
+    print(format_report(run(questions), top_k))
     return 0
 
 

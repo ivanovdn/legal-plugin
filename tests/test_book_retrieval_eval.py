@@ -8,6 +8,7 @@ would otherwise be read as a finding about the retrieval.
 import inspect
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -389,6 +390,54 @@ def test_run_defaults_to_the_real_search_and_lookup():
 
 
 # --- main -----------------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def top_k_10(monkeypatch):
+    """The shipped default is 8; the runner needs at least ten results a question to report @10 honestly."""
+    set_top_k(monkeypatch, 10)
+
+
+def set_top_k(monkeypatch, top_k: int) -> None:
+    monkeypatch.setattr(run_retrieval, "get_settings", lambda: SimpleNamespace(book_search_top_k=top_k))
+
+
+def test_main_refuses_when_search_returns_fewer_than_ten_results(tmp_path, capsys, monkeypatch):
+    asked = []
+    monkeypatch.setattr(run_retrieval, "run", lambda qs: asked.append(qs))
+    path = _write(tmp_path, f"hit | {S107} | search\n")
+
+    for top_k in (8, 9):
+        set_top_k(monkeypatch, top_k)
+        assert run_retrieval.main([str(path)]) == 2
+
+        captured = capsys.readouterr()
+        assert f"BOOK_SEARCH_TOP_K is {top_k}" in captured.err
+        assert "BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval" in captured.err
+        assert captured.out == ""
+    assert asked == []  # nothing was searched
+
+
+def test_the_top_k_guard_comes_before_the_file_is_read(tmp_path, capsys, monkeypatch):
+    set_top_k(monkeypatch, 8)
+
+    assert run_retrieval.main([str(tmp_path / "nope.txt")]) == 2
+
+    err = capsys.readouterr().err
+    assert "BOOK_SEARCH_TOP_K" in err and "No such file" not in err  # the file was never opened
+
+
+@pytest.mark.parametrize("top_k", [10, 30])
+def test_main_runs_at_ten_results_or_more_and_says_which(tmp_path, capsys, monkeypatch, top_k):
+    set_top_k(monkeypatch, top_k)
+    stubs = _Stubs(search={"hit": [_chunk("usc17-s107")]}, lookup={})
+    monkeypatch.setattr(run_retrieval, "run", lambda qs: run(qs, search=stubs.search, lookup=stubs.lookup))
+
+    assert run_retrieval.main([str(_write(tmp_path, f"hit | {S107} | search\n"))]) == 0
+
+    out = capsys.readouterr().out
+    assert f"BOOK_SEARCH_TOP_K={top_k}" in out.splitlines()[0]
+    assert stubs.searched == ["hit"]
 
 
 def test_main_on_an_empty_file_says_so_and_exits_zero(tmp_path, capsys):
