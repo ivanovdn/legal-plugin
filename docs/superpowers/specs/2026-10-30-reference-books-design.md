@@ -3,7 +3,7 @@
 **Related:** [roadmap.md](../../roadmap.md) — *Index the legal reference books for retrieval-augmented checking* · decisions (2026-10-30): [RAG, not fine-tuning](../../decisions/2026-10-30-reference-books-rag-not-fine-tuning.md) · [parser](../../decisions/2026-10-30-reference-book-parser.md) · [chunk model](../../decisions/2026-10-30-reference-book-chunk-model.md) · [citations](../../decisions/2026-10-30-reference-book-citations.md) · [history notes](../../decisions/2026-10-30-reference-book-history-notes.md) · [keyword search in Qdrant](../../decisions/2026-10-30-keyword-search-in-qdrant.md)
 
 - **Date:** 2026-10-30
-- **Status:** Built on `feat/reference-books` (2026-11-03) and integrated locally with the owner; the VM rollout is pending. Approved by the owner 2026-11-02.
+- **Status:** Built on `feat/reference-books` (2026-11-03) and integrated locally after the owner checked the sample; the VM rollout is pending. Approved by the owner 2026-11-02.
 - **Branch:** `feat/reference-books`, cut from `main` once this spec was approved.
 - **Scope:** the first slice of the RAG work, which the owner made the next scope on 2026-10-30. One book is ingested, searchable and citable from the research path. Who else may reach it (contract review, the Word Chat tab) is deferred.
 

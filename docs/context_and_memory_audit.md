@@ -19,7 +19,7 @@
 > - **Records:** six tables arrived. Four of them keep contract text.
 > - **Code layout:** `skills/legal_research.py` is now the package `skills/legal_research/`.
 >
-> **Since the audit date (branch `feat/reference-books`, 2026-11-03, not merged or on the VM):** the legal reference books. A fourth Qdrant collection (`legal_books`), two research-agent tools, `book_refs_retrieved` in the checkpoint, the research prompt's book rules, and `audit_log.sources`. Their rows are marked below; the design is in [rag.md](rag.md#reference-books).
+> **Since the audit date (branch `feat/reference-books`, 2026-11-03, integrated locally, not yet on the VM):** the legal reference books. A fourth Qdrant collection (`legal_books`), two research-agent tools, `book_refs_retrieved` in the checkpoint, the research prompt's book rules, and `audit_log.sources`. Their rows are marked below; the design is in [rag.md](rag.md#reference-books).
 
 ---
 

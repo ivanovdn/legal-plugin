@@ -71,7 +71,7 @@ Read from the code on 2026-10-30, today's BM25 can't simply be switched on:
 
 The work is tracked as the [roadmap](roadmap.md) row *Move keyword search into Qdrant's hybrid search*. The legal reference books were the first corpus that needed it, and their collection is the first built that way ([Reference books](#reference-books)); `legal_docs` and `case_history` are still dense-only, and what stays on that row is moving them.
 
-**The legal reference books are built** (owner's scope, 2026-10-30; on `feat/reference-books` since 2026-11-03, not yet merged or on the VM), starting with Circular 92 (Title 17 U.S.C.): their own collection with no `client_id`, their own parser and chunk model, and citations by `ref_id` that code checks and renders. The decisions are in [decisions/](decisions/README.md) (2026-10-30, *reference book* and *reference books*), and the design is [Reference books in RAG](superpowers/specs/2026-10-30-reference-books-design.md).
+**The legal reference books are built** (owner's scope, 2026-10-30; on `feat/reference-books` since 2026-11-03, integrated locally, not yet on the VM), starting with Circular 92 (Title 17 U.S.C.): their own collection with no `client_id`, their own parser and chunk model, and citations by `ref_id` that code checks and renders. The decisions are in [decisions/](decisions/README.md) (2026-10-30, *reference book* and *reference books*), and the design is [Reference books in RAG](superpowers/specs/2026-10-30-reference-books-design.md).
 
 ## Qdrant collections
 
@@ -103,7 +103,7 @@ Document (PDF/DOCX) → Parser → Chunks (LegalChunk) → Embed (Ollama, passag
 
 ## Reference books
 
-> Built on `feat/reference-books` (2026-11-03). Integrated locally with the owner (2026-11-03); not merged, and not on the VM: the VM rollout comes first (see the [roadmap](roadmap.md) row *Index the legal reference books*). Design: [Reference books in RAG](superpowers/specs/2026-10-30-reference-books-design.md). Decisions: [RAG, not fine-tuning](decisions/2026-10-30-reference-books-rag-not-fine-tuning.md) · [parser](decisions/2026-10-30-reference-book-parser.md) · [chunk model](decisions/2026-10-30-reference-book-chunk-model.md) · [citations](decisions/2026-10-30-reference-book-citations.md) · [history notes](decisions/2026-10-30-reference-book-history-notes.md) · [keyword search in Qdrant](decisions/2026-10-30-keyword-search-in-qdrant.md).
+> Built on `feat/reference-books` (2026-11-03) and integrated locally after the owner checked the sample; the VM rollout is pending (see the [roadmap](roadmap.md) row *Index the legal reference books*). Design: [Reference books in RAG](superpowers/specs/2026-10-30-reference-books-design.md). Decisions: [RAG, not fine-tuning](decisions/2026-10-30-reference-books-rag-not-fine-tuning.md) · [parser](decisions/2026-10-30-reference-book-parser.md) · [chunk model](decisions/2026-10-30-reference-book-chunk-model.md) · [citations](decisions/2026-10-30-reference-book-citations.md) · [history notes](decisions/2026-10-30-reference-book-history-notes.md) · [keyword search in Qdrant](decisions/2026-10-30-keyword-search-in-qdrant.md).
 
 The first book is the U.S. Copyright Office's **Circular 92 (Dec. 2025)**: Title 17 U.S.C. and related laws, a public-domain U.S. government work. The research agent can search it and look passages up. Code checks what the answer cites and renders the citation.
 
