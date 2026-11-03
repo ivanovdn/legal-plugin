@@ -88,3 +88,4 @@ class LegalAgentState(TypedDict):
     turn_id: str                           # NEW — the request's turn id (query.py mints it; a resume re-stamps it); audit_log carries it so its row joins turn_log
     book_refs_retrieved: Annotated[list[str], _book_refs_reducer]  # NEW — book ref_ids the conversation retrieved (book tools' results), recency order, capped
     book_refs_turn: list[str]              # NEW — book ref_ids THIS turn retrieved, sorted (per turn; legal_research resets it)
+    book_citations: list[dict]             # NEW — each book ref_id the answer cites, checked once by risk_assessor: {ref_id, valid, citation, reason} (per turn)

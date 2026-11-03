@@ -280,7 +280,11 @@ async def on_message(message: cl.Message):
         content_parts = [response_text]
         content_parts.append(f"\n\n---\n**Task:** {task_type} | **Risk:** {risk_level}")
         if sources:
-            source_lines = [f"- {s.get('doc_title', '?')} (`{s.get('doc_id', '?')}`)" for s in sources]
+            # A book passage carries its rendered citation; a client document its title and id.
+            source_lines = [
+                f"- {s['citation']}" if s.get("citation") else f"- {s.get('doc_title', '?')} (`{s.get('doc_id', '?')}`)"
+                for s in sources
+            ]
             content_parts.append("\n**Sources:**\n" + "\n".join(source_lines))
 
         thinking_msg.content = "\n".join(content_parts)

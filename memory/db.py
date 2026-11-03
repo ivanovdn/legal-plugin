@@ -43,6 +43,9 @@ _STATEMENTS = [
     # instead of by session and timestamp. '' on rows written before it existed.
     "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS turn_id TEXT NOT NULL DEFAULT ''",
     "CREATE INDEX IF NOT EXISTS idx_audit_turn ON audit_log (turn_id)",
+    # The turn's sources (spec D9): {"doc_ids", "ref_ids_retrieved", "ref_ids_cited"},
+    # each this turn's only. {} on rows written before it existed.
+    "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '{}'",
     """
     CREATE TABLE IF NOT EXISTS review_store (
         id BIGSERIAL PRIMARY KEY,

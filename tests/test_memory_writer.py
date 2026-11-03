@@ -210,3 +210,39 @@ def test_audit_duration_is_never_negative(monkeypatch):
     monkeypatch.setattr(mod, "save_review", lambda **kw: None)
     mod.memory_writer(_state(turn_started_at=time.time() + 60.0))
     assert captured["duration_ms"] == 0
+
+
+# --- D9: the audit row names this turn's sources --------------------------------------------------
+
+def test_audit_sources(monkeypatch):
+    """Per turn only: the client documents this turn retrieved (each once), the book passages this turn
+    retrieved (book_refs_turn, not the conversation's), and every id the answer cited, valid or not —
+    read from book_citations, the list the risk flags and the rendered text came from."""
+    captured = {}
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(mod, "append_turn", lambda **kw: None)
+    mod.memory_writer(_state(
+        task_type="research",
+        retrieved_chunks=[{"doc_id": "d1"}, {"doc_id": "d2"}, {"doc_id": "d1"}],
+        book_refs_retrieved=["circ92-2025-12:usc17-s106", "circ92-2025-12:usc17-s107"],
+        book_refs_turn=["circ92-2025-12:usc17-s107"],
+        book_citations=[
+            {"ref_id": "circ92-2025-12:usc17-s107-1", "valid": True, "citation": "17 U.S.C. §107(1) — …",
+             "reason": None},
+            {"ref_id": "usc17-s108", "valid": False, "citation": None,
+             "reason": "Cites a reference that was not retrieved: usc17-s108"},
+        ],
+    ))
+    assert captured["sources"] == {
+        "doc_ids": ["d1", "d2"],
+        "ref_ids_retrieved": ["circ92-2025-12:usc17-s107"],
+        "ref_ids_cited": ["circ92-2025-12:usc17-s107-1", "usc17-s108"],
+    }
+
+
+def test_audit_sources_of_a_turn_that_used_none(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(mod, "write_audit_log", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(mod, "save_review", lambda **kw: None)
+    mod.memory_writer(_state())
+    assert captured["sources"] == {"doc_ids": [], "ref_ids_retrieved": [], "ref_ids_cited": []}

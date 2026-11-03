@@ -227,9 +227,10 @@ def test_submit_query_passes_empty_chat_history_in_initial_state(monkeypatch):
 
 
 def test_submit_query_seeds_the_book_refs(monkeypatch):
-    """book_refs_turn is per turn: without the seed a review after a research turn
-    would carry that turn's book ids into its audit row. book_refs_retrieved gets []
-    too, which its reducer turns back into the conversation's ids."""
+    """book_refs_turn and book_citations are per turn: without the seed a review after
+    a research turn would carry that turn's book ids into its audit row (and its
+    citations into its rendering). book_refs_retrieved gets [] too, which its reducer
+    turns back into the conversation's ids."""
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
     get_settings.cache_clear()
@@ -245,6 +246,7 @@ def test_submit_query_seeds_the_book_refs(monkeypatch):
     state_arg = mock_graph.invoke.call_args.args[0]
     assert state_arg["book_refs_turn"] == []
     assert state_arg["book_refs_retrieved"] == []
+    assert state_arg["book_citations"] == []
 
 
 def test_submit_query_threads_interactive_review_flag(monkeypatch):

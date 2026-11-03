@@ -10,6 +10,7 @@ from config import get_settings
 from graph.graph import build_graph, route_review
 from graph.state import LegalAgentState
 from memory.db import get_pool
+from rag.book_search import NodeInfo
 
 
 def test_legal_agent_state_can_be_created():
@@ -852,3 +853,68 @@ def test_graph_keeps_book_refs_across_turns(monkeypatch):
 
     assert [r["book_refs_turn"] for r in results] == [[x], [y], [x]]
     assert [r["book_refs_retrieved"] for r in results] == [[x], [x, y], [y, x]]
+
+
+def _book_citing_agent(book_ref: str, answer: str):
+    """A research run that searched client documents and the book, then answered `answer`."""
+    agent = MagicMock()
+    agent.invoke.return_value = {"messages": [
+        ToolMessage(content="[1] Contract A (doc_id: d1, type: contract, jurisdiction: US)",
+                    name="search_legal", tool_call_id="call-1"),
+        ToolMessage(content=f"[1] ref_id: {book_ref}\n    …", name="search_books", tool_call_id="call-2"),
+        MagicMock(content=answer),
+    ]}
+    return agent
+
+
+def test_graph_checks_renders_and_audits_book_citations(monkeypatch):
+    """D8 + D9 through the real graph and a checkpointer, over two turns. Turn 2 cites its own passage
+    and turn 1's: both are valid (the check reads the conversation's retrievals), both render, the raw
+    answer stays raw, and the audit row names this turn's sources only. book_citations has to be a
+    declared state field for any of it: risk_assessor writes it, and two later nodes read it."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    x, y = "circ92-2025-12:usc17-s107", "circ92-2025-12:usc17-s108"
+    nodes = {
+        x: NodeInfo(ref_id=x, label="17 U.S.C. §107", kind="rule", source_type="usc_title", appendix=None,
+                    page_start=20, page_end=21, containers={x}),
+        y: NodeInfo(ref_id=y, label="17 U.S.C. §108", kind="rule", source_type="usc_title", appendix=None,
+                    page_start=22, page_end=30, containers={y}),
+    }
+    monkeypatch.setattr("rag.book_citations.fetch_nodes", lambda ids: {r: nodes[r] for r in ids if r in nodes})
+
+    turns = [
+        (x, f"Fair use is weighed case by case (doc_id: d1), ref_id: {x}."),
+        (y, f"Libraries may copy (doc_id: d1), ref_id: {y}, within fair use, ref_id: {x}."),
+    ]
+    compiled = build_graph(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "book-citations-thread"}}
+    results = []
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post):
+        for ref, answer in turns:
+            with patch("skills.legal_research.legal_research._build_agent",
+                       return_value=_book_citing_agent(ref, answer)):
+                results.append(compiled.invoke(_make_state(
+                    request="Can a library copy?", task_type="research", skill_plan=["research"],
+                    session_id="book-citations", book_refs_retrieved=[], book_refs_turn=[], book_citations=[],
+                ), config=config))
+
+    second = results[1]
+    assert second["risk_flags"] == []
+    assert second["report"]["response"] == (
+        "Libraries may copy (doc_id: d1), 17 U.S.C. §108 — Circular 92 (Dec. 2025), pp. 22–30, "
+        "within fair use, 17 U.S.C. §107 — Circular 92 (Dec. 2025), pp. 20–21."
+    )
+    assert second["llm_response"] == turns[1][1]
+
+    with get_pool().connection() as conn:
+        rows = conn.execute(
+            "SELECT sources FROM audit_log WHERE session_id = %s ORDER BY id", ("book-citations",)
+        ).fetchall()
+    assert [r[0] for r in rows] == [
+        {"doc_ids": ["d1"], "ref_ids_retrieved": [x], "ref_ids_cited": [x]},
+        {"doc_ids": ["d1"], "ref_ids_retrieved": [y], "ref_ids_cited": [y, x]},
+    ]

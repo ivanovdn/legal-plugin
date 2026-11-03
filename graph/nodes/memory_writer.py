@@ -50,6 +50,16 @@ def memory_writer(state: LegalAgentState) -> dict:
         duration_ms=duration_ms,
         user_name=state.get("user_name", ""),
         turn_id=state.get("turn_id", ""),
+        # This turn's sources only (spec D9). The cited ids come from
+        # book_citations, the list risk_assessor flagged and output_formatter
+        # rendered: every id the answer cited, valid or not.
+        sources={
+            "doc_ids": list(dict.fromkeys(
+                c["doc_id"] for c in state.get("retrieved_chunks") or [] if c.get("doc_id")
+            )),
+            "ref_ids_retrieved": list(state.get("book_refs_turn") or []),
+            "ref_ids_cited": [c["ref_id"] for c in state.get("book_citations") or []],
+        },
     )
 
     # Degrade rather than die when the audit store is unreachable. A turn does

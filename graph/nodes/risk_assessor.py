@@ -7,7 +7,9 @@ Two signals, by task:
     is a blocker. This is the contract-review concern — whether the document is
     safe to sign — and it lives in the LLM output text, not in citation state.
   - everything else → citation grounding (`_check_citations`): a research answer
-    with no retrievable source is flagged for attorney review.
+    with no retrievable source is flagged for attorney review. Book citations are
+    resolved here, once, into `book_citations` (spec D8, ruling 13): each invalid
+    ref_id is flagged, and output_formatter and memory_writer read the same list.
 
 Detection mirrors the Word add-in parser (clients/word/src/parser.ts) so the
 server-side verdict and the client-rendered blockers always reconcile.
@@ -15,15 +17,23 @@ server-side verdict and the client-rendered blockers always reconcile.
 
 import logging
 import re
+from collections.abc import Sequence
 
 from graph.state import LegalAgentState
+from ingest.books.citations import find_stated_pages
 from observability.spans import traced, set_trace_attributes
+from rag.book_citations import check_book_citations
 
 logger = logging.getLogger(__name__)
 
 
 def _check_citations(
-    llm_response: str, chunks: list[dict], has_uploaded_doc: bool = False
+    llm_response: str,
+    chunks: list[dict],
+    has_uploaded_doc: bool = False,
+    *,
+    book_citations: Sequence[dict] = (),
+    book_retrieved: bool = False,
 ) -> list[dict]:
     """Check if the response references retrieved documents.
 
@@ -31,29 +41,34 @@ def _check_citations(
     about the open contract), the attached doc is the citation source, so
     having no RAG chunks is expected — not a risk. Otherwise, a response with
     no retrievable sources is flagged for attorney review.
+
+    The reference books count as a source too (spec D8): `book_retrieved` says
+    the conversation retrieved book passages, and a valid entry of
+    `book_citations` (check_book_citations) is a citation. Each invalid one is
+    flagged, whatever else the answer cites.
     """
     flags = []
-    if not chunks:
-        if has_uploaded_doc:
-            return flags
+    if not chunks and has_uploaded_doc:
+        pass  # the attached document is the source
+    elif not chunks and not book_retrieved:
         flags.append({"reason": "No citation possible — no chunks retrieved", "severity": "high"})
-        return flags
+    elif not (any(c["valid"] for c in book_citations) or _names_a_chunk(llm_response, chunks)):
+        flags.append({"reason": "No citation found — response does not reference any retrieved document", "severity": "high"})
 
-    cited = False
+    flags.extend({"reason": c["reason"], "severity": "high"} for c in book_citations if not c["valid"])
+    return flags
+
+
+def _names_a_chunk(llm_response: str, chunks: list[dict]) -> bool:
+    """The response names a retrieved document, by doc_id or by title."""
     for chunk in chunks:
         doc_id = chunk.get("doc_id", "")
         doc_title = chunk.get("doc_title", "")
         if doc_id and doc_id in llm_response:
-            cited = True
-            break
+            return True
         if doc_title and doc_title.lower() in llm_response.lower():
-            cited = True
-            break
-
-    if not cited:
-        flags.append({"reason": "No citation found — response does not reference any retrieved document", "severity": "high"})
-
-    return flags
+            return True
+    return False
 
 
 # Risk vocabulary in the team's "Key Findings" Rating column. Mirrors
@@ -140,7 +155,18 @@ def risk_assessor(state: LegalAgentState) -> LegalAgentState:
     else:
         chunks = state.get("retrieved_chunks", [])
         has_uploaded_doc = bool(state.get("uploaded_docs"))
-        risk_flags = _check_citations(llm_response, chunks, has_uploaded_doc)
+        book_retrieved = state.get("book_refs_retrieved") or []
+        book_citations = check_book_citations(llm_response, book_retrieved)
+        state["book_citations"] = book_citations
+        risk_flags = _check_citations(
+            llm_response, chunks, has_uploaded_doc,
+            book_citations=book_citations, book_retrieved=bool(book_retrieved),
+        )
+        # Ruling 12: read before rendering, so every page in the text is the
+        # model's own; and only with the book in play, so "p. 3 of the MSA" in
+        # an answer about a client document is never flagged.
+        if (book_citations or state.get("book_refs_turn")) and find_stated_pages(llm_response):
+            risk_flags.append({"reason": "The answer states a page itself", "severity": "high"})
         if any(f["severity"] == "high" for f in risk_flags):
             risk_level = "high"
         elif risk_flags:
