@@ -37,7 +37,8 @@ def check_book_citations(text: str, retrieved: Collection[str]) -> list[dict]:
 
     `retrieved` is the conversation's retrieved book ids (`book_refs_retrieved`). Returns [] without
     calling Qdrant when nothing is cited. When Qdrant fails, no citation can be rendered from the store,
-    so every cited id comes back invalid as "Could not verify" (D13: a risk flag, not a degradation)."""
+    so every cited id comes back invalid as "Could not verify" (D13: a risk flag, not a degradation); a
+    stored node that can't be rendered costs only its own id, the same way."""
     cited = find_cited_ref_ids(text)
     if not cited:
         return []
@@ -68,13 +69,21 @@ def check_book_citations(text: str, retrieved: Collection[str]) -> list[dict]:
         except UnknownBook:  # an edition the registry doesn't list: nothing to cite it as
             results.append(_invalid(ref_id, NOT_RETRIEVED))
             continue
-        results.append(_valid(ref_id, render_citation(
-            label=node.label,
-            kind=node.kind,
-            source_type=node.source_type,
-            appendix=node.appendix,
-            page_start=node.page_start,
-            page_end=node.page_end,
-            book=book,
-        )))
+        try:
+            citation = render_citation(
+                label=node.label,
+                kind=node.kind,
+                source_type=node.source_type,
+                appendix=node.appendix,
+                page_start=node.page_start,
+                page_end=node.page_end,
+                book=book,
+            )
+        except ValueError as exc:
+            # A bad stored node (an unknown kind or source type, pages running backwards) costs this
+            # citation, never the turn (ruling R15): it renders unverified, and the other ids resolve.
+            logger.error("[book_citations] cannot render %s, flagged unverified: %s", ref_id, exc)
+            results.append(_invalid(ref_id, UNVERIFIABLE))
+            continue
+        results.append(_valid(ref_id, citation))
     return results

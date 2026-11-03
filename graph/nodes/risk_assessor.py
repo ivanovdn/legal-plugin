@@ -156,16 +156,28 @@ def risk_assessor(state: LegalAgentState) -> LegalAgentState:
         chunks = state.get("retrieved_chunks", [])
         has_uploaded_doc = bool(state.get("uploaded_docs"))
         book_retrieved = state.get("book_refs_retrieved") or []
-        book_citations = check_book_citations(llm_response, book_retrieved)
+        book_citations: list[dict] = []
+        stated_page = False
+        # Ruling R15: a turn on an attached document (Word doc-chat) answers
+        # from that document, never from the book tools, and its pane cannot
+        # resume an interrupt; a ref_id-shaped token there (hallucinated, or
+        # quoted from a contract that says "ref_id: …") must not flag the turn.
+        # So neither the book check nor the page check runs, and nothing is
+        # rendered.
+        if not has_uploaded_doc:
+            book_citations = check_book_citations(llm_response, book_retrieved)
+            # Ruling 12: read before rendering, so every page in the text is
+            # the model's own; and only with the book in play, so "p. 3 of the
+            # MSA" in an answer about a client document is never flagged.
+            stated_page = bool(
+                (book_citations or state.get("book_refs_turn")) and find_stated_pages(llm_response)
+            )
         state["book_citations"] = book_citations
         risk_flags = _check_citations(
             llm_response, chunks, has_uploaded_doc,
             book_citations=book_citations, book_retrieved=bool(book_retrieved),
         )
-        # Ruling 12: read before rendering, so every page in the text is the
-        # model's own; and only with the book in play, so "p. 3 of the MSA" in
-        # an answer about a client document is never flagged.
-        if (book_citations or state.get("book_refs_turn")) and find_stated_pages(llm_response):
+        if stated_page:
             risk_flags.append({"reason": "The answer states a page itself", "severity": "high"})
         if any(f["severity"] == "high" for f in risk_flags):
             risk_level = "high"

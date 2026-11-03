@@ -207,6 +207,43 @@ def test_qdrant_failure_flags_every_cited_id(qdrant_down, caplog):
     assert any(r.levelno == logging.ERROR and "Connection refused" in r.getMessage() for r in caplog.records)
 
 
+def test_a_stored_node_that_cannot_be_rendered_costs_only_its_own_citation(monkeypatch, caplog):
+    """Ruling R15: render_citation refuses a bad stored node (here, pages running backwards). That id is
+    flagged and renders unverified, logged at ERROR; the other id still resolves, and the turn answers."""
+    backwards = _node(S108, "17 U.S.C. §108", pages=(30, 22))
+    monkeypatch.setattr("rag.book_citations.fetch_nodes", lambda ids: {S107: STORE[S107], S108: backwards})
+    answer = f"Fair use (ref_id: {S107}); libraries (ref_id: {S108})."
+    with caplog.at_level(logging.ERROR, logger="rag.book_citations"):
+        out = risk_assessor(_research(answer, retrieved=[S107, S108], turn=[S107, S108]))
+
+    assert out["book_citations"] == [
+        {"ref_id": S107, "valid": True, "citation": CITE_107, "reason": None},
+        {"ref_id": S108, "valid": False, "citation": None, "reason": UNVERIFIABLE.format(S108)},
+    ]
+    assert out["risk_flags"] == [_flag(UNVERIFIABLE.format(S108))]
+    assert output_formatter(out)["report"]["response"] == (
+        f"Fair use ({CITE_107}); libraries ([unverified reference: {S108}])."
+    )
+    assert any(r.levelno == logging.ERROR and S108 in r.getMessage() for r in caplog.records)
+
+
+# --- a turn on an attached document (ruling R15) -----------------------------------------------------
+
+
+def test_a_doc_chat_turn_is_never_book_checked(store):
+    """Word doc-chat answers from the attached document and its pane can't resume an interrupt. A
+    ref_id-shaped token (hallucinated, or quoted from a contract that itself says "ref_id: …") and a page
+    raise nothing, cost no Qdrant call, and the text is left as written: even with book refs on the turn."""
+    answer = f"Clause 9 says ref_id: {S107}, see p. 12."
+    out = risk_assessor(_research(answer, retrieved=[S107], turn=[S107], uploaded=True))
+
+    assert out["risk_flags"] == []
+    assert out["risk_level"] == "low"
+    assert out["book_citations"] == []
+    assert store == []
+    assert output_formatter(out)["report"]["response"] == answer
+
+
 # --- the page check (ruling 12) -------------------------------------------------------------------
 
 
@@ -281,12 +318,6 @@ def test_a_valid_book_citation_counts_beside_client_chunks():
     assert _check_citations("Anything.", [DOC_CHUNK], book_citations=[valid], book_retrieved=True) == []
 
 
-def test_an_invalid_citation_is_flagged_on_a_doc_chat_turn_too():
-    """The attached document excuses the absence of chunks, never a bad book citation."""
-    invalid = {"ref_id": S108, "valid": False, "citation": None, "reason": NOT_RETRIEVED.format(S108)}
-    assert _check_citations("Anything.", [], True, book_citations=[invalid], book_retrieved=True) == [
-        _flag(NOT_RETRIEVED.format(S108))
-    ]
 
 
 # --- rendering --------------------------------------------------------------------------------------
