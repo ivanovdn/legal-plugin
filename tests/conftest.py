@@ -26,11 +26,10 @@ from testcontainers.postgres import PostgresContainer
 import memory.db as db
 from api.client_info import ClientInfo
 from config import get_settings
-from ingest.books.circular92 import parse_lines
+from ingest.books.circular92 import parse_circular92, parse_lines
 from ingest.books.circular92.layout import extract_lines
 from ingest.books.circular92.text import HyphenDecider
 from ingest.books.circular92.title17 import title17_nodes
-from ingest.books.golden import GOLDEN_PDF_PAGES
 from ingest.books.overrides import OverrideLedger, load_overrides
 from ingest.books.registry import get_book
 from rag.book_store import get_book_client, reset_book_client
@@ -186,10 +185,21 @@ def circ92_pdf() -> Path:
     return Path(__file__).resolve().parent / "fixtures" / "books" / "circular-92-2025-12.pdf"
 
 
-# Chapters 1 and 5 (their sections and their notes: the golden file's pages), extracted once a session.
+# Chapters 1 and 5 (their sections and their notes: PDF 23-188 and 221-242), extracted once a session.
+CH1_CH5_PDF_PAGES = (*range(23, 189), *range(221, 243))
+
+
+@pytest.fixture(scope="session")
+def circ92_whole_parse(circ92_pdf):
+    """The whole body (PDF 23-481) through the whole back end, once a session (about 15 s): the golden file's
+    input (ruling R17: a parse of two chapters alone has less hyphen evidence than the book and welds compounds
+    the ingest does not) and the whole-body override checks'. Shared: tests read it and change nothing."""
+    return parse_circular92(circ92_pdf, get_book("circ92"))
+
+
 @pytest.fixture(scope="session")
 def circ92_ch1_ch5_lines(circ92_pdf):
-    return extract_lines(circ92_pdf, GOLDEN_PDF_PAGES)
+    return extract_lines(circ92_pdf, CH1_CH5_PDF_PAGES)
 
 
 @pytest.fixture(scope="session")
@@ -215,8 +225,9 @@ def ch1_ch5_nodes(ch1_ch5_title17):
 
 @pytest.fixture(scope="session")
 def ch1_ch5_parse(circ92_ch1_ch5_lines):
-    """The whole back end on chapters 1 and 5 (the golden file's input), from the session's lines: a
-    ParseResult with its own ledger and hyphen decider, so the fixtures above are left as they are."""
+    """The whole back end on chapters 1 and 5 alone, from the session's lines: a ParseResult with its own ledger
+    and hyphen decider, so the fixtures above are left as they are. Not the golden file's input: see
+    `circ92_whole_parse`."""
     return parse_lines(circ92_ch1_ch5_lines, get_book("circ92"))
 
 

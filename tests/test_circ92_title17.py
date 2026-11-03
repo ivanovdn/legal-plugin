@@ -7,7 +7,6 @@ line, flush text after a list) runs on synthetic lines in the shape layout.py re
 """
 import pytest
 
-from ingest.books.circular92 import parse_circular92
 from ingest.books.circular92.layout import RawLine, extract_lines
 from ingest.books.circular92.text import HyphenDecider, clean_join
 from ingest.books.circular92.title17 import UnitBuilder, section_heading_marks, title17_nodes, x_level
@@ -745,25 +744,19 @@ def test_every_shipped_override_is_used(ch3, ch1_ch5_title17, ch1_ch5_ledger):
     assert _not_hyphen(ch1_ch5_ledger) == S304_OWNERS | NOTE_HOMES | XREF_TARGETS
 
 
-@pytest.fixture(scope="module")
-def whole_body(circ92_pdf):
-    """Every page of the body (PDF 23-481), parsed with the shipped overrides: about 15 s, once."""
-    return parse_circular92(circ92_pdf, get_book("circ92"))
-
-
-def test_the_whole_body_uses_every_shipped_override_and_leaves_no_hyphen_undecided(whole_body):
+def test_the_whole_body_uses_every_shipped_override_and_leaves_no_hyphen_undecided(circ92_whole_parse):
     # The dry run's bar (ingest/books/report.py) says the same, but needs Ollama to chunk; this does not.
     # Each of the book's line-end hyphens its own spelling cannot settle has a hand decision, and each
     # decision is read by a hyphen that really is there: a stale or mistyped one stays unused.
-    assert [o.id for o in whole_body.ledger.unused()] == []
-    assert whole_body.hyphens.undecided == []
-    assert whole_body.out_of_sequence == []
+    assert [o.id for o in circ92_whole_parse.ledger.unused()] == []
+    assert circ92_whole_parse.hyphens.undecided == []
+    assert circ92_whole_parse.out_of_sequence == []
 
 
-def test_the_hyphen_decisions_reach_the_text(whole_body):
+def test_the_hyphen_decisions_reach_the_text(circ92_whole_parse):
     """The compounds a default "join" used to weld (twentyeight, fortyeight, dramaticomusical) are whole again, and
     the one solid "nonnetwork" left is the book's own, printed mid-line on p. 139."""
-    text = " ".join(own_text(node, whole_body.tree.join) for node in whole_body.tree.walk())
+    text = " ".join(own_text(node, circ92_whole_parse.tree.join) for node in circ92_whole_parse.tree.walk())
     for compound in ("not more than twenty-eight or less than twenty-seven years", "forty-eight contiguous States",
                      "a dramatico-musical work of a religious nature"):
         assert compound in text

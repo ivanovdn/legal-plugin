@@ -4,7 +4,10 @@
 It tests the tree, not the chunks: chunk boundaries depend on the tokenizer, the tree does not. Each
 row holds what a reader of the diff needs to see a parse change: the node's ref_id, kind, source type,
 label, pages, cross-references, note links, effective-date flag (notes only) and its own text, cleaned
-(ruling 10). Regenerate it with
+(ruling 10). The rows come from a parse of the WHOLE body, filtered to the two chapters: the hyphen
+decider takes its evidence from every line it is given, so a parse of the two chapters alone welds a
+compound the whole book keeps ("threedimensional"), and an oracle must not hold text the ingest will not
+produce (ruling R17). Regenerate it with
 
     uv run python -m ingest.books.golden tests/fixtures/books/circular-92-2025-12.pdf \\
         tests/fixtures/books/circ92-ch1-ch5.jsonl
@@ -17,13 +20,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ingest.books.circular92 import parse_circular92
+from ingest.books.circular92.layout import BODY_PDF_PAGES
 from ingest.books.models import BookTree
 from ingest.books.ref_ids import make_ref_id
 from ingest.books.registry import get_book, verify_pdf
 from ingest.books.tree import own_text
 
-# Chapters 1 and 5, their sections and their notes: PDF 23-188 and 221-242.
-GOLDEN_PDF_PAGES = (*range(23, 189), *range(221, 243))
 GOLDEN_SCOPES = frozenset({"Chapter 1", "Chapter 5"})
 GOLDEN_BOOK = "circ92"
 
@@ -87,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     pdf, out = Path(args[0]), Path(args[1])
     book = get_book(GOLDEN_BOOK)
     verify_pdf(book, pdf)  # the oracle comes from the registered edition, or not at all
-    parsed = parse_circular92(pdf, book, GOLDEN_PDF_PAGES)
+    parsed = parse_circular92(pdf, book, BODY_PDF_PAGES)
     rows = golden_rows(parsed.tree, GOLDEN_SCOPES)
     write_rows(rows, out)
     print(f"{len(rows)} rows -> {out}")
