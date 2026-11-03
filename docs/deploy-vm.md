@@ -605,7 +605,7 @@ Those two volume lines under `backend` in `docker-compose.remote.yml` are part o
 DC="docker compose -f docker-compose.yml -f docker-compose.remote.yml"
 cp tests/fixtures/books/circular-92-2025-12.pdf data/books/
 $DC exec -T backend python -m scripts.ingest_book circ92 data/books/circular-92-2025-12.pdf --dry-run
-# read the bar (all seven PASS) and check data/deploy-logs/circ92-2025-12-<stamp>-sample20.tsv against the printed pages
+# read the bar (all eight PASS) and check data/deploy-logs/circ92-2025-12-<stamp>-sample20.tsv against the printed pages
 $DC exec -T backend python -m scripts.ingest_book circ92 data/books/circular-92-2025-12.pdf
 ```
 

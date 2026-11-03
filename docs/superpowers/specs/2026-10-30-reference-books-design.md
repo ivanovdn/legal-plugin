@@ -81,6 +81,7 @@ Any of these would make the build a failure even if everything else works:
 - **Characters** are only `[A-Za-z0-9_:-]`, so the id is one token in prose and can't absorb a trailing period.
 - **Chunks have their own key.** A chunk that holds a whole node uses the node's `ref_id` as its key. A piece of a node that had to be split gets a suffix: `<ref_id>~lead` for the text before its first child, `<ref_id>~tail` for text after its last child, and `<ref_id>~p2`, `~p3`… for parts of a split note. Point ids are `uuid5(<fixed namespace>, chunk key)`. Keys are never cited.
 - **Citing a split node:** citing `ch1-n56` is valid when any of its parts was retrieved. The rendered citation then gives the node's whole page span.
+- **Paging a node with no chunk of its own** (2026-11-03, final review C1): each chunk carries `ancestor_pages`, index for index with its `ancestor_ref_ids`: every node above it with that node's own span, its whole subtree. Such a node is paged from there, never from the span of the chunks below it, which loses a page that only its own text is on: a heading line the chunker drops, as in §111(d), pp. 33–38, not 34–38.
 
 ### D2 — The collection
 - **Name:** `legal_books` (`BOOK_COLLECTION`).
@@ -101,7 +102,7 @@ Any of these would make the build a failure even if everything else works:
 - **§101** gives one chunk per definition, plus one for its opening sentence.
 - **History notes** give one chunk each, split by paragraph when over budget.
 - **The context header** gives the citation, the section's title and the parents' headings. Chunks under 60 tokens (31 in ch.1 + ch.5) stay as they are for now; whether to merge them is open (test set).
-- **Sub-paths:** each chunk stores the node `ref_id`s it contains, each with its page, so a citation below the chunk can be checked and given its own page.
+- **Sub-paths:** each chunk stores the node `ref_id`s it contains, each with its page, so a citation below the chunk can be checked and given its own page. It stores the nodes above it the same way (`ancestor_ref_ids`, `ancestor_labels`, `ancestor_pages`), so a node with no chunk of its own can be too (D1).
 - **Changing the budget or the tokenizer moves chunk boundaries, never `ref_id`s** (D1). A Mac and Spark running different Ollama builds may cut chunks differently, but they produce the same nodes.
 
 ### D5 — Classification

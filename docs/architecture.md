@@ -187,7 +187,7 @@ This means: **the legal team controls exactly what the LLM outputs by editing SK
 | Skill | Tools | What it does |
 |---|---|---|
 | **contract_generation** | search_legal, get_document, extract_clauses, escalate | Searches case history for clause patterns, generates contracts with deviation report. Always → human_review. |
-| **legal_research** | search_legal, get_document, escalate, search_books, lookup_book (KB path only) | No document attached: multi-hop retrieval to answer legal questions, cites sources, flags conflicts. The two book tools search and look up Circular 92; this is the only agent that has them. Document attached (Word Chat tab): direct LLM call, no tools, grounded on the document + prior review. |
+| **legal_research** | search_legal, get_document, escalate, search_books, lookup_book (KB path only) | No document attached: multi-hop retrieval to answer legal questions, cites sources, flags conflicts. The two book tools search and look up Circular 92; this is the only agent that has them. Document attached (Word Chat tab): direct LLM call, no tools, grounded on the document + prior review. A research turn from the Word pane always attaches its document, a blank one's `""` included, so the Chat tab never reaches the book tools. |
 
 **Plain Skills** — set a system prompt, then the shared `rag_retriever` + `llm_caller` nodes handle retrieval and generation:
 
@@ -310,7 +310,7 @@ Attorney sends request
 `search_books` and `lookup_book` ([`rag/tools/`](../rag/tools/search_books.py)) are in the research agent's tool list and nowhere else; the search itself is in [rag.md](rag.md#reference-books).
 - **Retrieved.** A book ref_id counts as retrieved when a book tool's result prints it after a `ref_id:` marker. `legal_research` reads those from the agent's messages into `book_refs_turn` and `book_refs_retrieved` (the conversation's, kept by the checkpointer).
 - **Checked once.** `risk_assessor` resolves every `ref_id` the answer cites against the retrieved ids and the stored book (`rag/book_citations.py`) into `book_citations`. Each invalid one is a high-severity flag, so the turn goes to `human_review`. A page the model writes itself is flagged too. `output_formatter` and `memory_writer` read the same list, so the flags, the rendered text and the audit row cannot disagree.
-- **Skipped on a doc-chat turn.** When a document is attached the book isn't wired in, so neither the book check nor the page check runs and nothing is rendered; a `ref_id`-shaped string in a contract must not flag the turn.
+- **Skipped on a doc-chat turn.** When a document is attached the book isn't wired in, so neither the book check nor the page check runs and nothing is rendered; a `ref_id`-shaped string in a contract must not flag the turn. "Attached" is `has_attached_document` (`graph/state.py`: `uploaded_docs` non-empty), the same test `legal_research` uses to choose doc-chat.
 - **Rendered.** `output_formatter` replaces each cited id in `report["response"]` with the citation built from the stored node; an invalid one becomes `[unverified reference: <id>]`. `llm_response` keeps the raw ids.
 - **Audited.** `memory_writer` writes `audit_log.sources` (JSONB): `{"doc_ids": […], "ref_ids_retrieved": […], "ref_ids_cited": […]}`, this turn's only.
 
@@ -402,7 +402,10 @@ label, heading, appendix, page_start, page_end,
 text,                      # context header + body: what is embedded
 body,                      # what BM25 indexes and the tools show
 tokens, order,
-ancestor_ref_ids, ancestor_labels, sub_refs, sub_ref_ids,
+ancestor_ref_ids,          # self, then parent, … root
+ancestor_labels,           # their labels, index for index
+ancestor_pages,            # their own page spans (whole subtree), index for index: what a node with no chunk of its own is paged from
+sub_refs, sub_ref_ids,
 xrefs, history_notes, effective_date_notes
 ```
 

@@ -82,17 +82,17 @@ Key settings:
 
 ## Reference books
 
-The reference books (Circular 92 first; design in [rag.md](rag.md#reference-books)) are ingested by an admin command, never by the add-in's upload or `POST /api/ingest`.
+The reference books (Circular 92 first; design in [rag.md](rag.md#reference-books)) are ingested by an admin command, never by the add-in's upload or `POST /api/ingest`, which answers 400 when its `collection` field names `BOOK_COLLECTION`.
 
 ```bash
 # dry run: parses and chunks, writes the report and the chunk list, never touches Qdrant
 uv run python -m scripts.ingest_book circ92 tests/fixtures/books/circular-92-2025-12.pdf --dry-run
-# the real ingest: refuses unless the report's bar passes
+# the real ingest: refuses unless the report's bar (eight items, rag.md) passes
 uv run python -m scripts.ingest_book circ92 tests/fixtures/books/circular-92-2025-12.pdf
 ```
 
 - **Needs:** Ollama (token counts and embeddings) and Qdrant, with `QDRANT_VECTOR_DIM` set to the embedding model's dimension (a real ingest with `0` refuses).
-- **Exit codes:** `0` done; `1` the bar failed, `QDRANT_VECTOR_DIM` is 0 (real ingest only), a vector of the wrong size, an embedding over the model's window, or a point count that doesn't match; `2` refused (unregistered book, no PDF, or a PDF whose SHA-256 isn't the registered edition's).
+- **Exit codes:** `0` done; `1` the bar failed, `QDRANT_VECTOR_DIM` is 0 (real ingest only), an existing collection whose dense size isn't `QDRANT_VECTOR_DIM` (checked before anything is embedded or deleted), a vector of the wrong size, an embedding over the model's window, or a point count that doesn't match; `2` refused (unregistered book, no PDF, or a PDF whose SHA-256 isn't the registered edition's).
 - **Files:** a dry run writes `<ref_prefix>-<UTC stamp>-{chunks.jsonl, chunks.tsv, report.json, sample20.tsv}` to `data/deploy-logs/` (for example `circ92-2025-12-20261103T101500Z-report.json`). `data/` is excluded from git and from the backend image.
 - **Re-running** replaces the points of that book and edition only. The embeddings are all computed, and each vector's size checked, before anything is deleted, so a failure there (Ollama down, a chunk over the window, a wrong-size vector) leaves the earlier ingest as it was. A failure after the delete, an upsert error or a point count that doesn't match, leaves the edition empty or partial and exits 1; run the ingest again to replace it.
 - **On the VM** the command runs inside the backend container, whose image excludes `data/`. The PDF must be at `data/books/` on the host and mounted into the container, and `data/` mounted for the dry-run files, which the overlay doesn't do yet. What it takes and the order: [deploy-vm.md](deploy-vm.md#reference-books-not-yet-rolled-out).

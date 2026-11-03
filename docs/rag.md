@@ -117,9 +117,10 @@ The first book is the U.S. Copyright Office's **Circular 92 (Dec. 2025)**: Title
 
 - **Name:** `legal_books` (`BOOK_COLLECTION`), written and read by [`rag/book_store.py`](../rag/book_store.py) and [`rag/book_search.py`](../rag/book_search.py). Those functions name only this collection and take neither a collection nor a `client_id`.
 - **No `client_id`.** The collection holds no client data, so rule 3 in [CLAUDE.md](../CLAUDE.md#hard-rules-from-memory--past-incidents) is about the other collections ([decision](decisions/2026-10-30-reference-book-chunk-model.md)).
-- **Vectors:** a dense `dense` (`QDRANT_VECTOR_DIM`, cosine) and a sparse `bm25` (IDF). **Qdrant computes the BM25 vector** from the chunk body (without the context header, so headers repeated across a section don't dominate), through a `QdrantClient(cloud_inference=True)`. That flag means "send the text to the server that embeds it", which is our own Qdrant, not a cloud. Without it the locked client (`qdrant-client` 1.18.0) computes the same vector itself with its built-in BM25: byte-identical, no fastembed. The flag only makes Qdrant do the work. Nothing is downloaded either way, so constraint 7 holds. That built-in path is also the fallback if Spark's Qdrant can't do it ([roadmap](roadmap.md)).
-- **Payload:** the chunk (`BookChunk`), with `kind` (`rule`, `definition`, `history_note`, `repealed`), `source_type` (`usc_title`, `uncodified_act`, `treaty`), `jurisdiction` (`US`; `international` for the treaty appendix), pages, `ancestor_ref_ids` and `sub_ref_ids`. **Indexes** on `ref_id`, `book`, `edition`, `kind`, `source_type`, `jurisdiction`, `ancestor_ref_ids` and `sub_ref_ids`.
-- **Created by the ingest command** when missing. A collection made with another vector size has to be recreated.
+- **Vectors:** a dense `dense` (`QDRANT_VECTOR_DIM`, cosine) and a sparse `bm25` (IDF). **Qdrant computes the BM25 vector** from the chunk body (without the context header, so headers repeated across a section don't dominate), through a `QdrantClient(cloud_inference=True)`. That flag means "send the text to the server that embeds it", which is our own Qdrant, not a cloud. Without it the locked client (`qdrant-client` 1.18.0) computes the same vector itself with its built-in BM25: byte-identical, no fastembed. The flag only makes Qdrant do the work. With the flag, which is what the code sends, nothing is downloaded, so constraint 7 holds; that the no-flag path downloads nothing too is not verified. That client-side path is a possible fallback if Spark's Qdrant can't compute BM25, not yet verified offline ([roadmap](roadmap.md)).
+- **Payload:** the chunk (`BookChunk`), with `kind` (`rule`, `definition`, `history_note`, `repealed`), `source_type` (`usc_title`, `uncodified_act`, `treaty`), `jurisdiction` (`US`; `international` for the treaty appendix), pages, `ancestor_ref_ids` and `sub_ref_ids`. Beside `ancestor_ref_ids`, index for index, `ancestor_labels` and `ancestor_pages`: each node's label and its own page span (its whole subtree). A node with no chunk of its own is cited and paged from them, so it keeps a page that only its own text is on, such as a heading line the chunker drops (`(d) Statutory License … Systems.—`); paged from the chunks below instead, §111(d) and five other nodes started a page late (final review, 2026-11-03). **Indexes** on `ref_id`, `book`, `edition`, `kind`, `source_type`, `jurisdiction`, `ancestor_ref_ids` and `sub_ref_ids`.
+- **Created by the ingest command** when missing. An existing one is checked first: if its dense vector isn't `QDRANT_VECTOR_DIM` long, the ingest refuses (exit 1) before it embeds or deletes anything. A collection made with another vector size has to be recreated.
+- **Never written by `POST /api/ingest`,** which answers 400 when its `collection` field names `BOOK_COLLECTION`: a client document can't land here.
 
 ### Ingest
 
@@ -130,31 +131,32 @@ uv run python -m scripts.ingest_book circ92 tests/fixtures/books/circular-92-202
 ```
 
 - **Dry run first.** It parses and chunks the whole book (tokens are counted by Ollama on the embedding model, so Ollama must be up) and builds the report. It writes `<ref_prefix>-<UTC stamp>-{chunks.jsonl, chunks.tsv, report.json, sample20.tsv}` to `data/deploy-logs/` and never touches Qdrant; it exits 1 when the bar fails. `sample20.tsv` is 20 random chunks with their text: a person checks them against the printed page, text and page number, before the first ingest.
-- **The bar.** A real ingest refuses (exit 1) unless the report passes all seven:
+- **The bar.** A real ingest refuses (exit 1) unless the report passes all eight:
   1. 152 Title 17 sections are nodes;
   2. 192 footnote markers are linked to their notes, with no scope where markers and notes differ;
   3. 20 appendices are parsed, each with its `source_type`;
   4. no label line is left out of sequence;
   5. no chunk is over the token budget (a chunk past the embedding window counts as over);
   6. no override is unused;
-  7. no line-end hyphen is undecided.
+  7. no line-end hyphen is undecided;
+  8. every node of the tree, resolved over the chunk list by the function that resolves a citation (`resolve_nodes`, which `fetch_nodes` runs over what Qdrant returns), has the tree's label, kind, source type, appendix and pages. A node it gets wrong would reach the attorney as a verified citation with that wrong label or page.
 
   The cross-reference resolution rate is reported (Title 17 targets, and all targets), not gated: a Public Law target is never a node, so the all-targets rate is low by construction.
 - **Local whole-book dry run:** the bar passes; 1,245 chunks (rule 974, definition 54, repealed 4, history_note 213); the largest is 800 tokens; about 80 s.
-- **Real ingest order:** the bar, then the collection if missing, then **every chunk embedded**, each vector's size checked against `QDRANT_VECTOR_DIM`, and only then the edition's old points deleted and the new ones upserted, followed by a count check. An Ollama failure, a chunk past the window or a wrong-size vector therefore leaves the previous ingest intact. A re-run replaces that book and edition and nothing else.
+- **Real ingest order:** the bar, then the collection if missing (an existing one's dense size checked), then **every chunk embedded**, each vector's size checked against `QDRANT_VECTOR_DIM`, and only then the edition's old points deleted and the new ones upserted, followed by a count check. An Ollama failure, a chunk past the window or a wrong-size vector therefore leaves the previous ingest intact. A re-run replaces that book and edition and nothing else.
 - **Exit codes:**
 
   | Code | Meaning |
   |---|---|
   | 0 | done |
-  | 1 | the bar failed; a vector's size differs from `QDRANT_VECTOR_DIM`, or `QDRANT_VECTOR_DIM` is 0; an embedding was over the window; the point count after the ingest differs from the chunk count |
+  | 1 | the bar failed; a vector's size, or the existing collection's dense size, differs from `QDRANT_VECTOR_DIM`, or `QDRANT_VECTOR_DIM` is 0; an embedding was over the window; the point count after the ingest differs from the chunk count |
   | 2 | refused: unregistered book, no PDF at the path, or a hash that is not the registered edition |
 
 - **On the VM** the command runs inside the backend container, whose image excludes `data/`: the PDF must be at `data/books/` and `data/` mounted for the dry-run files. See [deploy-vm.md](deploy-vm.md#reference-books-not-yet-rolled-out).
 
 ### Search and lookup
 
-Two tools, in the research agent only (`_build_agent` in `skills/legal_research/legal_research.py`). Not in contract review, doc-chat or contract generation. The agent now sends `num_ctx = ollama_num_ctx`, the server's resident window, so Ollama doesn't reload the model for it; thinking is as it was.
+Two tools, in the research agent only (`_build_agent` in `skills/legal_research/legal_research.py`). Not in contract review, doc-chat or contract generation. A research turn from the Word pane is always doc-chat, so the Chat tab can't reach them (see *Known limits*). The agent now sends `num_ctx = ollama_num_ctx`, the server's resident window, so Ollama doesn't reload the model for it; thinking is as it was.
 
 - **`search_books(query, include_history_notes=False)`:**
   1. The query is embedded (`embed_query`).
@@ -170,6 +172,7 @@ Two tools, in the research agent only (`_build_agent` in `skills/legal_research/
 ### Citations
 
 - **The model cites `ref_id: <id>`,** exactly as the tool printed it. The prompt also says never to write a page or an edition, and that a history note is amendment history and a treaty is not U.S. law.
+- **What counts as cited:** an id bare, in backticks, after a `ref_id:` marker, or in markdown italics (`_<id>_`). Labels glued to an id are part of it: `…:usc17-s122(f)(1)` is checked, paged and rendered as the sub-path `…:usc17-s122-f-1`, the labels replaced with the rest. When the labels don't make a valid id, the whole token is what was cited, and it renders unverified.
 - **What counts as retrieved:** an id printed after a `ref_id:` marker in a book tool's result (`retrieved_book_refs`). Ids elsewhere in the output (a chunk's history notes, the rest of a long lookup) were not shown and don't count. The state holds them as `book_refs_retrieved` (the conversation's, oldest first, the last 500, in the checkpoint), `book_refs_turn` (this turn's) and `book_citations`.
 - **The check** runs once per turn, in `risk_assessor` ([`rag/book_citations.py`](../rag/book_citations.py)). A cited id is valid when the conversation retrieved it, or it sits inside a chunk the conversation retrieved, **and** it exists in the stored book. Each invalid one adds a high flag, which routes the turn to attorney review:
   - *Cites a reference that was not retrieved: `<id>`*
@@ -177,7 +180,7 @@ Two tools, in the research agent only (`_build_agent` in `skills/legal_research/
   - *The answer states a page itself* (`p. 12`, `pp. 12–13`, `page 12` in the text, flagged and left in place)
 
   A turn that cites only the book, validly, passes the "must cite a source" rule.
-- **A turn with an attached document skips the check.** The book isn't wired into doc-chat, and a `ref_id`-shaped token in a contract mustn't flag the turn.
+- **A turn with an attached document skips the check.** The book isn't wired into doc-chat, and a `ref_id`-shaped token in a contract mustn't flag the turn. "Attached" is one test, `has_attached_document` in `graph/state.py` (`uploaded_docs` is non-empty, whatever its text), read by `legal_research` to choose doc-chat and by `risk_assessor` to skip the check.
 - **Rendering:** `output_formatter` replaces each cited id with the citation built **from the stored node** (label, kind, pages), never from the model's text, e.g. `17 U.S.C. §122(f)(1) — Circular 92 (Dec. 2025), p. 143`. An invalid one renders `[unverified reference: <id>]`. There are six formats: statute, definition, another title, an uncodified Act, a history note, a treaty (`… (treaty, not U.S. law)`). `report.sources` gains `{ref_id, citation}` for each valid one. `llm_response` keeps the raw ids, for history and the audit.
 - **Audit:** `audit_log.sources` is JSONB, `{doc_ids, ref_ids_retrieved, ref_ids_cited}`, this turn's only; `{}` on rows from before ([operations.md](operations.md#reference-books)).
 
@@ -202,6 +205,7 @@ All are on `RECORDED` in `api/runtime_facts.py`, so every `turn_log` row keeps t
 
 - **The check proves that a citation exists, not that it supports the claim.** A real, retrieved passage cited for something it doesn't say passes.
 - **Reachable from one path only:** research with no document attached. Locally that is Chainlit and `POST /api/query`; on the VM only the API, because Chainlit isn't deployed there. The Word Chat tab (doc-chat) and contract review can't reach it; precedence and access are deferred (roadmap).
+- **A Word research turn is always doc-chat, even on a blank document.** The pane sends the document's text, `""` for a blank one, and the query route attaches it whatever it is when the request carries the pane's headers (`X-Pane-Build` or `X-Office-Platform`; `ClientInfo.from_pane`). Without that, a blank document took the KB path with the book, and a flagged citation there interrupted a turn the pane can't resume, which ChatTab shows as raw text. Requests without those headers (Chainlit, direct API calls) attach only text they send.
 - **Chainlit's review screen shows raw `ref_id`s.** During attorney review it displays the raw `llm_response`, and so does an interrupt payload. When the attorney submits a revised answer, Chainlit's revision path renders it with the earlier citation list. All local only.
 - **Contract ingest now fails loudly** on a chunk over the embedding window (see Ingest pipeline above).
 - **The BM25 tokenizer on legal tokens** (`§`, `(a)`, `104A`) is unmeasured. Direct lookup covers citations.
