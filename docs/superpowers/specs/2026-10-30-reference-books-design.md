@@ -29,7 +29,7 @@ From the Circular 92 exploration, 2026-10-30. The report, the prototype scripts 
 - **The parser rules:** footnote markers by font, 192 of 192; labels at their level, 99.4%; printed page = PDF page − 22.
 - **Cross-references:** in ch.1 + ch.5, 98% of 1,068 resolve to a node that exists.
 - **Embedding truncation.** `rag/embeddings.py` sends no `truncate` flag, so Ollama silently cuts input past 2,048 tokens. With `truncate: false`, Ollama answers HTTP 400 instead.
-- **BM25 in Qdrant.** Local Qdrant 1.17.0 computes BM25 sparse vectors itself, from text, at upsert and at query. Verified 2026-10-30 through REST and through `qdrant-client` 1.18.0 with `cloud_inference=True`. Without that flag the client tries to embed locally with fastembed, which isn't installed. Spark's Qdrant 1.17.1 is not yet checked.
+- **BM25 in Qdrant.** Local Qdrant 1.17.0 computes BM25 sparse vectors itself, from text, at upsert and at query. Verified 2026-10-30 through REST and through `qdrant-client` 1.18.0 with `cloud_inference=True`. Without that flag the client tries to embed locally with fastembed, which isn't installed. Spark's Qdrant 1.17.1 is not yet checked. (2026-11-03: on `qdrant-client` 1.18.0 the client computes the same vector itself when the flag is off, with its built-in BM25: byte-identical, no fastembed. The flag only makes Qdrant do the work.)
 
 ---
 
