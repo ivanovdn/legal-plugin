@@ -177,6 +177,28 @@ def test_ingest_rejects_unsupported_format():
     assert response.status_code == 400
 
 
+def test_ingest_refuses_the_book_collection(monkeypatch):
+    """Anti-goal 2 by code: a client document never lands in the reference books' collection, whatever the
+    form names. Refused before the upload is read or parsed. Mutation: drop the collection guard."""
+    monkeypatch.setenv("BOOK_COLLECTION", "legal_books_under_test")
+    get_settings.cache_clear()
+    from api.main import app
+    client = TestClient(app)
+
+    with patch("api.routes.documents.ingest_document", return_value=5) as ingest:
+        response = client.post(
+            "/api/ingest",
+            files={"file": ("contract.pdf", b"%PDF-1.4 a client contract", "application/pdf")},
+            data={"client_id": "client-abc", "collection": "legal_books_under_test"},
+        )
+    get_settings.cache_clear()
+
+    assert response.status_code == 400
+    assert "legal_books_under_test" in response.json()["detail"]
+    assert "reference book" in response.json()["detail"]
+    ingest.assert_not_called()
+
+
 def test_submit_query_passes_thread_id_to_graph(monkeypatch):
     """graph.invoke is called with config containing thread_id = session_id."""
     monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")

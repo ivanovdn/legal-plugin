@@ -14,6 +14,7 @@ from config import get_settings
 from ingest.books.models import BookChunk
 from rag.book_store import (
     BOOK_PAYLOAD_INDEXES,
+    BookCollectionMismatch,
     count_book_points,
     delete_book_edition,
     ensure_book_collection,
@@ -78,6 +79,35 @@ def test_collection_shape(book_qdrant):
     assert set(info.payload_schema) == set(BOOK_PAYLOAD_INDEXES)
     for field in BOOK_PAYLOAD_INDEXES:
         assert info.payload_schema[field].data_type == models.PayloadSchemaType.KEYWORD, field
+
+
+def _make_collection(name: str, vectors) -> None:
+    get_book_client().create_collection(
+        collection_name=name, vectors_config=vectors,
+        sparse_vectors_config={"bm25": models.SparseVectorParams(modifier=models.Modifier.IDF)},
+    )
+
+
+def test_an_existing_collection_of_another_dense_size_is_refused(book_qdrant):
+    """A collection made under another QDRANT_VECTOR_DIM (an embedding model since changed) would take the
+    ingest's delete and then refuse its upsert: refused here, before anything is embedded or deleted."""
+    _make_collection(book_qdrant, {"dense": models.VectorParams(size=384, distance=models.Distance.COSINE)})
+
+    with pytest.raises(BookCollectionMismatch, match=rf"{book_qdrant}.*384.*QDRANT_VECTOR_DIM is {DIM}"):
+        ensure_book_collection()
+
+
+def test_an_existing_collection_without_the_dense_vector_is_refused(book_qdrant):
+    _make_collection(book_qdrant, models.VectorParams(size=DIM, distance=models.Distance.COSINE))
+
+    with pytest.raises(BookCollectionMismatch, match="no dense vector"):
+        ensure_book_collection()
+
+
+def test_an_existing_collection_of_the_set_size_is_kept(book_qdrant):
+    _make_collection(book_qdrant, {"dense": models.VectorParams(size=DIM, distance=models.Distance.COSINE)})
+
+    assert ensure_book_collection() is False
 
 
 def test_the_collection_is_the_one_the_setting_names(book_qdrant):

@@ -552,7 +552,25 @@ def test_the_scroll_is_followed_to_its_end(books, monkeypatch):
 
 # --- scope ----------------------------------------------------------------------------------------
 
+class _ClientSpy:
+    """Stands in for `rag.vector_store`'s client: any method called on it is recorded, and nothing runs."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            self.calls.append(name)
+            raise AssertionError(f"the client documents' Qdrant client was called: {name}")
+
+        return record
+
+
 def test_search_never_reaches_client_collections(books, monkeypatch):
+    # The client documents' own client, however a book read would get it: get_qdrant_client() hands back
+    # the module's singleton, so a spy there catches a call through any import of it.
+    client_docs_client = _ClientSpy()
+    monkeypatch.setattr("rag.vector_store._client", client_docs_client)
     client = get_book_client()
     client.create_collection("legal_docs", vectors_config=models.VectorParams(size=DIM, distance=models.Distance.COSINE))
     try:
@@ -579,5 +597,6 @@ def test_search_never_reaches_client_collections(books, monkeypatch):
         assert all(isinstance(h.chunk, BookChunk) for h in hits)
         assert named
         assert set(named) == {books}
+        assert client_docs_client.calls == []
     finally:
         client.delete_collection("legal_docs")

@@ -35,6 +35,10 @@ BOOK_PAYLOAD_INDEXES = (
 _client: QdrantClient | None = None
 
 
+class BookCollectionMismatch(ValueError):
+    """The collection exists, but not with the dense vector QDRANT_VECTOR_DIM describes."""
+
+
 def get_book_client() -> QdrantClient:
     """Singleton client for the book collection, able to have Qdrant compute BM25."""
     global _client
@@ -51,13 +55,35 @@ def reset_book_client() -> None:
     _client = None
 
 
+def _check_dense_size(client: QdrantClient, name: str, dim: int) -> None:
+    """An existing collection must have the dense vector QDRANT_VECTOR_DIM describes: one made under
+    another size (an embedding model since changed) takes an ingest's delete and then refuses its upsert."""
+    vectors = client.get_collection(name).config.params.vectors
+    dense = vectors.get(DENSE_VECTOR) if isinstance(vectors, dict) else None
+    if dense is None:
+        raise BookCollectionMismatch(
+            f"collection {name!r} exists but has no dense vector named {DENSE_VECTOR!r}: it was not made by "
+            "this code. Delete it (or set BOOK_COLLECTION to another name), then run the ingest again."
+        )
+    if dense.size != dim:
+        raise BookCollectionMismatch(
+            f"collection {name!r} has a dense vector of {dense.size} numbers, but QDRANT_VECTOR_DIM is {dim}. "
+            "Set QDRANT_VECTOR_DIM to the embedding model's dimension; if the model changed, delete the "
+            "collection so the ingest makes it again at the new size."
+        )
+
+
 def ensure_book_collection() -> bool:
-    """Create the collection and its payload indexes if absent. True when this call created it."""
+    """Create the collection and its payload indexes if absent. True when this call created it.
+
+    An existing collection is checked, not trusted: its dense vector must be QDRANT_VECTOR_DIM long, or
+    BookCollectionMismatch is raised. The ingest calls this before it embeds or deletes anything."""
     settings = get_settings()
     client = get_book_client()
     name = settings.book_collection
 
     if client.collection_exists(name):
+        _check_dense_size(client, name, settings.qdrant_vector_dim)
         return False
 
     client.create_collection(

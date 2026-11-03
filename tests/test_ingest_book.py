@@ -620,6 +620,24 @@ def test_vectors_of_the_wrong_size_or_number_are_refused_before_the_delete(
     assert ("QDRANT_VECTOR_DIM" in err) if drop == 0 else ("vectors for" in err)
 
 
+def test_a_collection_of_another_size_is_refused_before_anything_is_embedded_or_deleted(
+        circ92_pdf, book_qdrant, fake_parse, monkeypatch, capsys):
+    """The earlier ingest's collection was made at 768; QDRANT_VECTOR_DIM now says 1024 and the embedder
+    agrees with it, so the vector check passes and the delete would run before Qdrant refused the upsert.
+    The collection's own size is checked first."""
+    _plant_earlier_ingest(fake_parse)
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "1024")
+    get_settings.cache_clear()
+    embedded = _embedder(monkeypatch, dim=1024)
+
+    assert main(["circ92", str(circ92_pdf)]) == 1
+
+    assert count_book_points("circ92", "2025-12") == 1
+    assert embedded["calls"] == 0
+    err = capsys.readouterr().err
+    assert "768" in err and "1024" in err and "Nothing was deleted" in err
+
+
 def test_a_clean_run_replaces_the_earlier_ingest_after_embedding(circ92_pdf, book_qdrant, fake_parse, monkeypatch):
     _plant_earlier_ingest(fake_parse)
     _embedder(monkeypatch)

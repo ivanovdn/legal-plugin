@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from api.models import ApiResponse
+from config import get_settings
 from ingest.pipeline import ingest_document
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,17 @@ def ingest_file(
     collection: str = Form("legal_docs"),
 ):
     """Upload and ingest a PDF or DOCX document."""
+    book_collection = get_settings().book_collection
+    if collection == book_collection:
+        # The reference books' collection holds no client data (decision 2026-10-30-reference-book-chunk-model):
+        # it is written only by `python -m scripts.ingest_book`, from the book registry.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Collection {book_collection!r} holds the reference books, not client documents: it is "
+                "written only by the book ingest command (scripts/ingest_book.py)."
+            ),
+        )
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower()
 

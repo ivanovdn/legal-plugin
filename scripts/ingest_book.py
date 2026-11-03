@@ -6,7 +6,8 @@ It refuses an unregistered id and a PDF that is not the registered edition (exit
 the book, and builds the report (ingest/books/report.py). With --dry-run it writes the chunk list, the
 report and a 20-chunk sample to data/deploy-logs/ and stops: nothing reaches Qdrant. Without it, a book
 that does not clear the report's bar is refused (exit 1, ruling 15); one that does replaces the book's
-points for this edition: the collection if missing, then EVERY chunk embedded (truncation off) and each
+points for this edition: the collection if missing (an existing one must have the dense size
+QDRANT_VECTOR_DIM gives, or nothing is touched), then EVERY chunk embedded (truncation off) and each
 vector checked against QDRANT_VECTOR_DIM, and only then the old points deleted and the new ones
 upserted. Embedding first means an Ollama failure, a chunk past the model's window or a vector of the
 wrong size leaves the previous ingest as it was (ruling R16a). The command then checks that the
@@ -32,7 +33,13 @@ from ingest.books.models import BookChunk
 from ingest.books.registry import BookEntry, PdfHashMismatch, UnknownBook, get_book, verify_pdf
 from ingest.books.report import build_report, chunks_tsv, sample_chunks
 from ingest.books.tokens import TokenCounter, ollama_token_counter
-from rag.book_store import count_book_points, delete_book_edition, ensure_book_collection, upsert_book_chunks
+from rag.book_store import (
+    BookCollectionMismatch,
+    count_book_points,
+    delete_book_edition,
+    ensure_book_collection,
+    upsert_book_chunks,
+)
 from rag.embeddings import EmbeddingInputTooLong, embed_texts
 
 logger = logging.getLogger(__name__)
@@ -183,7 +190,11 @@ def _wrong_vectors(chunks: list[BookChunk], vectors: list[list[float]], dim: int
 
 
 def _ingest(book: BookEntry, chunks: list[BookChunk], report: dict, started: float) -> int:
-    ensure_book_collection()
+    try:
+        ensure_book_collection()
+    except BookCollectionMismatch as exc:
+        _err(f"failed: {exc} Nothing was deleted or written: this edition's earlier points are untouched.")
+        return 1
     # Embed everything before the edition's points are deleted: a failure from here to the delete leaves
     # the previous ingest as it was.
     vectors = _embed_all(chunks)
