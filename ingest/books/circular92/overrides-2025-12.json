@@ -70,5 +70,461 @@
     "match": "section 4(c) of the Record Rental Amendment of 1984",
     "value": "pl98-450-s4-c",
     "reason": "ch. 1 n.42: \"repealed section 4(c) of the Record Rental Amendment of 1984\", p. 151: the same section as ch1-n42-section-4c, named with its Act; the note prints that Act's number, Pub. L. No. 98-450"
+  },
+  {
+    "id": "hyphen-p2-encyclopedia",
+    "kind": "hyphen",
+    "page": 2,
+    "match": "encyclo-|pedia",
+    "value": "join",
+    "reason": "one word broken at a syllable: “encyclopedia”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p2-spaces",
+    "kind": "hyphen",
+    "page": 2,
+    "match": "spac-|es",
+    "value": "join",
+    "reason": "one word broken at a syllable: “spaces”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p3-nonsequentially",
+    "kind": "hyphen",
+    "page": 3,
+    "match": "non-|sequentially",
+    "value": "join",
+    "reason": "unsure — the book prints no other form of this word; its other non- words are solid (nondramatic, nonvoting, nonprofit) and standard U.S. usage (the Code's definition of “display”) is “nonsequentially”"
+  },
+  {
+    "id": "hyphen-p4-screening",
+    "kind": "hyphen",
+    "page": 4,
+    "match": "screen-|ing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “screening”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p7-concluding",
+    "kind": "hyphen",
+    "page": 7,
+    "match": "conclud-|ing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “concluding”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p9-preexisting",
+    "kind": "hyphen",
+    "page": 9,
+    "match": "pre-|existing",
+    "value": "join",
+    "reason": "“preexisting” is printed solid three times on this very page"
+  },
+  {
+    "id": "hyphen-p19-conservation",
+    "kind": "hyphen",
+    "page": 19,
+    "match": "conserva-|tion",
+    "value": "join",
+    "reason": "one word broken at a syllable: “conservation”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p27-dramatico-musical",
+    "kind": "hyphen",
+    "page": 27,
+    "match": "dramatico-|musical",
+    "value": "keep",
+    "reason": "a hyphenated compound, “dramatico-musical work” (the Code's §110(3)); the only place the book prints it"
+  },
+  {
+    "id": "hyphen-p39-affidavits",
+    "kind": "hyphen",
+    "page": 39,
+    "match": "af-|fidavits",
+    "value": "join",
+    "reason": "one word broken at a syllable: “affidavits”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p39-videotapes",
+    "kind": "hyphen",
+    "page": 39,
+    "match": "vid-|eotapes",
+    "value": "join",
+    "reason": "one word broken at a syllable: “videotapes”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p40-forty-eight",
+    "kind": "hyphen",
+    "page": 40,
+    "match": "forty-|eight",
+    "value": "keep",
+    "reason": "a compound number: “forty-eight contiguous States”"
+  },
+  {
+    "id": "hyphen-p41-non-network",
+    "kind": "hyphen",
+    "page": 41,
+    "match": "non-|network",
+    "value": "keep",
+    "reason": "p. 34 prints “any non-network television programming” and p. 36 “non-network program-”, the words this sentence repeats, and pp. 119-127 print “non-network”; the solid “nonnetwork” appears once in the book (p. 139)"
+  },
+  {
+    "id": "hyphen-p50-rearranged",
+    "kind": "hyphen",
+    "page": 50,
+    "match": "rear-|ranged",
+    "value": "join",
+    "reason": "one word broken at a syllable: “rearranged”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p52-multichannel",
+    "kind": "hyphen",
+    "page": 52,
+    "match": "multichan-|nel",
+    "value": "join",
+    "reason": "one word broken at a syllable: “multichannel”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p66-continuously",
+    "kind": "hyphen",
+    "page": 66,
+    "match": "continu-|ously",
+    "value": "join",
+    "reason": "one word broken at a syllable: “continuously”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p81-nationally",
+    "kind": "hyphen",
+    "page": 81,
+    "match": "nation-|ally",
+    "value": "join",
+    "reason": "one word broken at a syllable: “nationally”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p95-estoppel",
+    "kind": "hyphen",
+    "page": 95,
+    "match": "es-|toppel",
+    "value": "join",
+    "reason": "one word broken at a syllable: “estoppel”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p102-reaching",
+    "kind": "hyphen",
+    "page": 102,
+    "match": "reach-|ing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “reaching”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p109-subparagraphs",
+    "kind": "hyphen",
+    "page": 109,
+    "match": "sub-|paragraphs",
+    "value": "join",
+    "reason": "“subparagraphs” is printed solid throughout the book (pp. 11, 12, 16, 23, 59, 66 …); this is a line break"
+  },
+  {
+    "id": "hyphen-p137-manipulate",
+    "kind": "hyphen",
+    "page": 137,
+    "match": "manipu-|late",
+    "value": "join",
+    "reason": "one word broken at a syllable: “manipulate”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p140-non-network",
+    "kind": "hyphen",
+    "page": 140,
+    "match": "non-|network",
+    "value": "keep",
+    "reason": "the line before prints “non-network where the subscriber is located”, and the next words are “network station or non-network station”; the solid “nonnetwork” appears once in the book (p. 139)"
+  },
+  {
+    "id": "hyphen-p155-subparagraphs",
+    "kind": "hyphen",
+    "page": 155,
+    "match": "sub-|paragraphs",
+    "value": "join",
+    "reason": "“subparagraphs” is printed solid throughout the book (pp. 11, 12, 16, 23, 59, 66 …); this is a line break"
+  },
+  {
+    "id": "hyphen-p162-examinations",
+    "kind": "hyphen",
+    "page": 162,
+    "match": "exami-|nations",
+    "value": "join",
+    "reason": "one word broken at a syllable: “examinations”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p172-evidenced",
+    "kind": "hyphen",
+    "page": 172,
+    "match": "evi-|denced",
+    "value": "join",
+    "reason": "one word broken at a syllable: “evidenced”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p193-twenty-eight",
+    "kind": "hyphen",
+    "page": 193,
+    "match": "twenty-|eight",
+    "value": "keep",
+    "reason": "a compound number: “twenty-eight”, like “twenty-seven” in the next line"
+  },
+  {
+    "id": "hyphen-p205-purport",
+    "kind": "hyphen",
+    "page": 205,
+    "match": "pur-|port",
+    "value": "join",
+    "reason": "one word broken at a syllable: “purport”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p212-misrepresents",
+    "kind": "hyphen",
+    "page": 212,
+    "match": "misrep-|resents",
+    "value": "join",
+    "reason": "one word broken at a syllable: “misrepresents”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p214-requester",
+    "kind": "hyphen",
+    "page": 214,
+    "match": "re-|quester",
+    "value": "join",
+    "reason": "one word broken at a syllable: “requester”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p229-practicability",
+    "kind": "hyphen",
+    "page": 229,
+    "match": "practica-|bility",
+    "value": "join",
+    "reason": "one word broken at a syllable: “practicability”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p231-occasional",
+    "kind": "hyphen",
+    "page": 231,
+    "match": "oc-|casional",
+    "value": "join",
+    "reason": "one word broken at a syllable: “occasional”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p243-minimizes",
+    "kind": "hyphen",
+    "page": 243,
+    "match": "mini-|mizes",
+    "value": "join",
+    "reason": "one word broken at a syllable: “minimizes”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p246-interpretations",
+    "kind": "hyphen",
+    "page": 246,
+    "match": "interpreta-|tions",
+    "value": "join",
+    "reason": "one word broken at a syllable: “interpretations”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p249-completing",
+    "kind": "hyphen",
+    "page": 249,
+    "match": "complet-|ing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “completing”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p250-importance",
+    "kind": "hyphen",
+    "page": 250,
+    "match": "impor-|tance",
+    "value": "join",
+    "reason": "one word broken at a syllable: “importance”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p253-frustrate",
+    "kind": "hyphen",
+    "page": 253,
+    "match": "frus-|trate",
+    "value": "join",
+    "reason": "one word broken at a syllable: “frustrate”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p274-secretary’s",
+    "kind": "hyphen",
+    "page": 274,
+    "match": "Secre-|tary’s",
+    "value": "join",
+    "reason": "one word broken at a syllable: “Secretary’s”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p274-misappropriation",
+    "kind": "hyphen",
+    "page": 274,
+    "match": "misappropria-|tion",
+    "value": "join",
+    "reason": "one word broken at a syllable: “misappropriation”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p279-professionals",
+    "kind": "hyphen",
+    "page": 279,
+    "match": "profes-|sionals",
+    "value": "join",
+    "reason": "one word broken at a syllable: “professionals”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p282-principal",
+    "kind": "hyphen",
+    "page": 282,
+    "match": "prin-|cipal",
+    "value": "join",
+    "reason": "one word broken at a syllable: “principal”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p295-impairing",
+    "kind": "hyphen",
+    "page": 295,
+    "match": "impair-|ing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “impairing”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p296-contributory",
+    "kind": "hyphen",
+    "page": 296,
+    "match": "contribu-|tory",
+    "value": "join",
+    "reason": "one word broken at a syllable: “contributory”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p298-descrambling",
+    "kind": "hyphen",
+    "page": 298,
+    "match": "de-|scrambling",
+    "value": "join",
+    "reason": "one word broken at a syllable: “descrambling”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p300-developer",
+    "kind": "hyphen",
+    "page": 300,
+    "match": "devel-|oper",
+    "value": "join",
+    "reason": "one word broken at a syllable: “developer”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p303-displaying",
+    "kind": "hyphen",
+    "page": 303,
+    "match": "dis-|playing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “displaying”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p311-insignificant",
+    "kind": "hyphen",
+    "page": 311,
+    "match": "insignifi-|cant",
+    "value": "join",
+    "reason": "one word broken at a syllable: “insignificant”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p313-reimburses",
+    "kind": "hyphen",
+    "page": 313,
+    "match": "re-|imburses",
+    "value": "join",
+    "reason": "one word broken at a syllable: “reimburses”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p315-utility",
+    "kind": "hyphen",
+    "page": 315,
+    "match": "util-|ity",
+    "value": "join",
+    "reason": "one word broken at a syllable: “utility”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p331-administering",
+    "kind": "hyphen",
+    "page": 331,
+    "match": "admin-|istering",
+    "value": "join",
+    "reason": "one word broken at a syllable: “administering”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p339-classified",
+    "kind": "hyphen",
+    "page": 339,
+    "match": "clas-|sified",
+    "value": "join",
+    "reason": "one word broken at a syllable: “classified”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p350-managing",
+    "kind": "hyphen",
+    "page": 350,
+    "match": "man-|aging",
+    "value": "join",
+    "reason": "one word broken at a syllable: “managing”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p351-returning",
+    "kind": "hyphen",
+    "page": 351,
+    "match": "return-|ing",
+    "value": "join",
+    "reason": "one word broken at a syllable: “returning”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p390-objective",
+    "kind": "hyphen",
+    "page": 390,
+    "match": "objec-|tive",
+    "value": "join",
+    "reason": "one word broken at a syllable: “objective”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p390-trademarks",
+    "kind": "hyphen",
+    "page": 390,
+    "match": "trade-|marks",
+    "value": "join",
+    "reason": "“trademarks” is printed solid throughout the book (pp. 203, 372, 385, 387, 440 …); this is a line break"
+  },
+  {
+    "id": "hyphen-p392-inconsistency",
+    "kind": "hyphen",
+    "page": 392,
+    "match": "inconsis-|tency",
+    "value": "join",
+    "reason": "one word broken at a syllable: “inconsistency”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p402-trafficked",
+    "kind": "hyphen",
+    "page": 402,
+    "match": "traf-|ficked",
+    "value": "join",
+    "reason": "one word broken at a syllable: “trafficked”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p441-subcontractor",
+    "kind": "hyphen",
+    "page": 441,
+    "match": "subcon-|tractor",
+    "value": "join",
+    "reason": "one word broken at a syllable: “subcontractor”; no other form of it in the book"
+  },
+  {
+    "id": "hyphen-p453-convened",
+    "kind": "hyphen",
+    "page": 453,
+    "match": "con-|vened",
+    "value": "join",
+    "reason": "one word broken at a syllable: “convened”; no other form of it in the book"
   }
 ]

@@ -76,8 +76,8 @@ def _appendix(letter: str, source_type: str | None = None) -> Node:
 
 
 def make_parsed(
-    *, sections=152, drop_appendix=None, appendix_types=None, out_of_sequence=(), unused=(), notes=None,
-    markers=None, xref_nodes=None,
+    *, sections=152, drop_appendix=None, appendix_types=None, out_of_sequence=(), unused=(), undecided=(),
+    notes=None, markers=None, xref_nodes=None,
 ) -> ParseResult:
     """A parse that meets the bar, with whatever the test breaks."""
     roots = [_section(i) for i in range(sections)]
@@ -93,8 +93,10 @@ def make_parsed(
     ledger = OverrideLedger([
         Override(id=name, kind="label_level", page=1, match="(a)", value="1", reason="r") for name in unused
     ])
+    hyphens = HyphenDecider([], ledger)
+    hyphens._undecided.update(dict.fromkeys(undecided))
     return ParseResult(
-        tree=BookTree(BOOK, roots), ledger=ledger, hyphens=HyphenDecider([], ledger),
+        tree=BookTree(BOOK, roots), ledger=ledger, hyphens=hyphens,
         out_of_sequence=list(out_of_sequence),
         markers={k: list(v) for k, v in (SCOPE_NOTES if markers is None else markers).items()},
         notes={k: list(v) for k, v in (SCOPE_NOTES if notes is None else notes).items()},
@@ -131,7 +133,7 @@ def test_report_bar():
     assert (report["book"], report["edition"]) == ("circ92", "2025-12")
     assert report["bar"] == {
         "title17_sections": True, "markers": True, "appendices": True,
-        "out_of_sequence": True, "over_budget": True, "overrides_unused": True,
+        "out_of_sequence": True, "over_budget": True, "overrides_unused": True, "hyphens_undecided": True,
     }
     assert report["bar_passed"] is True
 
@@ -172,8 +174,9 @@ def test_report_xref_rate_without_references():
     ("appendices", lambda: make_parsed(appendix_types={"N": "uncodified_act"})),
     ("out_of_sequence", lambda: make_parsed(out_of_sequence=["p.12 (a) a label no rule placed"])),
     ("overrides_unused", lambda: make_parsed(unused=["stale-override"])),
+    ("hyphens_undecided", lambda: make_parsed(undecided=["p.5 spac-|es"])),
 ], ids=["sections-151", "sections-153", "markers-191", "markers-193", "marker-missing-its-note", "markers-out-of-order",
-        "appendix-missing", "appendix-wrong-source-type", "out-of-sequence", "override-unused"])
+        "appendix-missing", "appendix-wrong-source-type", "out-of-sequence", "override-unused", "hyphen-undecided"])
 def test_each_bar_item_fails_alone(item, build):
     parsed = build()
     report = build_report(parsed, chunks_of(parsed), budget=BUDGET)
@@ -202,12 +205,12 @@ def test_report_names_the_scope_whose_markers_and_notes_disagree():
 
 
 def test_report_lists_the_unused_overrides_and_undecided_hyphens():
-    parsed = make_parsed(unused=["a-stale-one"])
-    parsed.hyphens._undecided["p.5 spac-|es"] = None
+    parsed = make_parsed(unused=["a-stale-one"], undecided=["p.5 spac-|es", "p.9 twenty-|eight"])
     report = build_report(parsed, chunks_of(parsed), budget=BUDGET)
     assert report["overrides_unused"] == ["a-stale-one"]
-    assert report["hyphens_undecided"] == ["p.5 spac-|es"]
-    assert report["bar"]["overrides_unused"] is False  # the hyphens are reported, not gated
+    assert report["hyphens_undecided"] == ["p.5 spac-|es", "p.9 twenty-|eight"]
+    assert report["bar"]["overrides_unused"] is False and report["bar"]["hyphens_undecided"] is False
+    assert report["bar_passed"] is False
 
 
 @pytest.mark.parametrize("tokens", [BUDGET + 1, -1], ids=["over-the-budget", "over-the-embedding-window"])

@@ -9,11 +9,12 @@ refuses unless it passes (ruling 15). The bar:
   - all 20 appendices are parsed, each with the `source_type` the edition table gives it;
   - no label line is left out of sequence (every one either follows its rule or has an override);
   - no chunk is over the token budget (a chunk the counter put past the embedding window counts as over);
-  - no override is unused: a whole-body run must consume every hand fix the edition ships.
+  - no override is unused: a whole-body run must consume every hand fix the edition ships;
+  - no line-end hyphen is undecided: every one the book's own spelling cannot settle has an override
+    (a break the parser can only default to "join" may weld a compound, "twentyeight", into the text).
 
 Reported, never gated: the cross-reference resolution rate and its misses (a Public Law target is never a
-node, so the all-targets rate is low by construction; Title 17's is the one to read), and the line-end
-hyphens no evidence decided (they default to "join").
+node, so the all-targets rate is low by construction; Title 17's is the one to read).
 
 The numbers are Circular 92 (Dec. 2025)'s. A second book brings its own expectations here.
 """
@@ -107,6 +108,7 @@ def build_report(parsed: ParseResult, chunks: Sequence[BookChunk], *, budget: in
         "out_of_sequence": not parsed.out_of_sequence,
         "over_budget": not over_budget,
         "overrides_unused": not unused,
+        "hyphens_undecided": not parsed.hyphens.undecided,
     }
     return {
         "book": book.id,

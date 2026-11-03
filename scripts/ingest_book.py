@@ -90,6 +90,8 @@ def _bar_details(report: dict) -> dict[str, str]:
         + "".join(f"\n      {c['chunk_key']}: {c['tokens']}" for c in report["over_budget"][:10]),
         "overrides_unused": f"{len(report['overrides_unused'])} overrides nothing consumed"
         + "".join(f"\n      {override_id}" for override_id in report["overrides_unused"][:10]),
+        "hyphens_undecided": f"{len(report['hyphens_undecided'])} line-end hyphens no evidence or override decided"
+        + "".join(f"\n      {hyphen}" for hyphen in report["hyphens_undecided"][:10]),
     }
 
 
@@ -112,7 +114,6 @@ def _print_summary(report: dict, files: list[Path], seed: int) -> None:
     print(f"xref resolution: Title 17 targets {_pct(t17['rate'])} ({t17['resolved']}/{t17['total']}), "
           f"all targets {_pct(xref['rate'])} ({xref['resolved']}/{xref['total']}), "
           f"{len(xref['misses'])} misses (listed in the report; reported, not gated)")
-    print(f"hyphens no evidence decided: {len(report['hyphens_undecided'])} (joined; listed in the report)")
     print(f"sample: seed {seed}, {len(report['sample']['chunk_keys'])} chunks to check against the printed page")
     for path in files:
         print(f"  {path}")

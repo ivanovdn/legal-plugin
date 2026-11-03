@@ -12,6 +12,7 @@ import pytest
 from ingest.books import golden
 from ingest.books.circular92 import parse_lines
 from ingest.books.golden import GOLDEN_PDF_PAGES, GOLDEN_SCOPES, diff_rows, golden_rows, read_rows
+from ingest.books.overrides import load_overrides
 from ingest.books.registry import get_book
 from ingest.books.tree import xref_resolution
 
@@ -62,10 +63,21 @@ def test_shipped_xref_targets_fix_three_misreadings(idx):
     assert not [raw for raw in idx["ch1-n42"].xrefs_unparsed if "4(c)" in raw]
 
 
-def test_the_whole_parse_uses_every_override_on_its_pages(ch1_ch5_parse):
-    # One ledger serves the parse (title17, notes, cross-references), so only chapter 3's two §304
-    # text_owner entries are left unused by chapters 1 and 5.
-    assert {o.id for o in ch1_ch5_parse.ledger.unused()} == {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"}
+def test_the_whole_parse_uses_every_override_on_its_pages(ch1_ch5_parse, circ92_ch1_ch5_lines):
+    # One ledger serves the parse (title17, notes, cross-references, hyphens), so chapter 3's two §304
+    # text_owner entries are left unused by chapters 1 and 5, and so is every hyphen entry on another page.
+    # Of the three hyphen entries on these pages that are left unused too, the run decides the hyphen by
+    # itself: chapters 1 and 5 print "preexisting" and "subparagraphs" solid and never the compound, so only
+    # the whole book (which prints "pre-existing" on p. 258 and "sub-paragraphs" on p. 457) needs the entry.
+    pages = {line.page for line in circ92_ch1_ch5_lines}
+    hyphens = {o.id: o for o in load_overrides(get_book("circ92").overrides_path) if o.kind == "hyphen"}
+    assert len(hyphens) == 57
+    decided_by_evidence_here = {"hyphen-p9-preexisting", "hyphen-p109-subparagraphs", "hyphen-p155-subparagraphs"}
+    other_pages = {i for i, o in hyphens.items() if o.page not in pages}
+    assert {o.id for o in ch1_ch5_parse.ledger.unused()} == (
+        {"usc17-s304-a-1-B-flush", "usc17-s304-a-1-C-flush"} | other_pages | decided_by_evidence_here
+    )
+    assert len(other_pages) == 31  # 57 hyphen entries: 26 on these pages (23 used, the 3 above), 31 elsewhere
 
 
 def test_note_links(idx, rows):

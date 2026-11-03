@@ -200,7 +200,8 @@ def test_a_note_about_a_whole_definition_names_it(ch_notes, path, definition):
 def test_every_note_home_override_is_used(ch1_ch5_notes, notes_ledger):
     # This ledger saw only the notes; the text_owner entries are chapter 3's (tests/test_circ92_title17.py),
     # the xref_target entries the cross-references' (tests/test_book_golden.py).
-    assert {o.id for o in notes_ledger.unused()} == S304_OWNERS | XREF_TARGETS
+    # (The hyphen entries are left out: this ledger is never given to the hyphen decider.)
+    assert {o.id for o in notes_ledger.unused() if o.kind != "hyphen"} == S304_OWNERS | XREF_TARGETS
 
 
 def _home(match, value, page=266, oid="h1"):

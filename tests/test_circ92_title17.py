@@ -7,12 +7,14 @@ line, flush text after a list) runs on synthetic lines in the shape layout.py re
 """
 import pytest
 
+from ingest.books.circular92 import parse_circular92
 from ingest.books.circular92.layout import RawLine, extract_lines
 from ingest.books.circular92.text import HyphenDecider, clean_join
 from ingest.books.circular92.title17 import UnitBuilder, section_heading_marks, title17_nodes, x_level
 from ingest.books.labels import SEQ, expected_next, resolve, resolve_level
 from ingest.books.overrides import Override, OverrideLedger, load_overrides
 from ingest.books.registry import get_book
+from ingest.books.tree import own_text
 
 CH1 = ["101", "102", "103", "104", "104a", "105", "106", "106a", "107", "108", "109", "110", "111",
        "112", "113", "114", "115", "116", "117", "118", "119", "120", "121", "121a", "122"]
@@ -726,13 +728,49 @@ def test_section_304_a_1_flush_text_has_its_owners(ch3):
     assert oos == []
 
 
+def _not_hyphen(ledger):
+    """What a ledger left unused, but the hyphen overrides: text.py consults those when text is joined, so
+    a ledger shared between tests has used whichever the tests that ran before it happened to reach."""
+    return {o.id for o in ledger.unused() if o.kind != "hyphen"}
+
+
 def test_every_shipped_override_is_used(ch3, ch1_ch5_title17, ch1_ch5_ledger):
     # The two §304 entries sit on printed p. 177 (chapter 3): the chapter 3 parse uses both, and
     # the chapter 1 + 5 parse leaves only them unused, with the note_home entries, which only the
     # notes read (tests/test_circ92_notes_appendices.py shows the ch. 1 notes use all three), and the
     # xref_target entries, which only the cross-references read (tests/test_book_golden.py).
-    assert {o.id for o in ch3[2].unused()} == NOTE_HOMES | XREF_TARGETS
-    assert {o.id for o in ch1_ch5_ledger.unused()} == S304_OWNERS | NOTE_HOMES | XREF_TARGETS
+    # The hyphen entries are pinned where the parse is whole: tests/test_book_golden.py for chapters 1
+    # and 5, and the whole-body test below.
+    assert _not_hyphen(ch3[2]) == NOTE_HOMES | XREF_TARGETS
+    assert _not_hyphen(ch1_ch5_ledger) == S304_OWNERS | NOTE_HOMES | XREF_TARGETS
+
+
+@pytest.fixture(scope="module")
+def whole_body(circ92_pdf):
+    """Every page of the body (PDF 23-481), parsed with the shipped overrides: about 15 s, once."""
+    return parse_circular92(circ92_pdf, get_book("circ92"))
+
+
+def test_the_whole_body_uses_every_shipped_override_and_leaves_no_hyphen_undecided(whole_body):
+    # The dry run's bar (ingest/books/report.py) says the same, but needs Ollama to chunk; this does not.
+    # Each of the book's line-end hyphens its own spelling cannot settle has a hand decision, and each
+    # decision is read by a hyphen that really is there: a stale or mistyped one stays unused.
+    assert [o.id for o in whole_body.ledger.unused()] == []
+    assert whole_body.hyphens.undecided == []
+    assert whole_body.out_of_sequence == []
+
+
+def test_the_hyphen_decisions_reach_the_text(whole_body):
+    """The compounds a default "join" used to weld (twentyeight, fortyeight, dramaticomusical) are whole again, and
+    the one solid "nonnetwork" left is the book's own, printed mid-line on p. 139."""
+    text = " ".join(own_text(node, whole_body.tree.join) for node in whole_body.tree.walk())
+    for compound in ("not more than twenty-eight or less than twenty-seven years", "forty-eight contiguous States",
+                     "a dramatico-musical work of a religious nature"):
+        assert compound in text
+    for welded in ("twentyeight", "fortyeight", "dramaticomusical"):
+        assert welded not in text
+    assert text.count("nonnetwork") == 1
+    assert "nonsequentially" in text and "preexisting material employed in the work" in text
 
 
 # --- quoted text is the appendices' rule, not Title 17's (ruling R11) -----------------------------
