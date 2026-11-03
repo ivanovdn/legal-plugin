@@ -6,8 +6,11 @@ It refuses an unregistered id and a PDF that is not the registered edition (exit
 the book, and builds the report (ingest/books/report.py). With --dry-run it writes the chunk list, the
 report and a 20-chunk sample to data/deploy-logs/ and stops: nothing reaches Qdrant. Without it, a book
 that does not clear the report's bar is refused (exit 1, ruling 15); one that does replaces the book's
-points for this edition (collection if missing, old points deleted, embed with truncation off, upsert),
-and the command checks that the collection holds exactly the chunks it wrote (exit 1 if not).
+points for this edition: the collection if missing, then EVERY chunk embedded (truncation off) and each
+vector checked against QDRANT_VECTOR_DIM, and only then the old points deleted and the new ones
+upserted. Embedding first means an Ollama failure, a chunk past the model's window or a vector of the
+wrong size leaves the previous ingest as it was (ruling R16a). The command then checks that the
+collection holds exactly the chunks it wrote (exit 1 if not).
 
 Exit codes: 0 done, 1 the bar failed or the ingest check failed, 2 refused.
 """
@@ -46,7 +49,8 @@ def _err(message: str) -> None:
 
 
 def _with_progress(count: TokenCounter) -> Callable[[str], int | None]:
-    """The counter, logging every COUNT_PROGRESS_EVERY requests: a whole book asks Ollama thousands of times."""
+    """The counter, logging every COUNT_PROGRESS_EVERY requests: a whole book asks it about a thousand times,
+    for about a minute. The count is requests, repeats included: the cache sits inside the real counter."""
     started = time.monotonic()
     asked = 0
 
@@ -54,7 +58,8 @@ def _with_progress(count: TokenCounter) -> Callable[[str], int | None]:
         nonlocal asked
         asked += 1
         if asked % COUNT_PROGRESS_EVERY == 0:
-            logger.info("counted %d passages so far (%.0f s)", asked, time.monotonic() - started)
+            logger.info("token counter asked %d times so far (%.0f s; repeats included)",
+                        asked, time.monotonic() - started)
         return count(text)
 
     return counted
@@ -144,7 +149,8 @@ def _dry_run(book: BookEntry, chunks: list[BookChunk], report: dict) -> int:
 
 def _embed_all(chunks: list[BookChunk]) -> list[list[float]] | None:
     """One vector per chunk, from the text that is stored with it, embedded EMBED_BATCH at a time.
-    None (after saying why) when a chunk is longer than the embedding model's window: nothing is cut."""
+    None (after saying why) when a chunk is longer than the embedding model's window: nothing is cut.
+    Nothing is deleted yet, so the previous ingest is untouched."""
     vectors: list[list[float]] = []
     for number, start in enumerate(range(0, len(chunks), EMBED_BATCH), start=1):
         batch = chunks[start:start + EMBED_BATCH]
@@ -152,20 +158,38 @@ def _embed_all(chunks: list[BookChunk]) -> list[list[float]] | None:
             vectors += embed_texts([chunk.text for chunk in batch])
         except EmbeddingInputTooLong as exc:
             _err(f"failed: chunk {batch[exc.index].chunk_key} ({exc.chars} chars) is longer than the embedding "
-                 "model's window and was not cut. This edition's points were already deleted: fix the "
-                 "chunking, then run the ingest again.")
+                 "model's window and was not cut. Nothing was deleted: this edition's earlier points are "
+                 "untouched. Fix the chunking, then run the ingest again.")
             return None
         if number % EMBED_PROGRESS_EVERY == 0:
             logger.info("embedded %d of %d chunks", len(vectors), len(chunks))
     return vectors
 
 
+def _wrong_vectors(chunks: list[BookChunk], vectors: list[list[float]], dim: int) -> str | None:
+    """Why these vectors cannot be written (one per chunk, each QDRANT_VECTOR_DIM long), or None."""
+    if len(vectors) != len(chunks):
+        return f"the embedding model returned {len(vectors)} vectors for {len(chunks)} chunks"
+    for chunk, vector in zip(chunks, vectors):
+        if len(vector) != dim:
+            return (f"the embedding model returned a vector of {len(vector)} numbers for chunk "
+                    f"{chunk.chunk_key}, but QDRANT_VECTOR_DIM is {dim}")
+    return None
+
+
 def _ingest(book: BookEntry, chunks: list[BookChunk], report: dict, started: float) -> int:
     ensure_book_collection()
-    delete_book_edition(book.id, book.edition_id)
+    # Embed everything before the edition's points are deleted: a failure from here to the delete leaves
+    # the previous ingest as it was.
     vectors = _embed_all(chunks)
     if vectors is None:
         return 1
+    if problem := _wrong_vectors(chunks, vectors, get_settings().qdrant_vector_dim):
+        _err(f"failed: {problem}. Nothing was deleted or written: this edition's earlier points are untouched. "
+             "Set QDRANT_VECTOR_DIM to the embedding model's dimension (a collection made with another size "
+             "has to be recreated), then run the ingest again.")
+        return 1
+    delete_book_edition(book.id, book.edition_id)
     upsert_book_chunks(chunks, vectors)
     stored = count_book_points(book.id, book.edition_id)
     if stored != len(chunks):
@@ -188,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("pdf_path", type=Path, help="the book's PDF: the registered edition, byte for byte")
     parser.add_argument("--dry-run", action="store_true", help="write the chunk list and report, touch nothing else")
     opts = parser.parse_args(argv)
+    logger.info("ingest_book %s %s%s", opts.book_id, opts.pdf_path, " (dry run)" if opts.dry_run else "")
 
     try:
         book = get_book(opts.book_id)
@@ -233,6 +258,12 @@ def _configure_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per /api/embed request buries ours
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """The entry point of `python -m scripts.ingest_book`: logging first, because a successful ingest's
+    only output is its INFO lines (tests/test_ingest_book.py runs this in a fresh interpreter)."""
     _configure_logging()
     sys.exit(main())
+
+
+if __name__ == "__main__":
+    cli()

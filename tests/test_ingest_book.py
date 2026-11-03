@@ -8,11 +8,16 @@ The dry run's real numbers come from running it on the whole book (docs/shipped-
 """
 import json
 import logging
+import os
 import random
 import re
+import subprocess
+import sys
 from collections import Counter
 from dataclasses import replace
+from pathlib import Path
 
+import httpx
 import pytest
 
 import ingest.books as books
@@ -27,11 +32,12 @@ from ingest.books.models import BookChunk, BookTree, Node, TextLine
 from ingest.books.overrides import Override, OverrideLedger
 from ingest.books.registry import get_book
 from ingest.books.report import BAR_EXPECTED, build_report, sample_chunks
-from rag.book_store import count_book_points, upsert_book_chunks
+from rag.book_store import count_book_points, ensure_book_collection, upsert_book_chunks
 from rag.embeddings import EmbeddingInputTooLong
 from scripts import ingest_book
 from scripts.ingest_book import DEPLOY_LOGS_DIR, main
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOK = get_book("circ92")
 BUDGET = 800
 DIM = 768
@@ -424,14 +430,19 @@ def test_ingest_refuses_without_a_vector_dimension_before_parsing(circ92_pdf, no
     assert "QDRANT_VECTOR_DIM" in capsys.readouterr().err
 
 
+def vector_of(text: str, dim: int = DIM) -> list[float]:
+    """A vector the fake embedder returns: the text's length first, so vector i is traceably chunk i's."""
+    return [float(len(text))] + [1.0] * (dim - 1)
+
+
 class Recorder:
     """The Qdrant functions and the embedder, faked in the command's namespace, in the order they are called."""
 
-    def __init__(self, monkeypatch, *, count=None, embed_error_at=None):
+    def __init__(self, monkeypatch, *, count=None, embed_error_at=None, dim=DIM, drop=0):
         self.calls: list[str] = []
         self.batches: list[list[str]] = []
         self.upserted: tuple[list, list] | None = None
-        self._count, self._embed_error_at = count, embed_error_at
+        self._count, self._embed_error_at, self._dim, self._drop = count, embed_error_at, dim, drop
         monkeypatch.setattr(ingest_book, "ensure_book_collection", lambda: self.calls.append("ensure") or True)
         monkeypatch.setattr(ingest_book, "delete_book_edition",
                             lambda book_id, edition_id: self.calls.append(f"delete {book_id} {edition_id}"))
@@ -444,7 +455,7 @@ class Recorder:
         self.batches.append(list(texts))
         if self._embed_error_at is not None:
             raise EmbeddingInputTooLong(self._embed_error_at, 9999)
-        return [[float(len(t)), 1.0] for t in texts]
+        return [vector_of(t, self._dim) for t in texts][self._drop:]
 
     def _upsert(self, chunks, vectors, **kw):
         self.calls.append("upsert")
@@ -464,14 +475,15 @@ def test_ingest_steps_in_order(circ92_pdf, fake_parse, monkeypatch, settings_env
     with caplog.at_level(logging.INFO, logger=ingest_book.logger.name):
         assert main(["circ92", str(circ92_pdf)]) == 0
 
-    # D10: the collection, then the edition's old points, then embed + upsert, then the count.
-    assert rec.calls[0:2] == ["ensure", "delete circ92 2025-12"]
-    assert set(rec.calls[2:-2]) == {"embed"} and rec.calls[-2:] == ["upsert", "count circ92 2025-12"]
+    # R16a: the collection, every chunk embedded, and only then the edition's old points deleted.
+    assert rec.calls[0] == "ensure"
+    assert set(rec.calls[1:-3]) == {"embed"} and "embed" in rec.calls
+    assert rec.calls[-3:] == ["delete circ92 2025-12", "upsert", "count circ92 2025-12"]
     assert [len(b) for b in rec.batches] == [32] * (len(chunks) // 32) + [len(chunks) % 32]
     assert [t for b in rec.batches for t in b] == [c.text for c in chunks]  # the header + body: what is embedded
     up_chunks, up_vectors = rec.upserted
     assert [c.chunk_key for c in up_chunks] == [c.chunk_key for c in chunks]
-    assert up_vectors == [[float(len(c.text)), 1.0] for c in chunks]  # vector i belongs to chunk i
+    assert up_vectors == [vector_of(c.text) for c in chunks]  # vector i belongs to chunk i
 
     summary = [r.getMessage() for r in caplog.records if "ingested" in r.getMessage()]
     assert len(summary) == 1
@@ -494,7 +506,7 @@ def test_ingest_stops_on_a_chunk_past_the_embedding_window(circ92_pdf, fake_pars
     settings_env(qdrant_vector_dim=DIM)
     rec = Recorder(monkeypatch, embed_error_at=3)
     assert main(["circ92", str(circ92_pdf)]) == 1
-    assert rec.upserted is None
+    assert rec.upserted is None and not [c for c in rec.calls if c.startswith("delete")]
     assert chunks_of(fake_parse)[3].chunk_key in capsys.readouterr().err  # item 3 of the first batch
 
 
@@ -517,3 +529,163 @@ def test_ingest_and_reingest(circ92_pdf, book_qdrant, fake_parse, monkeypatch, f
 
 def hash_slot(text: str) -> int:
     return sum(map(ord, text)) % DIM
+
+
+# --- R16a: embed everything before deleting anything -------------------------------------------------------
+
+
+def _plant_earlier_ingest(fake_parse) -> None:
+    """A point of this edition from an earlier ingest, in the real collection."""
+    ensure_book_collection()
+    first = chunks_of(fake_parse)[0]
+    upsert_book_chunks([first.model_copy(update={"chunk_key": f"{first.ref_id}~earlier"})], [[1.0] * DIM])
+    assert count_book_points("circ92", "2025-12") == 1
+
+
+def _embedder(monkeypatch, *, fail_on_batch=None, error=None, dim=DIM, drop=0):
+    """The embedder, faked: the Nth call raises `error`, every other returns vectors `dim` long."""
+    state = {"calls": 0}
+
+    def embed(texts):
+        state["calls"] += 1
+        if state["calls"] == fail_on_batch:
+            raise error
+        return [vector_of(t, dim) for t in texts][drop:]
+
+    monkeypatch.setattr(ingest_book, "embed_texts", embed)
+    return state
+
+
+def test_an_ollama_failure_midway_leaves_the_earlier_ingest_in_place(circ92_pdf, book_qdrant, fake_parse, monkeypatch):
+    _plant_earlier_ingest(fake_parse)
+    _embedder(monkeypatch, fail_on_batch=2, error=httpx.ConnectError("Ollama is down"))
+    with pytest.raises(httpx.ConnectError):
+        main(["circ92", str(circ92_pdf)])
+    assert count_book_points("circ92", "2025-12") == 1  # the point the delete would have taken
+
+
+def test_a_chunk_past_the_window_leaves_the_earlier_ingest_in_place(circ92_pdf, book_qdrant, fake_parse, monkeypatch,
+                                                                   capsys):
+    _plant_earlier_ingest(fake_parse)
+    _embedder(monkeypatch, fail_on_batch=3, error=EmbeddingInputTooLong(0, 9999))
+    assert main(["circ92", str(circ92_pdf)]) == 1
+    assert count_book_points("circ92", "2025-12") == 1
+    err = capsys.readouterr().err
+    assert chunks_of(fake_parse)[64].chunk_key in err  # item 0 of the third batch
+    assert "already deleted" not in err and "untouched" in err
+
+
+@pytest.mark.parametrize("dim, drop", [(3, 0), (DIM + 1, 0), (DIM, 1)], ids=["too-short", "too-long", "one-short"])
+def test_vectors_of_the_wrong_size_or_number_are_refused_before_the_delete(
+        circ92_pdf, book_qdrant, fake_parse, monkeypatch, capsys, dim, drop):
+    _plant_earlier_ingest(fake_parse)
+    _embedder(monkeypatch, dim=dim, drop=drop)
+    assert main(["circ92", str(circ92_pdf)]) == 1
+    assert count_book_points("circ92", "2025-12") == 1
+    err = capsys.readouterr().err
+    assert ("QDRANT_VECTOR_DIM" in err) if drop == 0 else ("vectors for" in err)
+
+
+def test_a_clean_run_replaces_the_earlier_ingest_after_embedding(circ92_pdf, book_qdrant, fake_parse, monkeypatch):
+    _plant_earlier_ingest(fake_parse)
+    _embedder(monkeypatch)
+    assert main(["circ92", str(circ92_pdf)]) == 0
+    assert count_book_points("circ92", "2025-12") == len(chunks_of(fake_parse))  # the earlier point is gone
+
+
+# --- the logging an operator reads ----------------------------------------------------------------------------
+
+
+def test_the_token_counter_logs_every_250th_request(caplog):
+    asked = []
+
+    def stub(text):
+        asked.append(text)
+        return None if text == "past the window" else len(text)
+
+    counted = ingest_book._with_progress(stub)
+    assert ingest_book.COUNT_PROGRESS_EVERY == 250
+    with caplog.at_level(logging.INFO, logger=ingest_book.logger.name):
+        assert [counted("ab") for _ in range(249)] == [2] * 249
+        assert caplog.records == []
+        assert counted("past the window") is None  # the 250th: the stub's answer passes through
+        assert [r.getMessage() for r in caplog.records if "250 times" in r.getMessage()]
+        for _ in range(250):
+            counted("ab")
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 2 and "500 times" in messages[1]
+    assert "repeats included" in messages[0] and "passages" not in messages[0]  # requests, not distinct texts
+    assert len(asked) == 500
+
+
+def test_embedding_logs_its_progress(fake_parse, monkeypatch, caplog):
+    chunks = chunks_of(fake_parse)
+    monkeypatch.setattr(ingest_book, "embed_texts", lambda texts: [vector_of(t) for t in texts])
+    monkeypatch.setattr(ingest_book, "EMBED_PROGRESS_EVERY", 2)
+    with caplog.at_level(logging.INFO, logger=ingest_book.logger.name):
+        assert len(ingest_book._embed_all(chunks)) == len(chunks)
+    batches = -(-len(chunks) // 32)
+    assert [r.getMessage() for r in caplog.records] == [  # after the 2nd, 4th and 6th batch
+        f"embedded 64 of {len(chunks)} chunks", f"embedded 128 of {len(chunks)} chunks",
+        f"embedded {len(chunks)} of {len(chunks)} chunks",
+    ] and batches == 6
+
+
+def _fresh_interpreter(snippet: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-c", snippet], capture_output=True, text=True, cwd=REPO_ROOT, env=os.environ.copy(),
+        timeout=180,
+    )
+
+
+_STUB_MAIN = (
+    "import logging\n"
+    "import scripts.ingest_book as m\n"
+    "def main(argv=None):\n"
+    "    m.logger.info('MARKER-INFO')\n"
+    "    logging.getLogger('httpx').info('MARKER-HTTPX')\n"
+    "    return 0\n"
+    "m.main = main\n"
+)
+
+
+def test_the_command_configures_logging_so_info_reaches_stderr():
+    """A successful ingest prints nothing but its INFO lines. Run in a fresh interpreter on purpose: under pytest
+    the root logger has pytest's handler and caplog forces the level, so a caplog test passes whether or not the
+    command configures logging at all (tests/test_logging_config.py)."""
+    proc = _fresh_interpreter(_STUB_MAIN + "m.cli()\n")
+    assert proc.returncode == 0, proc.stderr
+    assert "MARKER-INFO" in proc.stderr
+    assert "MARKER-HTTPX" not in proc.stderr  # one httpx line per /api/embed request would bury ours
+
+
+def test_without_configuring_logging_the_info_lines_are_lost():
+    """The control that makes the test above mean something: a fresh interpreter that does not call the command's
+    entry point sees no INFO at all (the root logger has no handler)."""
+    proc = _fresh_interpreter(_STUB_MAIN + "m.main()\n")
+    assert proc.returncode == 0, proc.stderr
+    assert "MARKER-INFO" not in proc.stderr
+
+
+def test_configure_logging_puts_a_handler_on_the_root_at_info_and_quiets_httpx():
+    proc = _fresh_interpreter(
+        "import json, logging\n"
+        "import scripts.ingest_book as m\n"
+        "m._configure_logging()\n"
+        "root = logging.getLogger()\n"
+        "print(json.dumps({'handlers': len(root.handlers), 'level': root.level,\n"
+        "                  'httpx': logging.getLogger('httpx').level}))\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"handlers": 1, "level": logging.INFO, "httpx": logging.WARNING}
+
+
+def test_run_as_a_module_the_command_configures_logging_and_refuses_an_unknown_book(tmp_path):
+    """The `__main__` block itself: it must go through `cli()`, or the INFO line that opens every run is lost."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.ingest_book", "no-such-book", str(tmp_path / "x.pdf")],
+        capture_output=True, text=True, cwd=REPO_ROOT, timeout=180,
+    )
+    assert proc.returncode == 2
+    assert re.search(r" INFO ingest_book no-such-book .*x\.pdf", proc.stderr)
+    assert "refused: book 'no-such-book' is not registered" in proc.stderr
