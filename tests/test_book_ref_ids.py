@@ -66,7 +66,7 @@ def test_ref_id_re_needs_a_clean_left_edge():
     assert REF_ID_RE.search("`circ92-2025-12:usc17-s107`").group(0) == "circ92-2025-12:usc17-s107"
     # Preceded by a character that can be part of an id (or a colon): not an id of ours.
     assert REF_ID_RE.search("my-circ92-2025-12:usc17-s107") is None
-    assert REF_ID_RE.search("x_circ92-2025-12:usc17-s107") is None
+    assert REF_ID_RE.search("x_circ92-2025-12:usc17-s107").group(0) == "circ92-2025-12:usc17-s107"
     assert REF_ID_RE.search("ref_id:circ92-2025-12:usc17-s107") is None
 
 
@@ -98,7 +98,53 @@ def test_an_id_written_without_a_space_after_the_marker_is_still_found():
 
 
 def test_an_id_glued_to_other_id_characters_is_not_cited():
-    assert find_cited_ref_ids("my-circ92-2025-12:usc17-s106 and x_circ92-2025-12:usc17-s108") == []
+    assert find_cited_ref_ids("my-circ92-2025-12:usc17-s106 and 9circ92-2025-12:usc17-s108") == []
+    assert find_cited_ref_ids("x:circ92-2025-12:usc17-s106") == []
+
+
+@pytest.mark.parametrize("text", [
+    "_circ92-2025-12:usc17-s107_",  # markdown italics
+    "see _circ92-2025-12:usc17-s107_.",
+    "__circ92-2025-12:usc17-s107__",  # markdown bold, underscore form
+    "x_circ92-2025-12:usc17-s107",  # no book id holds an underscore, so it is no part of the id
+])
+def test_an_id_after_an_underscore_is_cited(text):
+    """Final review: `_<id>_` is markdown italics. Before, the underscore hid the id from the check AND the
+    renderer, so a cited id reached the attorney raw and unchecked."""
+    assert find_cited_ref_ids(text) == ["circ92-2025-12:usc17-s107"]
+
+
+@pytest.mark.parametrize("text, cited", [
+    ("circ92-2025-12:usc17-s122(f)(1)", "circ92-2025-12:usc17-s122-f-1"),
+    ("see circ92-2025-12:usc17-s122(f)(1).", "circ92-2025-12:usc17-s122-f-1"),
+    ("ref_id: circ92-2025-12:usc17-s122(f)(1)(A)", "circ92-2025-12:usc17-s122-f-1-A"),  # each label's case kept
+    ("ref_id:circ92-2025-12:usc17-s107(1)", "circ92-2025-12:usc17-s107-1"),
+    ("`circ92-2025-12:usc17-s122(f)(1)`", "circ92-2025-12:usc17-s122-f-1"),
+    ("`ref_id: circ92-2025-12:usc17-s122(f)(1)`", "circ92-2025-12:usc17-s122-f-1"),
+    ("ref_id: `circ92-2025-12:usc17-s122(f)(1)`", "circ92-2025-12:usc17-s122-f-1"),
+    ("_circ92-2025-12:usc17-s122(f)(1)_", "circ92-2025-12:usc17-s122-f-1"),
+    ("circ92-2025-12:usc17-s122-f(1)", "circ92-2025-12:usc17-s122-f-1"),
+    ("(ref_id: circ92-2025-12:usc17-s107(1))", "circ92-2025-12:usc17-s107-1"),  # the closing paren is prose
+])
+def test_a_subdivision_glued_to_an_id_is_read_as_the_sub_path(text, cited):
+    """Final review: "…:usc17-s122(f)(1)" was read as §122, so the pin cite was checked and paged as the
+    whole section. It is the sub-path, which the check verifies and the renderer pages on its own."""
+    assert find_cited_ref_ids(text) == [cited]
+
+
+@pytest.mark.parametrize("text, token", [
+    ('circ92-2025-12:usc17-s101("joint-work")', 'circ92-2025-12:usc17-s101("joint-work")'),
+    ("ref_id: circ92-2025-12:usc17-s107(§1)", "circ92-2025-12:usc17-s107(§1)"),
+    ("ref_id: usc17-s122(f)(1)", "usc17-s122(f)(1)"),  # off the grammar before the labels too
+])
+def test_a_glued_parenthetical_that_is_no_sub_path_is_cited_verbatim(text, token):
+    """The normalised token is off the grammar, so the whole token is what was cited: it is never in the
+    citations, so it renders unverified."""
+    assert find_cited_ref_ids(text) == [token]
+
+
+def test_a_parenthetical_after_a_space_is_prose():
+    assert find_cited_ref_ids("circ92-2025-12:usc17-s107 (fair use)") == ["circ92-2025-12:usc17-s107"]
 
 
 @pytest.mark.parametrize(

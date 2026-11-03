@@ -131,6 +131,17 @@ def test_sub_path_under_retrieved_chunk(store):
     assert output_formatter(out)["report"]["response"] == f"The first factor is purpose ({CITE_107_1})."
 
 
+def test_a_subdivision_glued_to_a_retrieved_id_is_checked_and_paged_as_the_sub_path(store):
+    """Final review: "…:usc17-s107(1)" names §107(1), not §107. It is valid through §107's chunk, and it
+    renders with §107(1)'s own page (21), not the section's span (20–21); nothing of "(1)" is left over."""
+    answer = f"The first factor is purpose (ref_id: {S107}(1))."
+    out = risk_assessor(_research(answer, retrieved=[S107], turn=[S107]))
+
+    assert out["risk_flags"] == []
+    assert out["book_citations"] == [{"ref_id": S107_1, "valid": True, "citation": CITE_107_1, "reason": None}]
+    assert output_formatter(out)["report"]["response"] == f"The first factor is purpose ({CITE_107_1})."
+
+
 def test_a_sub_path_retrieved_by_its_own_id_is_valid(store):
     """lookup_book("§107(1)") marks §107(1) itself as retrieved: valid without its chunk's id."""
     assert check_book_citations(f"ref_id: {S107_1}", [S107_1]) == [

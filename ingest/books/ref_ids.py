@@ -24,8 +24,9 @@ _EDITION = r"\d{4}-\d{2}"
 _PATH = r"[A-Za-z0-9_-]*[A-Za-z0-9]"
 REF_ID_PATTERN = rf"{_BOOK}-{_EDITION}:{_PATH}"
 
-# An id counts only when nothing that could be part of one stands to its left.
-_NOT_AFTER_ID_CHAR = r"(?<![A-Za-z0-9_:-])"
+# An id counts only when nothing that could be part of one stands to its left. An underscore can't: no
+# book id holds one, and `_<id>_` is markdown italics, which a model writes (final review).
+_NOT_AFTER_ID_CHAR = r"(?<![A-Za-z0-9:-])"
 REF_ID_RE = re.compile(_NOT_AFTER_ID_CHAR + REF_ID_PATTERN, re.ASCII)
 REF_MARKER_RE = re.compile(rf"ref_id:\s*({REF_ID_PATTERN})", re.ASCII)
 
@@ -36,7 +37,13 @@ _REF_ID_FULL_RE = re.compile(REF_ID_PATTERN, re.ASCII)
 _PARTS_RE = re.compile(rf"({_BOOK})-({_EDITION}):({_PATH})", re.ASCII)
 
 # How a model writes a cited id: bare, in backticks, after a `ref_id:` marker (with or without
-# a space), or both. Each alternative has exactly one group, so `lastgroup` names the id.
+# a space), or both. Each alternative has exactly one group, so `lastgroup` names the cited token.
+#
+# A subdivision glued to an id is part of what was cited: "…:usc17-s122(f)(1)" is the sub-path
+# "…:usc17-s122-f-1" (D1's grammar, each label's case kept), so the pin cite is checked and paged as
+# itself, and the renderer replaces the labels with the rest (final review). When the labels don't
+# make a grammar id (…-s101("joint-work")), the whole token is what was cited, verbatim: it is never
+# in the citations, so it renders unverified.
 #
 # After an explicit marker the model MEANT to cite, so a token that is off the grammar
 # (`ref_id: usc17-s107`, `ref_id: circ92:usc17-s107`) is cited verbatim too: it is never in the
@@ -47,14 +54,16 @@ _PARTS_RE = re.compile(rf"({_BOOK})-({_EDITION}):({_PATH})", re.ASCII)
 _MARKER = r"(?<![A-Za-z0-9_])ref_id:"
 _TOKEN = r"[A-Za-z0-9_:-]*[A-Za-z0-9]"
 _ENDS_TOKEN = r"(?![A-Za-z0-9_:-]*[A-Za-z0-9])"
+_GLUED = r"(?:\([^\s()`]+\))*"  # "(f)(1)" right after the id, no space between
+_GLUED_LABEL_RE = re.compile(r"\(([^\s()`]+)\)")
 _CITED_RE = re.compile(
-    rf"`(?:{_MARKER}\s*)?(?P<wrapped>{REF_ID_PATTERN})`"  # `id`  `ref_id: id`
-    rf"|{_MARKER}\s*`(?P<marker_wrapped>{REF_ID_PATTERN})`"  # ref_id: `id`
-    rf"|{_MARKER}\s*(?P<marker>{REF_ID_PATTERN}){_ENDS_TOKEN}"  # ref_id: id   ref_id:id
-    rf"|{_NOT_AFTER_ID_CHAR}(?P<bare>{REF_ID_PATTERN})"  # id
-    rf"|`{_MARKER}\s*(?P<loose_wrapped>{_TOKEN})`"  # `ref_id: token`
-    rf"|{_MARKER}\s*`(?P<loose_marker_wrapped>{_TOKEN})`"  # ref_id: `token`
-    rf"|{_MARKER}\s*(?P<loose_marker>{_TOKEN})",  # ref_id: token
+    rf"`(?:{_MARKER}\s*)?(?P<wrapped>{REF_ID_PATTERN}{_GLUED})`"  # `id`  `ref_id: id`
+    rf"|{_MARKER}\s*`(?P<marker_wrapped>{REF_ID_PATTERN}{_GLUED})`"  # ref_id: `id`
+    rf"|{_MARKER}\s*(?P<marker>{REF_ID_PATTERN}{_GLUED}){_ENDS_TOKEN}"  # ref_id: id   ref_id:id
+    rf"|{_NOT_AFTER_ID_CHAR}(?P<bare>{REF_ID_PATTERN}{_GLUED})"  # id
+    rf"|`{_MARKER}\s*(?P<loose_wrapped>{_TOKEN}{_GLUED})`"  # `ref_id: token`
+    rf"|{_MARKER}\s*`(?P<loose_marker_wrapped>{_TOKEN}{_GLUED})`"  # ref_id: `token`
+    rf"|{_MARKER}\s*(?P<loose_marker>{_TOKEN}{_GLUED})",  # ref_id: token
     re.ASCII,
 )
 
@@ -83,15 +92,28 @@ def point_id(key: str) -> str:
     return str(uuid.uuid5(POINT_NAMESPACE, key))
 
 
+def _cited_id(match: re.Match) -> str:
+    """The id one cited form names: the token, or the sub-path its glued labels make when that is a grammar
+    id ("…-s122(f)(1)" -> "…-s122-f-1"), else the whole token, verbatim."""
+    token = match.group(match.lastgroup)
+    head = token.split("(", 1)[0]
+    if head == token:
+        return token
+    sub_path = head + "".join(f"-{label}" for label in _GLUED_LABEL_RE.findall(token[len(head):]))
+    return sub_path if _REF_ID_FULL_RE.fullmatch(sub_path) else token
+
+
 def replace_cited_ref_ids(text: str, replace: Callable[[str], str]) -> str:
-    """Replace each cited id, with its `ref_id:` marker and any backticks that wrap it, by `replace(id)`."""
-    return _CITED_RE.sub(lambda m: replace(m.group(m.lastgroup)), text)
+    """Replace each cited id, with its `ref_id:` marker, any backticks that wrap it and any labels glued to
+    it, by `replace(id)`."""
+    return _CITED_RE.sub(lambda m: replace(_cited_id(m)), text)
 
 
 def find_cited_ref_ids(text: str) -> list[str]:
-    """Every id the text cites, once each, in the order first seen. Reads the same forms
-    `replace_cited_ref_ids` replaces, so a cited id cannot escape being checked and rendered."""
-    return list(dict.fromkeys(m.group(m.lastgroup) for m in _CITED_RE.finditer(text)))
+    """Every id the text cites, once each, in the order first seen. Reads the same forms, through the same
+    regex and `_cited_id`, that `replace_cited_ref_ids` replaces, so a cited id cannot escape being checked
+    and rendered."""
+    return list(dict.fromkeys(_cited_id(m) for m in _CITED_RE.finditer(text)))
 
 
 def is_under(path: str, ancestor: str) -> bool:

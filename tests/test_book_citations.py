@@ -160,6 +160,29 @@ def test_an_off_grammar_id_after_the_marker_renders_unverified(text, expected):
     assert render_response(text, {"circ92-2025-12:usc17-s107": "CITE"}) == expected
 
 
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("see _circ92-2025-12:usc17-s107_.", "see _CITE_."),
+        ("see circ92-2025-12:usc17-s122(f)(1).", "see SUB."),
+        ("see (ref_id: circ92-2025-12:usc17-s122(f)(1)).", "see (SUB)."),
+        ("see `circ92-2025-12:usc17-s122(f)(1)`.", "see SUB."),
+        ("see ref_id: `circ92-2025-12:usc17-s122(f)(1)`, then", "see SUB, then"),
+        (
+            'see circ92-2025-12:usc17-s101("joint-work").',
+            'see [unverified reference: circ92-2025-12:usc17-s101("joint-work")].',
+        ),
+        ("ref_id: usc17-s122(f)(1).", "[unverified reference: usc17-s122(f)(1)]."),
+    ],
+)
+def test_the_renderer_replaces_what_the_check_reads(text, expected):
+    """Final review: an italic id and a subdivision glued to an id. The replaced span is the whole cited
+    form, labels included, so "(f)(1)" is never left after a citation of §122 or of §122(f)(1)."""
+    citations = {"circ92-2025-12:usc17-s107": "CITE", "circ92-2025-12:usc17-s122-f-1": "SUB",
+                 "circ92-2025-12:usc17-s122": "WHOLE SECTION"}
+    assert render_response(text, citations) == expected
+
+
 def test_a_bare_off_grammar_token_is_left_alone():
     assert render_response("see usc17-s107 and circ92:usc17-s107", {}) == "see usc17-s107 and circ92:usc17-s107"
 
@@ -188,6 +211,8 @@ def test_render_response_leaves_backticks_that_do_not_wrap_the_id():
         "ref_id:circ92-2025-12:usc17-s107 and ref_id: `circ92-2025-12:ch1-n40`.",
         "`ref_id: circ92-2025-12:usc17-s107` then my-circ92-2025-12:usc17-s106 then x_circ92-2025-12:usc17-s108",
         "ref_id: usc17-s107, `ref_id: circ92:ch1-n40`, ref_id: `usc17-s106`. and ref_id:circ92-2025-12:usc17:s109",
+        "_circ92-2025-12:usc17-s107_ and circ92-2025-12:usc17-s122(f)(1)(A), `ref_id: circ92-2025-12:usc17-s106(2)`",
+        'ref_id: circ92-2025-12:usc17-s101("joint-work") and ref_id: usc17-s122(f)(1)',
     ],
 )
 def test_every_id_the_check_finds_is_one_the_renderer_replaces(text):
