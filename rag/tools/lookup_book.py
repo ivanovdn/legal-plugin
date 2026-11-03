@@ -68,7 +68,7 @@ def run_lookup_book(reference: str) -> str:
 
 @tool
 def lookup_book(reference: str) -> str:
-    """Look up one passage of the reference book Circular 92: Title 17 U.S.C. (copyright) and related laws, Dec. 2025 edition.
+    """Look up one passage of the reference book Circular 92: Title 17 U.S.C. (copyright) and related laws.
 
     Use it when you know the citation: a section such as "§ 107", "17 U.S.C. §122(f)(1)" or
     "section 101 'joint work'", or an id a search printed (a history note's id returns the note).

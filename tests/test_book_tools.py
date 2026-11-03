@@ -5,15 +5,20 @@ No Qdrant here: `search_book_chunks` / `lookup_book_chunks` are patched where th
 (the tool modules' globals). The format is the contract D7 and ruling 20 fix: the model reads it, and
 Task 12's citation check reads the `ref_id:` markers it carries.
 """
+import json
+
 import pytest
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from ingest.books.citations import find_stated_pages
 from ingest.books.models import BookChunk, SubRef
+from ingest.books.registry import BOOKS
 from observability.degradations import BOOK_SEARCH_FAILED
 from rag.book_search import BookHit, LookupResult
 from rag.tools.lookup_book import lookup_book
 from rag.tools.search_books import BOOK_TOOL_NAMES, format_chunks, retrieved_book_refs, search_books
+from skills.legal_research.prompts import RESEARCH_SYSTEM_PROMPT
 from tests.conftest import spans_by_name
 
 PREFIX = "circ92-2025-12"
@@ -172,6 +177,24 @@ def test_output_never_prints_page_or_edition(any_chunks, monkeypatch):
         assert "Dec. 2025" not in out
         for page in range(9871, 9879):
             assert str(page) not in out
+
+
+def test_the_model_reads_no_edition():
+    """R14: the model must have no edition to copy (D7/D8). What it reads of the tools is their
+    description and argument schema, as bound; and the research prompt."""
+    texts = {
+        "search_books.description": search_books.description,
+        "lookup_book.description": lookup_book.description,
+        "search_books as bound": json.dumps(convert_to_openai_tool(search_books), ensure_ascii=False),
+        "lookup_book as bound": json.dumps(convert_to_openai_tool(lookup_book), ensure_ascii=False),
+        "RESEARCH_SYSTEM_PROMPT": RESEARCH_SYSTEM_PROMPT,
+    }
+    assert "Circular 92" in texts["search_books.description"]
+    assert "Circular 92" in texts["lookup_book.description"]
+    for book in BOOKS.values():
+        for edition in (book.edition_label, book.edition_id, book.edition_id.split("-")[0]):
+            for where, text in texts.items():
+                assert edition not in text, f"{edition!r} in {where}"
 
 
 # --- search_books -------------------------------------------------------------------------------------

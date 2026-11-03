@@ -1921,13 +1921,17 @@ def test_legal_research_resets_context_truncated_each_turn(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
 
     monkeypatch.setattr(lr, "_extract_uploaded_text", lambda state: "")
-    monkeypatch.setattr(lr, "_run_kb_research", lambda state: ("answer", [], set()))
+    monkeypatch.setattr(lr, "_run_kb_research", lambda state: ("answer", [], set(), set()))
     state = {
         "request": "q",
         "context_truncated": {"doc_chars": 1, "kept_chars": 0, "kept_pct": 0},
         "token_usage": {"input": 1, "output": 1, "total": 2, "unit": "TOKENS"},
     }
     result = lr.legal_research(state)
+    # The turn must be the clean one this test is about: a stub out of step with
+    # _run_kb_research's return shape lands in the catch-all instead, and the
+    # resets below would still hold there.
+    assert result["llm_response"] == "answer"
     assert result["context_truncated"] is None
     assert result["token_usage"] is None
 

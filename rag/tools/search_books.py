@@ -99,7 +99,7 @@ def run_search_books(query: str, include_history_notes: bool = False) -> str:
 
 @tool
 def search_books(query: str, include_history_notes: bool = False) -> str:
-    """Search the reference book Circular 92: Title 17 U.S.C. (copyright) and related laws, Dec. 2025 edition.
+    """Search the reference book Circular 92: Title 17 U.S.C. (copyright) and related laws.
 
     Use it for questions on U.S. copyright law. Returns the best-matching passages, each headed by its id;
     cite a passage as `ref_id: <id>`, with the id exactly as printed here. Amendment-history notes are
