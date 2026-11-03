@@ -149,6 +149,25 @@ def set_trace_attributes(
         pass
 
 
+def set_span_attributes(**attrs: Any) -> None:
+    """Stamp attributes onto the CURRENT span (not the root). Best-effort; never raises.
+
+    A list of strings stays a string array, which a trace backend can filter on; any other
+    non-scalar is JSON-encoded, as everywhere else here. Keys with dots go through a dict:
+    `set_span_attributes(**{"book.ref_ids": ids})`."""
+    try:
+        span = trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        for key, value in attrs.items():
+            if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+                span.set_attribute(key, list(value))
+            else:
+                span.set_attribute(key, _as_attr(value))
+    except Exception:
+        pass
+
+
 def set_gen_attributes(
     *,
     name: str | None = None,

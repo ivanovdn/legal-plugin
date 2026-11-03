@@ -226,6 +226,27 @@ def test_submit_query_passes_empty_chat_history_in_initial_state(monkeypatch):
     assert state_arg["chat_history"] == []
 
 
+def test_submit_query_seeds_the_book_refs(monkeypatch):
+    """book_refs_turn is per turn: without the seed a review after a research turn
+    would carry that turn's book ids into its audit row. book_refs_retrieved gets []
+    too, which its reducer turns back into the conversation's ids."""
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    get_settings.cache_clear()
+
+    with patch("api.routes.query._get_graph") as mock_get_graph:
+        mock_graph = MagicMock()
+        mock_graph.invoke.side_effect = _mock_graph_invoke
+        mock_get_graph.return_value = mock_graph
+
+        from api.main import app
+        TestClient(app).post("/api/query", json={"request": "test"}, headers={"X-User-ID": "attorney-1"})
+
+    state_arg = mock_graph.invoke.call_args.args[0]
+    assert state_arg["book_refs_turn"] == []
+    assert state_arg["book_refs_retrieved"] == []
+
+
 def test_submit_query_threads_interactive_review_flag(monkeypatch):
     """interactive_review defaults False and is honored when the caller sets it.
 

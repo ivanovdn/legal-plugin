@@ -1,7 +1,9 @@
 """Unit tests for state reducer."""
 
+from typing import get_type_hints
+
 from config import get_settings
-from graph.state import LegalAgentState, _history_reducer
+from graph.state import BOOK_REFS_CAP, LegalAgentState, _book_refs_reducer, _history_reducer
 
 
 def test_history_reducer_concatenates_empty_and_new(monkeypatch):
@@ -89,3 +91,32 @@ def test_state_has_review_iterations_field(monkeypatch):
     }
     assert s["review_iterations"] == 0
     assert s["report_notes_unincorporated"] == ""
+
+
+# --- book_refs_retrieved (ruling 19) -------------------------------------------------------------------
+
+def test_book_refs_reducer():
+    a, b, c = "circ92-2025-12:usc17-s107", "circ92-2025-12:usc17-s108", "circ92-2025-12:ch1-n40"
+    # A node forwarding the state unchanged: no change, and the same list back.
+    old = [a, b]
+    assert _book_refs_reducer(old, [a, b]) is old
+    # New ids go to the end; one already there moves to the end (recency).
+    assert _book_refs_reducer([a, b], [b, c]) == [a, b, c]
+    assert _book_refs_reducer([a, b], [a]) == [b, a]
+    # A turn that retrieved nothing keeps the conversation's ids (the seed in initial_state is []).
+    assert _book_refs_reducer([a, b], []) == [a, b]
+    assert _book_refs_reducer([a, b], None) == [a, b]
+    assert _book_refs_reducer(None, [a]) == [a]
+    assert _book_refs_reducer(None, None) == []
+    # The cap keeps the most recent.
+    many = [f"circ92-2025-12:usc17-s{i}" for i in range(600)]
+    assert _book_refs_reducer([], many) == many[-BOOK_REFS_CAP:]
+    assert BOOK_REFS_CAP == 500
+    assert _book_refs_reducer(many[:500], [many[0]]) == [*many[1:500], many[0]]
+    assert _book_refs_reducer(many[:500], [many[500]]) == [*many[1:501]]
+
+
+def test_book_refs_fields_are_declared():
+    hints = get_type_hints(LegalAgentState, include_extras=True)
+    assert hints["book_refs_retrieved"].__metadata__ == (_book_refs_reducer,)
+    assert hints["book_refs_turn"] == list[str]

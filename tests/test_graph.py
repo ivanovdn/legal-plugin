@@ -815,3 +815,40 @@ def test_graph_resume_writes_the_resume_turn_id(tmp_path, monkeypatch):
             "SELECT turn_id FROM audit_log WHERE session_id = %s", ("resume-turn-id",)
         ).fetchall()
     assert rows == [("turn-resume",)]
+
+
+def _book_turn_agent(book_ref: str):
+    """A research run that searched client documents and the book, and cites the client document."""
+    agent = MagicMock()
+    agent.invoke.return_value = {"messages": [
+        ToolMessage(content="[1] Contract A (doc_id: d1, type: contract, jurisdiction: US)",
+                    name="search_legal", tool_call_id="call-1"),
+        ToolMessage(content=f"[1] ref_id: {book_ref}\n    …", name="search_books", tool_call_id="call-2"),
+        MagicMock(content="Based on Contract A (doc_id: d1), the answer is X."),
+    ]}
+    return agent
+
+
+def test_graph_keeps_book_refs_across_turns(monkeypatch):
+    """D8 + ruling 19 through the real graph and a checkpointer: every turn's initial state seeds
+    book_refs_retrieved with [], every node hands the whole state back, and still the field holds the
+    conversation's ids in recency order, while book_refs_turn holds only this turn's."""
+    monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    x, y = "circ92-2025-12:usc17-s107", "circ92-2025-12:usc17-s108"
+    compiled = build_graph(checkpointer=MemorySaver())
+    config = {"configurable": {"thread_id": "book-refs-thread"}}
+    results = []
+    with patch("graph.nodes.intent_router.httpx.post", side_effect=_fake_ollama_post), \
+         patch("graph.nodes.llm_caller.httpx.post", side_effect=_fake_ollama_post):
+        for ref in (x, y, x):
+            with patch("skills.legal_research.legal_research._build_agent", return_value=_book_turn_agent(ref)):
+                results.append(compiled.invoke(_make_state(
+                    request="What does fair use cover?", task_type="research", skill_plan=["research"],
+                    book_refs_retrieved=[], book_refs_turn=[],
+                ), config=config))
+
+    assert [r["book_refs_turn"] for r in results] == [[x], [y], [x]]
+    assert [r["book_refs_retrieved"] for r in results] == [[x], [x, y], [y, x]]

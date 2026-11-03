@@ -17,6 +17,8 @@ from observability.tracing import message_usage, traced_agent_invoke, traced_inv
 from rag.tools.search_legal import retrieved_doc_ids, search_legal
 from rag.tools.get_document import get_document
 from rag.tools.escalate import escalate
+from rag.tools.lookup_book import lookup_book
+from rag.tools.search_books import retrieved_book_refs, search_books
 from skills.grounding import preferences_block_for_state
 from skills.legal_research.context import (
     _build_chat_grounding,
@@ -88,7 +90,13 @@ def _build_json_llm() -> ChatOllama:
 
 
 def _build_agent():
-    """Build and cache the ReAct agent."""
+    """Build and cache the ReAct agent.
+
+    The only agent with the reference-book tools (spec D7): not contract review,
+    doc-chat or contract generation. `num_ctx` is the server's resident window
+    (ruling 16; CLAUDE.md: any other value reloads the model on every call);
+    `reasoning` stays unset, so thinking is as it was.
+    """
     cache_key = "legal_research"
     if cache_key in _agent_cache:
         return _agent_cache[cache_key]
@@ -98,9 +106,10 @@ def _build_agent():
         model=settings.llm_model,
         base_url=settings.ollama_base_url,
         temperature=0.0,
+        num_ctx=settings.ollama_num_ctx,
     )
 
-    tools = [search_legal, get_document, escalate]
+    tools = [search_legal, get_document, escalate, search_books, lookup_book]
 
     agent = create_react_agent(
         model=llm,
@@ -368,12 +377,14 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     return content, edits, prefs
 
 
-def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]:
-    """KB research path: ReAct agent with search_legal / get_document / escalate.
+def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str], set[str]]:
+    """KB research path: ReAct agent with search_legal / get_document / escalate
+    and the reference-book tools search_books / lookup_book.
 
     Used when no document is attached and the user is asking a research
-    question against the firm's RAG corpus. Returns (response, proposed_edits,
-    source_doc_ids).
+    question against the firm's RAG corpus or the reference books. Returns
+    (response, proposed_edits, source_doc_ids, book_ref_ids): both id sets are
+    read from the tools' results only, never from the answer.
     """
     request = state["request"]
     filters = state.get("filters", {})
@@ -401,7 +412,12 @@ def _run_kb_research(state: LegalAgentState) -> tuple[str, list[dict], set[str]]
         last_msg = messages[-1]
         content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
 
-    return content, _extract_proposed_edits(content), retrieved_doc_ids(messages)
+    return (
+        content,
+        _extract_proposed_edits(content),
+        retrieved_doc_ids(messages),
+        retrieved_book_refs(messages),
+    )
 
 
 @traced("legal_research")
@@ -423,6 +439,9 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
     state["context_truncated"] = None
     state["token_usage"] = None
     state["context_breakdown"] = None
+    # This turn's book retrievals, for the audit. book_refs_retrieved is not
+    # reset: it is the conversation's, and its reducer merges what a turn adds.
+    state["book_refs_turn"] = []
 
     try:
         if uploaded_text:
@@ -436,16 +455,21 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
                 len(content), len(edits),
             )
         else:
-            content, edits, source_docs = _run_kb_research(state)
+            content, edits, source_docs, book_refs = _run_kb_research(state)
             state["llm_response"] = content or "Error: Agent returned no messages."
             state["proposed_edits"] = edits
             state["retrieved_chunks"] = [
                 {"doc_id": did, "doc_title": f"Source {did[:8]}"}
                 for did in source_docs
             ]
+            state["book_refs_turn"] = sorted(book_refs)
+            # Only this turn's: the field's reducer (graph/state.py) merges them
+            # into the conversation's, so a later turn can cite them too (D8).
+            state["book_refs_retrieved"] = sorted(book_refs)
             logger.info(
-                "[legal_research] kb-research completed, response=%d chars, sources=%d, edits=%d",
-                len(content), len(source_docs), len(edits),
+                "[legal_research] kb-research completed, response=%d chars, sources=%d, "
+                "book passages=%d, edits=%d",
+                len(content), len(source_docs), len(book_refs), len(edits),
             )
 
     except Exception as e:

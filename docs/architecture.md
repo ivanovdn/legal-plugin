@@ -393,5 +393,7 @@ context_truncated,             # dict set when the document was cut to fit the b
 token_usage,                   # real prompt/completion counts from the LLM response
 context_breakdown,             # what this turn's context spent, for the pane's context counter
 turn_started_at,               # epoch secs the request began; audit duration_ms derives from it
-turn_id                        # the request's turn id; audit_log carries it so its row joins turn_log
+turn_id,                       # the request's turn id; audit_log carries it so its row joins turn_log
+book_refs_retrieved,           # book ref_ids the conversation retrieved (read from the book tools' results); recency-ordered reducer, capped at 500
+book_refs_turn                 # book ref_ids this turn retrieved, sorted (per turn; legal_research resets it)
 ```

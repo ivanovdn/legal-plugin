@@ -1930,3 +1930,140 @@ def test_legal_research_resets_context_truncated_each_turn(monkeypatch):
     result = lr.legal_research(state)
     assert result["context_truncated"] is None
     assert result["token_usage"] is None
+
+
+# --- reference books in the research agent (Task 11) ---
+
+def _tool_names(tools) -> list[str]:
+    return [t.name for t in tools]
+
+
+def test_book_tools_only_in_research_agent(monkeypatch):
+    """D7: the book tools go into the research agent's tool list and nowhere else."""
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    cg = importlib.import_module("skills.contract_generation.contract_generation")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    built = {}
+
+    def fake_create(label):
+        def create(**kwargs):
+            built[label] = kwargs["tools"]
+            return MagicMock()
+        return create
+
+    monkeypatch.setattr(lr, "_agent_cache", {})
+    monkeypatch.setattr(lr, "create_react_agent", fake_create("research"))
+    monkeypatch.setattr(cg, "_agent_cache", {})
+    monkeypatch.setattr(cg, "create_react_agent", fake_create("generation"))
+    lr._build_agent()
+    cg._build_agent()
+
+    assert _tool_names(built["research"]) == [
+        "search_legal", "get_document", "escalate", "search_books", "lookup_book",
+    ]
+    assert not {"search_books", "lookup_book"} & set(_tool_names(built["generation"]))
+
+
+def test_research_agent_pins_num_ctx(monkeypatch):
+    """Ruling 16: the research agent's model runs at the server's resident window, or Ollama reloads."""
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "65536")
+    get_settings.cache_clear()
+
+    seen = {}
+
+    def fake_chat_ollama(**kwargs):
+        seen.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(lr, "_agent_cache", {})
+    monkeypatch.setattr(lr, "ChatOllama", fake_chat_ollama)
+    monkeypatch.setattr(lr, "create_react_agent", lambda **kwargs: MagicMock())
+    lr._build_agent()
+    get_settings.cache_clear()
+
+    assert seen["num_ctx"] == 65536
+    assert "reasoning" not in seen  # thinking stays as it was
+
+
+def test_kb_research_sets_book_refs(monkeypatch):
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    x = "circ92-2025-12:usc17-s107"
+    y = "circ92-2025-12:usc17-s108"
+    never = "circ92-2025-12:usc17-s120"
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [
+        ToolMessage(content=f"[1] ref_id: {y}\n    …", name="search_books", tool_call_id="1"),
+        ToolMessage(content=f"lookup: ref_id: {x}\n[1] ref_id: {x}", name="lookup_book", tool_call_id="2"),
+        ToolMessage(content="[1] Acme (doc_id: d1, type: contract, jurisdiction: US)",
+                    name="search_legal", tool_call_id="3"),
+        # The answer also names an id no tool returned: it must not count as retrieved (D8).
+        MagicMock(content=f"Fair use is a defence (ref_id: {x}); see also ref_id: {never}."),
+    ]}
+    monkeypatch.setattr(lr, "_build_agent", lambda: fake_agent)
+
+    content, edits, doc_ids, book_refs = lr._run_kb_research(_make_state(request="fair use?", task_type="research"))
+    assert (doc_ids, book_refs) == ({"d1"}, {x, y})
+
+    state = _make_state(
+        request="fair use?", task_type="research",
+        book_refs_turn=["circ92-2025-12:stale"], book_refs_retrieved=["circ92-2025-12:usc17-s1"],
+    )
+    result = lr.legal_research(state)
+    assert result["book_refs_turn"] == [x, y]
+    # The field's reducer merges this with the conversation's ids (graph/state.py): the skill hands
+    # it this turn's, sorted.
+    assert result["book_refs_retrieved"] == [x, y]
+    assert {c["doc_id"] for c in result["retrieved_chunks"]} == {"d1"}
+
+
+def test_research_failure_leaves_no_book_refs_for_the_turn(monkeypatch):
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setenv("QDRANT_VECTOR_DIM", "768")
+    get_settings.cache_clear()
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.side_effect = RuntimeError("ollama down")
+    monkeypatch.setattr(lr, "_build_agent", lambda: fake_agent)
+    result = lr.legal_research(_make_state(
+        request="fair use?", task_type="research", book_refs_turn=["circ92-2025-12:stale"],
+    ))
+    assert result["book_refs_turn"] == []
+
+
+def test_doc_chat_clears_book_refs_turn(monkeypatch):
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
+
+    class FakeResp:
+        content = "Section 4 says so."
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+
+    earlier = ["circ92-2025-12:usc17-s107"]
+    state = _make_state(
+        request="who signs?", task_type="research",
+        uploaded_docs=[{"text": "MUTUAL NDA\n\nbody"}], document_id="doc-1",
+        book_refs_turn=["circ92-2025-12:stale"], book_refs_retrieved=list(earlier),
+    )
+    result = lr.legal_research(state)
+    assert result["book_refs_turn"] == []
+    assert result["book_refs_retrieved"] == earlier
+
+
+def test_research_prompt_rules():
+    from skills.legal_research.prompts import RESEARCH_SYSTEM_PROMPT as prompt
+
+    assert "search_books" in prompt and "lookup_book" in prompt
+    for phrase in ("ref_id:", "page", "edition", "amendment history", "not U.S. law"):
+        assert phrase in prompt, phrase
+    assert "Always filter by client_id when searching client documents (search_legal, get_document)" in prompt
+    assert "Always filter by client_id —" not in prompt

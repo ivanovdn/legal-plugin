@@ -270,6 +270,11 @@ def submit_query(
         "proposed_edits": [],
         "proposed_preferences": [],
         "contract_type_detected": "",
+        # book_refs_turn is per turn like the keys above (legal_research sets it,
+        # memory_writer audits it). book_refs_retrieved is the conversation's: its
+        # reducer keeps the checkpointed ids when handed this [].
+        "book_refs_retrieved": [],
+        "book_refs_turn": [],
         # memory_writer derives audit_log.duration_ms from this.
         "turn_started_at": time.time(),
         # audit_log carries it, so an audit row joins its turn_log row exactly.

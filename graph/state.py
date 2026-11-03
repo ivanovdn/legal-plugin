@@ -29,6 +29,27 @@ def _history_reducer(old: list[dict] | None, new: list[dict]) -> list[dict]:
     return (old + new)[-(2 * n):]
 
 
+# The book passages a conversation keeps as retrieved (spec D8): enough for any real session, and a
+# bound on what the checkpointer carries.
+BOOK_REFS_CAP = 500
+
+
+def _book_refs_reducer(old: list[str] | None, new: list[str] | None) -> list[str]:
+    """The conversation's retrieved book ids, oldest first: old, then new, an id retrieved again moving
+    to the end, capped to the last BOOK_REFS_CAP (ruling 19).
+
+    Idempotent when `new == old`, for the same reason as `_history_reducer`: nodes hand back the whole
+    state, so this fires with the current value once per node. An empty `new` (the [] query.py seeds
+    every turn with, or a turn that retrieved nothing) keeps `old`.
+    """
+    old = old or []
+    new = list(dict.fromkeys(new or []))
+    if new == old:
+        return old
+    again = set(new)
+    return ([ref_id for ref_id in old if ref_id not in again] + new)[-BOOK_REFS_CAP:]
+
+
 class LegalAgentState(TypedDict):
     request: str
     user_id: str
@@ -65,3 +86,5 @@ class LegalAgentState(TypedDict):
     context_breakdown: dict | None          # NEW — what this turn's context actually spent, for the pane's counter
     turn_started_at: float                 # NEW — epoch secs the request began (submit or resume); audit duration_ms derives from it
     turn_id: str                           # NEW — the request's turn id (query.py mints it; a resume re-stamps it); audit_log carries it so its row joins turn_log
+    book_refs_retrieved: Annotated[list[str], _book_refs_reducer]  # NEW — book ref_ids the conversation retrieved (book tools' results), recency order, capped
+    book_refs_turn: list[str]              # NEW — book ref_ids THIS turn retrieved, sorted (per turn; legal_research resets it)
