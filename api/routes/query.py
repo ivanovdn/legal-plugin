@@ -45,6 +45,16 @@ def _uploaded_text(state: dict) -> str:
     return "\n\n".join(doc.get("text", "") for doc in docs if isinstance(doc, dict))
 
 
+def _uploaded_docs(body: QueryRequest, client: ClientInfo) -> list[dict]:
+    """The attached document. A research turn from the Word pane always attaches its document, even a
+    blank one's "": the Chat tab answers about the open document (doc-chat) and must never reach the
+    research agent, whose reference-book citations can interrupt a turn the pane cannot resume (final
+    review I1). Anyone else attaches only text they sent."""
+    if body.uploaded_text or (client.from_pane and body.task_type == "research"):
+        return [{"text": body.uploaded_text}]
+    return []
+
+
 def _get_stateless_graph():
     """A checkpointer-less graph for the degraded fallback (no Redis, no history)."""
     global _stateless_graph
@@ -228,7 +238,7 @@ def submit_query(
         "request": body.request,
         "user_id": user_id,
         "user_name": user_name,
-        "uploaded_docs": [{"text": body.uploaded_text}] if body.uploaded_text else [],
+        "uploaded_docs": _uploaded_docs(body, client),
         "task_type": body.task_type,
         "skill_plan": [body.task_type] if body.task_type else [],
         "retrieval_query": "",

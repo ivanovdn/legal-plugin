@@ -89,3 +89,10 @@ class LegalAgentState(TypedDict):
     book_refs_retrieved: Annotated[list[str], _book_refs_reducer]  # NEW — book ref_ids the conversation retrieved (book tools' results), recency order, capped
     book_refs_turn: list[str]              # NEW — book ref_ids THIS turn retrieved, sorted (per turn; legal_research resets it)
     book_citations: list[dict]             # NEW — each book ref_id the answer cites, checked once by risk_assessor: {ref_id, valid, citation, reason} (per turn)
+
+
+def has_attached_document(state: LegalAgentState | dict) -> bool:
+    """A turn has a document attached when `uploaded_docs` holds one, whatever its text: the Word pane's
+    research turns always attach theirs, a blank document's "" included (api/routes/query.py). The one
+    test of it: legal_research takes doc-chat on it, and risk_assessor then checks no book citation."""
+    return bool(state.get("uploaded_docs"))

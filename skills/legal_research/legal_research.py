@@ -8,7 +8,7 @@ from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
 
 from config import get_settings
-from graph.state import LegalAgentState
+from graph.state import LegalAgentState, has_attached_document
 from observability.degradations import (
     CONTEXT_TRUNCATED, EDIT_RETRY_FAILED, LEGAL_RESEARCH_FAILED,
 )
@@ -425,8 +425,9 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
     """Answer the user's request.
 
     Two paths:
-      - Doc attached (Word add-in chat tab) → direct ChatOllama, no tools.
-      - No doc → ReAct agent with KB search tools.
+      - Doc attached (Word add-in chat tab; `has_attached_document`, so a blank
+        document's "" counts) → direct ChatOllama, no tools.
+      - No doc → ReAct agent with KB search tools and the reference books.
     """
     uploaded_text = _extract_uploaded_text(state)
 
@@ -444,7 +445,7 @@ def legal_research(state: LegalAgentState) -> LegalAgentState:
     state["book_refs_turn"] = []
 
     try:
-        if uploaded_text:
+        if has_attached_document(state):
             content, edits, prefs = _run_doc_chat(state, uploaded_text)
             state["llm_response"] = content
             state["proposed_edits"] = edits

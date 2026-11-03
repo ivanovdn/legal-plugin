@@ -21,7 +21,7 @@ import logging
 import re
 from collections.abc import Sequence
 
-from graph.state import LegalAgentState
+from graph.state import LegalAgentState, has_attached_document
 from ingest.books.citations import find_stated_pages
 from observability.spans import traced, set_trace_attributes
 from rag.book_citations import check_book_citations
@@ -156,7 +156,7 @@ def risk_assessor(state: LegalAgentState) -> LegalAgentState:
         requires_attorney = risk_level in ("high", "medium")
     else:
         chunks = state.get("retrieved_chunks", [])
-        has_uploaded_doc = bool(state.get("uploaded_docs"))
+        has_uploaded_doc = has_attached_document(state)
         book_retrieved = state.get("book_refs_retrieved") or []
         book_citations: list[dict] = []
         stated_page = False
