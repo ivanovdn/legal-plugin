@@ -9,8 +9,9 @@ The BM25 vector is built on the server: the point carries `models.Document(text=
 and Qdrant tokenises and weights it. The client is created with `cloud_inference=True`. The flag
 means "send the text to the server that is there to embed it", which is our own Qdrant, not a cloud;
 without it the locked client (qdrant-client 1.18.0) computes the same vector itself with its built-in
-BM25 (byte-identical, no fastembed), so the flag only makes Qdrant do the work. Either way nothing is
-downloaded (spec constraint 7).
+BM25 (byte-identical, no fastembed), so the flag only makes Qdrant do the work. With the flag, which is
+what the code sends, nothing is downloaded (spec constraint 7); that the client-side path downloads
+nothing either is not verified offline (docs/rag.md).
 `rag/vector_store.py`'s client is built without it and is left alone.
 """
 import logging
