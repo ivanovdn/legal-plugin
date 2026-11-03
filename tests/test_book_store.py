@@ -47,6 +47,7 @@ def _chunk(n: int, *, book="circ92", edition="2025-12", heading="Heading", body=
         order=n,
         ancestor_ref_ids=[ref_id],
         ancestor_labels=[f"17 U.S.C. §{100 + n}"],
+        ancestor_pages=[(n, n)],
         sub_ref_ids=[f"{ref_id}-a"],
     )
 
@@ -116,7 +117,10 @@ def test_upsert_stores_the_payload_under_the_point_id(book_qdrant):
     _upsert([chunk])
 
     (point,) = get_book_client().retrieve(book_qdrant, [chunk.point_id], with_payload=True)
-    assert point.payload == chunk.model_dump()
+    # Qdrant holds the JSON form (a page span comes back as a list), and it reads back as the same chunk.
+    assert point.payload == chunk.model_dump(mode="json")
+    assert point.payload["ancestor_pages"] == [[1, 1]]
+    assert BookChunk.model_validate(point.payload) == chunk
     assert "client_id" not in point.payload
 
 

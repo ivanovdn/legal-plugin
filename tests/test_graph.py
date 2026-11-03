@@ -10,7 +10,7 @@ from config import get_settings
 from graph.graph import build_graph, route_review
 from graph.state import LegalAgentState
 from memory.db import get_pool
-from rag.book_search import NodeInfo
+from ingest.books.resolve import NodeInfo
 
 
 def test_legal_agent_state_can_be_created():

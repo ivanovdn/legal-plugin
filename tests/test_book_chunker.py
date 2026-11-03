@@ -240,6 +240,21 @@ def test_bare_heading_lead_is_context_only():
     assert keys(short)[0] == P + "usc17-s122-a~lead"
 
 
+
+def test_a_dropped_bare_heading_keeps_its_page_in_the_chunks_below():
+    """Final review C1: the heading line is on p. 138, the paragraphs on 139–140. The lead makes no chunk,
+    so every chunk below starts on 139; the node's own span (138–140) travels in `ancestor_pages`, which is
+    what a citation of §122(a) or §122 is paged from."""
+    heading = TextLine(text="(a) Secondary Transmissions into Local Markets.—", page=138, para_start=True)
+    chunks = chunk_tree(tree(s122([heading])), budget=45, count_tokens=words)
+
+    assert keys(chunks) == [P + "usc17-s122-a-1", P + "usc17-s122-a-2"]
+    assert min(c.page_start for c in chunks) == 139
+    assert [list(zip(c.ancestor_ref_ids, c.ancestor_pages)) for c in chunks] == [
+        [(P + "usc17-s122-a-1", (139, 139)), (P + "usc17-s122-a", (138, 140)), (P + "usc17-s122", (138, 140))],
+        [(P + "usc17-s122-a-2", (140, 140)), (P + "usc17-s122-a", (138, 140)), (P + "usc17-s122", (138, 140))],
+    ]
+
 def test_tail_chunk():
     tail = ["the statutory license provided under this paragraph shall apply to secondary transmissions",
             "by a satellite carrier to subscribers in any such county."]
@@ -532,10 +547,12 @@ def test_ch1_ch5_every_node_is_reachable_and_under_budget(ch1_ch5_parse):
     assert len({c.chunk_key for c in chunks}) == len(chunks)
     # Each chunk names every node above it (R13), so a node with no chunk of its own is still renderable.
     labels = {n.path: n.label for n in nodes}
+    spans = {n.path: n.pages() for n in nodes}
     for c in chunks:
         assert len(c.ancestor_labels) == len(c.ancestor_ref_ids)
         assert c.ancestor_labels[0] == c.label
         assert c.ancestor_labels == [labels[r.removeprefix(P)] for r in c.ancestor_ref_ids]
+        assert c.ancestor_pages == [spans[r.removeprefix(P)] for r in c.ancestor_ref_ids]
     # Every note linked to a node is carried by some chunk, so no amendment history goes unflagged.
     carried = {r for c in chunks for r in c.history_notes}
     linked = {P + p for n in t.walk() for p in n.history_notes}

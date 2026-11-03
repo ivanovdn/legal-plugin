@@ -167,7 +167,7 @@ def test_book_chunk_refuses_an_unknown_kind_or_source_type(over):
 def test_ancestor_labels_pair_with_ancestor_ref_ids():
     # Ruling R13: a node with no chunk of its own is cited from a chunk below it, so the chunk names it.
     c = _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107-1", "circ92-2025-12:usc17-s107"],
-               ancestor_labels=["17 U.S.C. §107(1)", "17 U.S.C. §107"])
+               ancestor_labels=["17 U.S.C. §107(1)", "17 U.S.C. §107"], ancestor_pages=[(21, 21), (20, 21)])
     assert c.ancestor_labels == ["17 U.S.C. §107(1)", "17 U.S.C. §107"]
     assert BookChunk.model_validate(c.model_dump()) == c
     assert _chunk().ancestor_labels == []
@@ -177,4 +177,32 @@ def test_ancestor_labels_pair_with_ancestor_ref_ids():
 def test_book_chunk_refuses_ancestor_lists_of_unequal_length(labels):
     with pytest.raises(ValidationError, match="ancestor_labels"):
         _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107-1", "circ92-2025-12:usc17-s107"],
-               ancestor_labels=labels)
+               ancestor_labels=labels, ancestor_pages=[(21, 21), (20, 21)])
+
+
+def test_ancestor_pages_pair_with_ancestor_ref_ids_and_round_trip_as_json():
+    """Final review C1: each ancestor's own span (its whole subtree), so a node with no chunk of its own is
+    paged from a chunk below it without losing a page that only its dropped heading line was on. Qdrant
+    holds the JSON form: a span comes back as a list and must validate to the same chunk."""
+    c = _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107-1", "circ92-2025-12:usc17-s107"],
+               ancestor_labels=["17 U.S.C. §107(1)", "17 U.S.C. §107"],
+               ancestor_pages=[(21, 21), (20, 21)])
+    assert c.ancestor_pages == [(21, 21), (20, 21)]
+    stored = c.model_dump(mode="json")
+    assert stored["ancestor_pages"] == [[21, 21], [20, 21]]
+    assert BookChunk.model_validate(stored) == c
+    assert BookChunk.model_validate_json(c.model_dump_json()) == c
+    assert _chunk().ancestor_pages == []
+
+
+@pytest.mark.parametrize("pages", [[], [(21, 21)], [(21, 21), (20, 21), (1, 400)]])
+def test_book_chunk_refuses_ancestor_pages_of_another_length(pages):
+    with pytest.raises(ValidationError, match="ancestor_pages"):
+        _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107-1", "circ92-2025-12:usc17-s107"],
+               ancestor_labels=["17 U.S.C. §107(1)", "17 U.S.C. §107"], ancestor_pages=pages)
+
+
+def test_book_chunk_refuses_an_ancestor_span_that_runs_backwards():
+    with pytest.raises(ValidationError, match="backwards"):
+        _chunk(ancestor_ref_ids=["circ92-2025-12:usc17-s107"], ancestor_labels=["17 U.S.C. §107"],
+               ancestor_pages=[(21, 20)])

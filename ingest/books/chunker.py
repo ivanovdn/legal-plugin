@@ -5,7 +5,8 @@ A node that fits the budget is one chunk, keyed by its ref_id, with every node b
 One that does not splits by its structure (the prototype's `split()`): its lead (the text before its
 first child) is `<ref_id>~lead`, each child is cut the same way, and its tail (the text after its last
 child) is `<ref_id>~tail`. A lead that is only its label and heading ("(f) Heading.—") makes no chunk:
-the heading is carried in the children's headers. §101 always gives one chunk per definition, plus one
+the heading is carried in the children's headers, and its page in each chunk's `ancestor_pages` (every
+node above a chunk, with its whole subtree's span), so a citation of the node keeps that page. §101 always gives one chunk per definition, plus one
 for its opening sentence. A text run still over the budget (a leaf, a lead, a tail, a note, a
 definition) splits at paragraph starts, then at sentence ends: `<key>`, `<key>~p2`, `<key>~p3`…
 
@@ -146,12 +147,19 @@ class _Chunker:
     count: TokenCounter
     index: dict[str, Node] = field(init=False)
     chunks: list[BookChunk] = field(default_factory=list)
+    _pages: dict[str, tuple[int, int]] = field(default_factory=dict)  # each node's span, read once
 
     def __post_init__(self):
         self.index = self.tree.index()
 
     def ref(self, path: str) -> str:
         return make_ref_id(self.tree.book, path)
+
+    def pages(self, node: Node) -> tuple[int, int]:
+        """The node's own span: its whole subtree, a lead the cut drops included."""
+        if node.path not in self._pages:
+            self._pages[node.path] = node.pages()
+        return self._pages[node.path]
 
     def body(self, paragraphs: Sequence[Sequence[TextLine]]) -> str:
         return "\n".join(text for paragraph in paragraphs if (text := self.tree.join(paragraph)))
@@ -280,6 +288,7 @@ class _Chunker:
             order=len(self.chunks),
             ancestor_ref_ids=[ref_id, *(self.ref(a.path) for a in reversed(ancestors))],
             ancestor_labels=[node.label, *(a.label for a in reversed(ancestors))],
+            ancestor_pages=[self.pages(node), *(self.pages(a) for a in reversed(ancestors))],
             sub_refs=sub_refs,
             sub_ref_ids=[s.ref_id for s in sub_refs],
             xrefs=list(dict.fromkeys(x for n in (node, *inside) for x in n.xrefs)),
@@ -289,7 +298,7 @@ class _Chunker:
 
     def sub_ref(self, node: Node) -> SubRef:
         """A node inside a chunk, paged by its own subtree, so a citation of it gets its own pages."""
-        first, last = node.pages()
+        first, last = self.pages(node)
         return SubRef(ref_id=self.ref(node.path), label=node.label, page_start=first, page_end=last)
 
     def note(self, path: str) -> Node:

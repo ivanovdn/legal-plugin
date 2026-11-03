@@ -147,6 +147,10 @@ class BookChunk(BaseModel):
     # The labels of the same nodes, index for index: a node with no chunk of its own (a section with no
     # text before its first subsection) is cited and rendered from a chunk below it.
     ancestor_labels: list[str] = Field(default_factory=list)
+    # Their pages, index for index: each node's own span, its whole subtree (`Node.pages()`), so a node
+    # paged from a chunk below it keeps a page that only its own text is on, such as a heading line the
+    # chunker dropped ("(d) Statutory License … Systems.—"; final review C1). Stored as [first, last].
+    ancestor_pages: list[tuple[int, int]] = Field(default_factory=list)
     sub_refs: list[SubRef] = Field(default_factory=list)
     sub_ref_ids: list[str] = Field(default_factory=list)
     xrefs: list[str] = Field(default_factory=list)
@@ -165,11 +169,15 @@ class BookChunk(BaseModel):
 
     @model_validator(mode="after")
     def _ancestor_lists_pair_up(self) -> "BookChunk":
-        if len(self.ancestor_labels) != len(self.ancestor_ref_ids):
-            raise ValueError(
-                f"ancestor_labels has {len(self.ancestor_labels)} entries and ancestor_ref_ids "
-                f"{len(self.ancestor_ref_ids)}: they name the same nodes, index for index"
-            )
+        for name in ("ancestor_labels", "ancestor_pages"):
+            if len(getattr(self, name)) != len(self.ancestor_ref_ids):
+                raise ValueError(
+                    f"{name} has {len(getattr(self, name))} entries and ancestor_ref_ids "
+                    f"{len(self.ancestor_ref_ids)}: they name the same nodes, index for index"
+                )
+        for ref_id, (first, last) in zip(self.ancestor_ref_ids, self.ancestor_pages):
+            if last < first:
+                raise ValueError(f"ancestor_pages of {ref_id} run backwards: {first} to {last}")
         return self
 
     @property

@@ -92,6 +92,10 @@ def _bar_details(report: dict) -> dict[str, str]:
         + "".join(f"\n      {override_id}" for override_id in report["overrides_unused"][:10]),
         "hyphens_undecided": f"{len(report['hyphens_undecided'])} line-end hyphens no evidence or override decided"
         + "".join(f"\n      {hyphen}" for hyphen in report["hyphens_undecided"][:10]),
+        "node_citations": f"{len(report['node_citation_mismatches'])} nodes whose citation, resolved over the "
+        "chunks, would differ from the tree (label, kind, source type, appendix or pages)"
+        + "".join(f"\n      {m['ref_id']}: tree {m['tree']}, chunks {m['chunks']}"
+                  for m in report["node_citation_mismatches"][:10]),
     }
 
 

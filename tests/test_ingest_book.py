@@ -134,7 +134,9 @@ def test_report_bar():
     assert report["bar"] == {
         "title17_sections": True, "markers": True, "appendices": True,
         "out_of_sequence": True, "over_budget": True, "overrides_unused": True, "hyphens_undecided": True,
+        "node_citations": True,
     }
+    assert report["node_citation_mismatches"] == []
     assert report["bar_passed"] is True
 
 
@@ -211,6 +213,35 @@ def test_report_lists_the_unused_overrides_and_undecided_hyphens():
     assert report["hyphens_undecided"] == ["p.5 spac-|es", "p.9 twenty-|eight"]
     assert report["bar"]["overrides_unused"] is False and report["bar"]["hyphens_undecided"] is False
     assert report["bar_passed"] is False
+
+
+def _repaged(chunk: BookChunk, first: int, last: int) -> BookChunk:
+    return chunk.model_copy(update={"ancestor_pages": [(first, last), *chunk.ancestor_pages[1:]]})
+
+
+@pytest.mark.parametrize("corrupt", [
+    lambda chunks: [_repaged(chunks[3], 1, 999) if i == 3 else c for i, c in enumerate(chunks)],
+    lambda chunks: [c.model_copy(update={"label": "17 U.S.C. §999"}) if i == 3 else c for i, c in enumerate(chunks)],
+    lambda chunks: [c.model_copy(update={"kind": "definition"}) if i == 3 else c for i, c in enumerate(chunks)],
+    lambda chunks: [c for i, c in enumerate(chunks) if i != 3],
+], ids=["wrong-pages", "wrong-label", "wrong-kind", "node-held-by-no-chunk"])
+def test_a_node_the_chunks_would_cite_wrongly_fails_the_bar_alone(corrupt):
+    """Bar item 8 (final review C1): every node of the tree, resolved over the chunk list exactly as
+    fetch_nodes resolves it, has the tree's label, kind, source type, appendix and pages. A citation of it
+    is rendered from that, so a node it gets wrong reaches the attorney as a verified citation."""
+    parsed = make_parsed()
+    chunks = chunks_of(parsed)
+    node = next(n for n in parsed.tree.walk() if f"{BOOK.ref_prefix}:{n.path}" == chunks[3].ref_id)
+
+    report = build_report(parsed, corrupt(chunks), budget=BUDGET)
+
+    assert [name for name, ok in report["bar"].items() if not ok] == ["node_citations"]
+    assert report["bar_passed"] is False
+    (mismatch,) = report["node_citation_mismatches"]
+    assert mismatch["ref_id"] == chunks[3].ref_id
+    assert mismatch["tree"] == {"label": node.label, "kind": node.kind, "source_type": node.source_type,
+                                "appendix": node.appendix, "pages": list(node.pages())}
+    assert mismatch["chunks"] != mismatch["tree"]
 
 
 @pytest.mark.parametrize("tokens", [BUDGET + 1, -1], ids=["over-the-budget", "over-the-embedding-window"])

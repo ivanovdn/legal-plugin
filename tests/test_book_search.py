@@ -14,10 +14,10 @@ from qdrant_client import models
 
 from config import get_settings
 from ingest.books.models import BookChunk, SubRef
+from ingest.books.resolve import NodeInfo
 from rag.book_search import (
     BookHit,
     LookupResult,
-    NodeInfo,
     fetch_nodes,
     kind_filter,
     lookup_book_chunks,
@@ -55,9 +55,10 @@ def _chunk(
     jurisdiction: str = "US",
     pages: tuple[int, int] = (1, 1),
     tokens: int = 100,
-    above: tuple[tuple[str, str], ...] = (),  # (path, label) of the parents, nearest first
+    above: tuple[tuple[str, str, tuple[int, int]], ...] = (),  # (path, label, pages) of the parents, nearest first
     sub_refs: tuple[SubRef, ...] = (),
     appendix: str | None = None,
+    own_pages: tuple[int, int] | None = None,  # the node's whole span, when this chunk is one part of it
 ) -> BookChunk:
     ref_id = _id(path)
     return BookChunk(
@@ -78,8 +79,9 @@ def _chunk(
         body=body,
         tokens=tokens,
         order=order,
-        ancestor_ref_ids=[ref_id, *(_id(p) for p, _ in above)],
-        ancestor_labels=[label, *(lbl for _, lbl in above)],
+        ancestor_ref_ids=[ref_id, *(_id(p) for p, _, _ in above)],
+        ancestor_labels=[label, *(lbl for _, lbl, _ in above)],
+        ancestor_pages=[own_pages or pages, *(span for _, _, span in above)],
         sub_refs=list(sub_refs),
         sub_ref_ids=[s.ref_id for s in sub_refs],
     )
@@ -88,12 +90,12 @@ def _chunk(
 S107_LEAD = _chunk(
     "usc17-s107", suffix="~lead", label="17 U.S.C. §107", heading="Limitations on exclusive rights: Fair use",
     body="the fair use of a copyrighted work for criticism comment news reporting teaching is not an infringement",
-    order=1, pages=(10, 10),
+    order=1, pages=(10, 10), own_pages=(10, 11),
 )
 S107_FACTORS = _chunk(
     "usc17-s107-1", label="17 U.S.C. §107(1)", heading="Limitations on exclusive rights: Fair use",
     body="the purpose and character of the use of the work including whether such use is of a commercial nature",
-    order=2, pages=(10, 11), above=(("usc17-s107", "17 U.S.C. §107"),),
+    order=2, pages=(10, 11), above=(("usc17-s107", "17 U.S.C. §107", (10, 11)),),
 )
 S106 = _chunk(
     "usc17-s106", label="17 U.S.C. §106", heading="Exclusive rights in copyrighted works",
@@ -107,7 +109,7 @@ S106 = _chunk(
 JOINT_WORK = _chunk(
     "usc17-s101-def-joint-work", kind="definition", label='17 U.S.C. §101 "joint work"', heading="Definitions",
     body="a joint work is a work prepared by two or more authors with the intention that their contributions merge",
-    order=5, pages=(6, 6), above=(("usc17-s101", "17 U.S.C. §101"),),
+    order=5, pages=(6, 6), above=(("usc17-s101", "17 U.S.C. §101", (3, 18)),),
 )
 NOTE = _chunk(
     "ch1-n3", kind="history_note", label="Chapter 1 note 3", heading="Notes",
@@ -128,7 +130,7 @@ REPEALED = _chunk(
 S108 = [
     _chunk("usc17-s108", suffix=suffix, label="17 U.S.C. §108", heading="Reproduction by libraries and archives",
            body=f"libraries and archives may reproduce a work for preservation {part}",
-           order=order, pages=pages, tokens=400)
+           order=order, pages=pages, tokens=400, own_pages=(5, 8))
     for suffix, part, order, pages in (
         ("~lead", "part one", 10, (5, 5)),
         ("~lead~p2", "part two", 11, (6, 6)),
@@ -136,16 +138,17 @@ S108 = [
     )
 ]
 # A section whose whole text sits in its subsections: it has no chunk of its own, and appears only in
-# its descendants' ancestor lists.
+# its descendants' ancestor lists. Its heading line is on p. 29, where no chunk starts (final review C1):
+# only its own entry in `ancestor_pages` knows that.
 S114_A = _chunk(
     "usc17-s114-a", label="17 U.S.C. §114(a)", heading="Scope of exclusive rights in sound recordings",
     body="the exclusive rights of the owner of copyright in a sound recording are limited work", order=20,
-    pages=(30, 31), above=(("usc17-s114", "17 U.S.C. §114"),),
+    pages=(30, 31), above=(("usc17-s114", "17 U.S.C. §114", (29, 33)),),
 )
 S114_B = _chunk(
     "usc17-s114-b", label="17 U.S.C. §114(b)", heading="Scope of exclusive rights in sound recordings",
     body="the exclusive right to reproduce a sound recording does not extend to independent fixations work",
-    order=21, pages=(31, 33), above=(("usc17-s114", "17 U.S.C. §114"),),
+    order=21, pages=(31, 33), above=(("usc17-s114", "17 U.S.C. §114", (29, 33)),),
 )
 
 CORPUS = [S107_LEAD, S107_FACTORS, S106, JOINT_WORK, NOTE, TREATY, REPEALED, *S108, S114_A, S114_B]
@@ -496,7 +499,9 @@ def test_fetch_nodes_for_a_section_with_no_chunk_of_its_own(books):
 
     node = nodes[section]
     assert node.label == "17 U.S.C. §114"  # from the children's ancestor_labels
-    assert (node.page_start, node.page_end) == (30, 33)  # the whole subtree
+    # Its own span, heading line included: the chunks below it start on p. 30, so their span would
+    # start a page late (final review C1).
+    assert (node.page_start, node.page_end) == (29, 33)
     # Valid to cite exactly when it was itself retrieved: no child chunk stands in for it.
     assert node.containers == {section}
     assert (node.kind, node.source_type) == ("rule", "usc_title")
@@ -533,7 +538,7 @@ def test_the_scroll_is_followed_to_its_end(books, monkeypatch):
     many = [
         _chunk(
             f"usc17-s200-{n}", label=f"17 U.S.C. §200({n})", heading="Many", body=f"paragraph {n} of the work",
-            order=100 + n, pages=(50 + n, 50 + n), above=(("usc17-s200", "17 U.S.C. §200"),),
+            order=100 + n, pages=(50 + n, 50 + n), above=(("usc17-s200", "17 U.S.C. §200", (50, 349)),),
         )
         for n in range(300)
     ]

@@ -11,7 +11,7 @@ The three reads:
 - `lookup_book_chunks`: "§ 107" / a ref_id -> the chunks under that node, in document order, up to a
   token cap.
 - `fetch_nodes`: ref_ids -> what a citation of each needs to be checked and rendered (label, pages, the
-  chunks it can be found through).
+  chunks it can be found through), resolved by `ingest.books.resolve.resolve_nodes`.
 """
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -22,6 +22,7 @@ from config import get_settings
 from ingest.books.models import BookChunk
 from ingest.books.ref_ids import parse_reference
 from ingest.books.registry import BOOKS
+from ingest.books.resolve import NodeInfo, resolve_nodes
 from rag.book_store import BM25_MODEL, DENSE_VECTOR, SPARSE_VECTOR, get_book_client
 from rag.embeddings import embed_query
 from rag.reranker import rerank
@@ -43,22 +44,6 @@ class LookupResult:
     target: str  # the node looked up, as a full ref_id
     shown: list[BookChunk]  # its chunks in document order, up to the token cap (at least one when any exist)
     more: list[str]  # ref_ids of the chunks that did not fit, each once, in order
-
-
-@dataclass
-class NodeInfo:
-    ref_id: str
-    label: str
-    kind: str
-    source_type: str
-    appendix: str | None
-    page_start: int
-    page_end: int
-    # The chunk ref_ids a citation of this node is valid through: retrieving any of them put the node in
-    # front of the model. Its own id when it has a chunk of its own, or when it has none (then a citation
-    # of it is valid exactly when it was itself retrieved: lookup does that for a section whose text is
-    # all in its subsections); the containing chunk's id for a node inside a chunk.
-    containers: set[str]
 
 
 def kind_filter(include_history_notes: bool) -> models.Filter:
@@ -191,58 +176,14 @@ def lookup_book_chunks(reference: str) -> LookupResult | None:
 def fetch_nodes(ref_ids: Collection[str]) -> dict[str, NodeInfo]:
     """What a citation of each id needs, for the ids the collection knows; an unknown id is absent.
 
-    An id is found through ANY of: a chunk whose `ref_id` it is; a chunk whose `sub_ref_ids` hold it (a node
-    inside a chunk); a chunk whose `ancestor_ref_ids` hold it (a node with no chunk of its own, such as a
-    section whose text is all in its subsections, which appears only in its descendants' lists).
-
-    - label: the id's own chunk, else its SubRef, else the ancestor label of a chunk below it.
-    - pages: the span of its whole subtree (its own chunks and every chunk below it); a node inside a
-      chunk has the SubRef's own pages, not the chunk's.
-    - containers, kind, source_type, appendix: see `NodeInfo`; the kind and the rest come from a chunk
-      that holds the node (its own when it has one).
-    """
+    Reads every chunk that holds one of the ids (its own, one it sits inside, or one below it) and hands
+    them to `resolve_nodes`, which says how each id is labelled and paged."""
     wanted = list(dict.fromkeys(ref_ids))
     if not wanted:
         return {}
-
     chunks = _scroll_all(
         models.Filter(
             should=[_any_of("ref_id", wanted), _any_of("sub_ref_ids", wanted), _any_of("ancestor_ref_ids", wanted)]
         )
     )
-
-    nodes: dict[str, NodeInfo] = {}
-    for ref_id in wanted:
-        own = [c for c in chunks if c.ref_id == ref_id]
-        below = [c for c in chunks if c.ref_id == ref_id or ref_id in c.ancestor_ref_ids]
-        inside = [(c, s) for c in chunks for s in c.sub_refs if s.ref_id == ref_id]
-        if not below and not inside:
-            continue
-
-        holder = (own or [c for c, _ in inside] or below)[0]
-        if own:
-            label = own[0].label
-        elif inside:
-            label = inside[0][1].label
-        else:
-            label = holder.ancestor_labels[holder.ancestor_ref_ids.index(ref_id)]
-
-        if below:
-            page_start = min(c.page_start for c in below)
-            page_end = max(c.page_end for c in below)
-        else:
-            page_start = min(s.page_start for _, s in inside)
-            page_end = max(s.page_end for _, s in inside)
-
-        containers = {c.ref_id for c in own} | {c.ref_id for c, _ in inside}
-        nodes[ref_id] = NodeInfo(
-            ref_id=ref_id,
-            label=label,
-            kind=holder.kind,
-            source_type=holder.source_type,
-            appendix=holder.appendix,
-            page_start=page_start,
-            page_end=page_end,
-            containers=containers or {ref_id},
-        )
-    return nodes
+    return resolve_nodes(wanted, chunks)

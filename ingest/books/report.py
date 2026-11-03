@@ -11,7 +11,11 @@ refuses unless it passes (ruling 15). The bar:
   - no chunk is over the token budget (a chunk the counter put past the embedding window counts as over);
   - no override is unused: a whole-body run must consume every hand fix the edition ships;
   - no line-end hyphen is undecided: every one the book's own spelling cannot settle has an override
-    (a break the parser can only default to "join" may weld a compound, "twentyeight", into the text).
+    (a break the parser can only default to "join" may weld a compound, "twentyeight", into the text);
+  - every node of the tree, resolved over the chunk list by the function that resolves a citation
+    (`resolve_nodes`, which `rag.book_search.fetch_nodes` runs over what Qdrant returns), has the tree's
+    label, kind, source type, appendix and pages: a node it gets wrong would reach the attorney as a
+    verified citation with that wrong label or page (final review C1).
 
 Reported, never gated: the cross-reference resolution rate and its misses (a Public Law target is never a
 node, so the all-targets rate is low by construction; Title 17's is the one to read).
@@ -26,8 +30,10 @@ from ingest.books.chunker import OVER_WINDOW
 from ingest.books.circular92 import ParseResult
 from ingest.books.circular92.appendices import APPENDICES
 from ingest.books.citations import render_citation
-from ingest.books.models import BookChunk
+from ingest.books.models import BookChunk, BookTree
+from ingest.books.ref_ids import make_ref_id
 from ingest.books.registry import BookEntry
+from ingest.books.resolve import resolve_nodes
 from ingest.books.tree import xref_resolution
 
 BAR_EXPECTED = {"title17_sections": 152, "markers": 192, "appendices": 20}
@@ -79,6 +85,25 @@ def _xref_report(parsed: ParseResult) -> dict:
     }
 
 
+def _node_citation_mismatches(tree: BookTree, chunks: Sequence[BookChunk]) -> list[dict]:
+    """Every node whose citation, resolved over `chunks` as a cited id is resolved at answer time, would not
+    say what the tree says. `chunks` is None for a node no chunk holds."""
+    nodes = {make_ref_id(tree.book, node.path): node for node in tree.walk()}
+    resolved = resolve_nodes(list(nodes), chunks)
+    mismatches = []
+    for ref_id, node in nodes.items():
+        want = {"label": node.label, "kind": node.kind, "source_type": node.source_type,
+                "appendix": node.appendix, "pages": list(node.pages())}
+        info = resolved.get(ref_id)
+        got = None if info is None else {
+            "label": info.label, "kind": info.kind, "source_type": info.source_type,
+            "appendix": info.appendix, "pages": [info.page_start, info.page_end],
+        }
+        if got != want:
+            mismatches.append({"ref_id": ref_id, "tree": want, "chunks": got})
+    return mismatches
+
+
 def build_report(parsed: ParseResult, chunks: Sequence[BookChunk], *, budget: int) -> dict:
     """Every number of the dry run, and the bar's verdict on them."""
     book = parsed.tree.book
@@ -93,6 +118,7 @@ def build_report(parsed: ParseResult, chunks: Sequence[BookChunk], *, budget: in
     counted = [c for c in chunks if c.tokens != OVER_WINDOW]
     largest = max(counted, key=lambda c: c.tokens, default=None)
     unused = [override.id for override in parsed.ledger.unused()]
+    node_mismatches = _node_citation_mismatches(parsed.tree, chunks)
 
     bar = {
         "title17_sections": sections == BAR_EXPECTED["title17_sections"],
@@ -109,6 +135,7 @@ def build_report(parsed: ParseResult, chunks: Sequence[BookChunk], *, budget: in
         "over_budget": not over_budget,
         "overrides_unused": not unused,
         "hyphens_undecided": not parsed.hyphens.undecided,
+        "node_citations": not node_mismatches,
     }
     return {
         "book": book.id,
@@ -126,6 +153,7 @@ def build_report(parsed: ParseResult, chunks: Sequence[BookChunk], *, budget: in
         "over_budget": over_budget,
         "overrides_unused": unused,
         "hyphens_undecided": list(parsed.hyphens.undecided),
+        "node_citation_mismatches": node_mismatches,
         "bar_expected": BAR_EXPECTED,
         "bar": bar,
         "bar_passed": all(bar.values()),

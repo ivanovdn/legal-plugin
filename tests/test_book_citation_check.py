@@ -15,7 +15,7 @@ from graph.nodes.output_formatter import output_formatter
 from graph.nodes.risk_assessor import _check_citations, risk_assessor
 from ingest.books.citations import find_stated_pages
 from rag.book_citations import check_book_citations
-from rag.book_search import NodeInfo
+from ingest.books.resolve import NodeInfo
 
 S106 = "circ92-2025-12:usc17-s106"
 S106_1 = "circ92-2025-12:usc17-s106-1"  # inside §106's chunk

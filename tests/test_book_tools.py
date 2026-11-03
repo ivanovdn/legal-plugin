@@ -65,6 +65,7 @@ def _chunk(
         order=1,
         ancestor_ref_ids=[ref_id, *(_id(p) for p, _ in above)],
         ancestor_labels=[label, *(lbl for _, lbl in above)],
+        ancestor_pages=[pages, *(pages for _ in above)],  # the tools print no page
         sub_refs=list(sub_refs),
         sub_ref_ids=[s.ref_id for s in sub_refs],
         history_notes=list(history_notes),
