@@ -231,6 +231,32 @@ def test_the_exact_words_rank_first(books):
     assert search_book_chunks(S107_FACTORS.body)[0].chunk.ref_id == S107_FACTORS.ref_id
 
 
+# The fake embedding is a hashed bag of words, so it ranks the way BM25 does and the tests above cannot
+# tell the two rankings apart. These two make them disagree, one candidate each, so a hit can only have
+# come from the ranking that is meant to supply it.
+
+def test_bm25_supplies_what_the_dense_ranking_misses(books, monkeypatch):
+    """The dense vector points at an unrelated chunk (§106); only BM25 knows "fifty", a word one chunk
+    has. With one candidate per ranking, the treaty reaches the hits through BM25 alone."""
+    monkeypatch.setattr("rag.book_search.embed_query", lambda query: _embed(S106.text))
+    _env(monkeypatch, book_dense_candidates="1", book_sparse_candidates="1")
+
+    hits = search_book_chunks("fifty")
+
+    assert set(_ids(hits)) == {TREATY.ref_id, S106.ref_id}
+
+
+def test_the_dense_ranking_supplies_what_bm25_misses(books, monkeypatch):
+    """A query with no word in common with any chunk gives BM25 nothing; the dense vector (here the
+    treaty's own) is the only way the treaty can be found."""
+    monkeypatch.setattr("rag.book_search.embed_query", lambda query: _embed(TREATY.text))
+    _env(monkeypatch, book_dense_candidates="1", book_sparse_candidates="1")
+
+    hits = search_book_chunks("zzzz qqqq")
+
+    assert _ids(hits) == [TREATY.ref_id]
+
+
 def test_hits_carry_the_whole_chunk_and_the_fused_score(books):
     top = search_book_chunks(TREATY.body)[0]
 
