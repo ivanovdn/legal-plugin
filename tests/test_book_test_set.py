@@ -53,6 +53,15 @@ WALKED_RE = {
     ),
     "lse-none.txt": re.compile(r"^# Walked: ranks 1–(\d+) of 182; taken (\d+), dropped (\d+)\.$"),
 }
+# The files whose gold a second, blind reader labelled again from the book's text (citations.txt's gold is what
+# parse_reference returns, so there is nothing to read). Each header carries the agreement line, and each entry's
+# comment the verdict: `agreed`, or the second reader's gold and how the disagreement was settled. The owner's
+# check (Task 8) may follow the verdict.
+SECOND_READ_FILES = ("lse-search.txt", "lse-none.txt", "written.txt")
+SECOND_READING_HEADER_RE = re.compile(
+    r"^# Second reading \(fresh agent, book text only\): agreed on (\d+) of (\d+) \(\d+%\)$"
+)
+SECOND_READING_RE = re.compile(r" · second reading: (agreed|.+ — settled: .+?)(?: · owner's check: .+)?$")
 
 
 def _is_question(line: str) -> bool:
@@ -216,3 +225,22 @@ def test_lse_headers_record_the_walk(name):
         answers, governs = split
         assert answers == sum(" · answers · " in c for c in comments)
         assert governs == sum(" · governs · " in c for c in comments)
+
+
+@pytest.mark.parametrize("name", SECOND_READ_FILES)
+def test_the_second_reading_is_recorded(name):
+    """Every entry carries the second reading's verdict, and the header's agreement line is the file's own count:
+    agreed on N of M, where M is the file's questions and N the entries whose verdict is `agreed`."""
+    path = SETS / name
+    lines = [m for line in _header(path) if (m := SECOND_READING_HEADER_RE.match(line))]
+    assert len(lines) == 1, (
+        f"expected one '# Second reading (fresh agent, book text only): agreed on N of M (P%)' line in the header "
+        f"of {name}"
+    )
+    agreed, total = (int(n) for n in lines[0].groups())
+
+    entries = _entries(path)
+    unrecorded = [question for above, question in entries if not SECOND_READING_RE.search(above)]
+    assert unrecorded == []
+    assert total == len(load_questions(path))
+    assert agreed == sum(SECOND_READING_RE.search(above).group(1) == "agreed" for above, _ in entries)
