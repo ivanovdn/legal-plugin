@@ -3,7 +3,7 @@
 **Related:** [roadmap.md](../../roadmap.md) — *Index the legal reference books for retrieval-augmented checking*, open item (2) · [Reference books in RAG](2026-10-30-reference-books-design.md) (Goal 7: the runner) · [rag.md](../../rag.md#reference-books)
 
 - **Date:** 2026-11-18
-- **Status:** Draft, for the owner's review.
+- **Status:** Approved (owner, 2026-11-18). Plan: [2026-11-18-book-retrieval-test-set.md](../plans/2026-11-18-book-retrieval-test-set.md).
 - **Branch:** `feat/book-test-set`, cut from `feat/reference-books` (unmerged), because the set needs that branch's book, runner and ref_id grammar.
 - **Scope:** the question set that `evals.books.run_retrieval` scores, plus one new question type in the runner. No retrieval setting changes here.
 
