@@ -4,7 +4,8 @@ docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md).
 
 The runner cannot see these faults, and each one would read as a finding about the retrieval:
 
-- a gold that is grammatical but names no node of the book: the question is a miss forever;
+- a gold that is grammatical but names no node of the book, or a history note as the gold of a `search`
+  question, which leaves the notes out: the question is a miss forever;
 - a question that names a section, or one that appears twice: either inflates the score;
 - a Law Stack Exchange question without its link and licence, which the licence forbids.
 """
@@ -23,6 +24,7 @@ SET_FILES = {
     "lse-search.txt": (("search",), 55, 65),
     "lse-none.txt": (("none",), 12, 18),
     "citations.txt": (("citation",), 12, 18),
+    "written.txt": (("search", "history"), 12, 18),
 }
 
 SPEC = "docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md"
@@ -34,6 +36,9 @@ LSE_NONE_RE = re.compile(r"^# lse:(\d+) https://law\.stackexchange\.com/q/\1 · 
 # Each Law Stack Exchange file, and the provenance line every question in it carries.
 LSE_FILES = {"lse-search.txt": LSE_SEARCH_RE, "lse-none.txt": LSE_NONE_RE}
 DROPPED_RE = re.compile(r"^# dropped lse:(\d+) · .+$")
+WRITTEN_RE = re.compile(r"^# written by Claude · (search|history) · gold: .+$")
+# The files whose questions are searched for, not looked up: none of them may name a section.
+SEARCHED_FILES = ("lse-search.txt", "written.txt")
 SECTION_RE = re.compile(r"§|\bU\.?\s?S\.?\s?C\b|\bsection\s+\d|\b\d{3}[A-C]?\([a-z0-9]+\)", re.I)
 # Each Law Stack Exchange file's walk line, which a later batch continues from: the last rank walked of the
 # pool's size, and what became of the ranks walked. Only the search file splits its takes into answers/governs.
@@ -64,7 +69,7 @@ def _header(path: Path) -> list[str]:
     """The leading `#` lines: everything before the first provenance line, dropped line or question."""
     header = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        if _is_question(line) or line.startswith(("# lse:", "# dropped ")):
+        if _is_question(line) or line.startswith(("# lse:", "# dropped ", "# written by Claude ·")):
             break
         if line.startswith("#"):
             header.append(line)
@@ -89,6 +94,23 @@ def test_every_gold_names_a_node_of_the_book(name, circ92_whole_parse):
     index = circ92_whole_parse.tree.index()
     missing = [(q.text, g) for q in load_questions(SETS / name) for g in q.gold if g.rpartition(":")[2] not in index]
     assert missing == []
+
+
+@pytest.mark.parametrize("name", SET_FILES)
+def test_a_note_is_gold_only_for_a_history_question(name, circ92_whole_parse):
+    """`search` leaves history notes out, so a note as the gold of a `search` question is a miss forever; and a
+    `history` question is there for an answer that lives in a note, so at least one of its golds is a note."""
+    index = circ92_whole_parse.tree.index()
+
+    def is_note(gold: str) -> bool:
+        node = index.get(gold.rpartition(":")[2])
+        return node is not None and node.kind == "history_note"
+
+    for q in load_questions(SETS / name):
+        if q.type == "search":
+            assert not any(is_note(g) for g in q.gold), q.text
+        if q.type == "history":
+            assert any(is_note(g) for g in q.gold), q.text
 
 
 def test_every_citation_question_names_its_gold():
@@ -119,9 +141,23 @@ def test_lse_questions_carry_their_source_and_licence():
     assert sorted({i for i in ids if ids.count(i) > 1}) == []
 
 
-def test_no_lse_search_question_names_a_section():
-    named = [q.text for q in load_questions(SETS / "lse-search.txt") if SECTION_RE.search(q.text)]
+@pytest.mark.parametrize("name", SEARCHED_FILES)
+def test_no_searched_question_names_a_section(name):
+    named = [q.text for q in load_questions(SETS / name) if SECTION_RE.search(q.text)]
     assert named == []
+
+
+def test_written_questions_say_who_wrote_them():
+    path = SETS / "written.txt"
+    assert any("written by Claude" in line for line in _header(path))
+    for above, question in _entries(path):
+        match = WRITTEN_RE.match(above)
+        assert match, question
+        assert match.group(1) == question.rpartition("|")[2].strip(), question
+
+
+def test_written_has_both_types():
+    assert {q.type for q in load_questions(SETS / "written.txt")} == {"search", "history"}
 
 
 @pytest.mark.parametrize("name", LSE_FILES)
