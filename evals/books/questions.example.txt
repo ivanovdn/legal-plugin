@@ -1,4 +1,4 @@
-# FORMAT ONLY. These three lines show the shape of a questions file, one line per question type.
+# FORMAT ONLY. These lines show the shape of a questions file, one line per question type.
 # They are NOT a test set: no attorney wrote or checked them, and the numbers they produce mean
 # nothing. The real set is separate work (spec 2026-10-30-reference-books-design.md, Goal 7).
 #
@@ -6,7 +6,9 @@
 #
 # type is `search` (asked of search_books; scored on whether a gold id comes back, and how high),
 # `citation` (asked of lookup_book; a hit when a chunk under a gold id is shown) or `none` (a
-# question the book cannot answer: no gold, and it counts as "not found" when search returns nothing).
+# question the book cannot answer: no gold, and it counts as "not found" when search returns nothing) or
+# `history` (like `search`, but history notes are searched too: for answers that live only in one, such
+# as an effective date; scored like `search`, reported in its own row).
 # A gold is a full ref_id, or a bare path (usc17-s107), which matches in any book and edition.
 # Blank lines and lines starting with # are skipped; the question may contain "|", the last two are the separators.
 #
@@ -15,3 +17,4 @@
 What factors decide whether a use is fair use? | circ92-2025-12:usc17-s107 | search
 17 U.S.C. §107 | circ92-2025-12:usc17-s107 | citation
 How do I register a trademark? | | none
+When did paragraph (5) of the "international agreement" definition take effect? | circ92-2025-12:ch1-n13 | history

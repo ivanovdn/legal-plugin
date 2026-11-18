@@ -21,6 +21,7 @@ PREFIX = "circ92-2025-12"
 S107 = f"{PREFIX}:usc17-s107"
 S108 = f"{PREFIX}:usc17-s108"
 S512 = f"{PREFIX}:usc17-s512"
+CH1N13 = f"{PREFIX}:ch1-n13"
 
 
 def _chunk(path: str, sub: tuple[str, ...] = ()) -> BookChunk:
@@ -114,7 +115,7 @@ def test_an_empty_file_has_no_questions(tmp_path):
 def test_the_example_file_loads_and_has_one_of_each_type():
     path = Path(run_retrieval.__file__).with_name("questions.example.txt")
 
-    assert sorted(q.type for q in load_questions(path)) == ["citation", "none", "search"]
+    assert sorted(q.type for q in load_questions(path)) == ["citation", "history", "none", "search"]
     assert "NOT a test set" in path.read_text(encoding="utf-8")
 
 
@@ -256,10 +257,13 @@ class _Stubs:
         self.search_table = search
         self.lookup_table = lookup
         self.searched: list[str] = []
+        self.searched_with_notes: list[str] = []
         self.looked_up: list[str] = []
 
-    def search(self, query: str) -> list[BookHit]:
+    def search(self, query: str, *, include_history_notes: bool = False) -> list[BookHit]:
         self.searched.append(query)
+        if include_history_notes:
+            self.searched_with_notes.append(query)
         return [BookHit(chunk=c, score=1.0) for c in self.search_table.get(query, [])]
 
     def lookup(self, reference: str) -> LookupResult | None:
@@ -297,7 +301,7 @@ def test_run_with_stubs():
     result = run(questions, search=stubs.search, lookup=stubs.lookup)
 
     assert result["n"] == 8
-    assert result["counts"] == {"search": 2, "citation": 3, "none": 3}
+    assert result["counts"] == {"search": 2, "citation": 3, "none": 3, "history": 0}
     assert result["recall@5"] == 0.5  # (1.0 + 0.0) / 2
     assert result["recall@10"] == 0.5
     assert result["mrr"] == pytest.approx(0.25)  # (0.5 + 0.0) / 2
@@ -357,12 +361,36 @@ def test_a_search_question_with_a_second_gold_missing_is_not_ok():
     assert record["ok"] is False
 
 
+def test_a_history_question_is_searched_with_history_notes_included():
+    stubs = _Stubs(search={"when?": [_chunk("ch1-n13")], "fair use?": [_chunk("usc17-s107")]}, lookup={})
+    run([Question("when?", [CH1N13], "history"), Question("fair use?", [S107], "search")],
+        search=stubs.search, lookup=stubs.lookup)
+    assert stubs.searched_with_notes == ["when?"]
+    assert stubs.searched == ["when?", "fair use?"]
+
+
+def test_history_is_scored_like_search_and_reported_apart():
+    stubs = _Stubs(search={"when?": [_chunk("usc17-s108"), _chunk("ch1-n13")], "fair use?": []}, lookup={})
+    result = run([Question("when?", [CH1N13], "history"), Question("fair use?", [S107], "search")],
+                 search=stubs.search, lookup=stubs.lookup)
+    assert result["counts"]["history"] == 1
+    assert result["history_recall@5"] == 1.0 and result["history_mrr"] == 0.5
+    assert result["recall@5"] == 0.0  # the search mean is over search questions only
+    assert result["questions"][0]["type"] == "history"
+
+
+def test_a_history_question_needs_a_gold(tmp_path):
+    with pytest.raises(ValueError, match="needs at least one gold id"):
+        load_questions(_write(tmp_path, "when? | | history\n"))
+
+
 def test_run_with_no_questions_is_all_zeros():
     result = run([], search=_Stubs({}, {}).search, lookup=_Stubs({}, {}).lookup)
 
     assert result["n"] == 0
-    assert result["counts"] == {"search": 0, "citation": 0, "none": 0}
-    for key in ("recall@5", "recall@10", "mrr", "ndcg@10", "citation_hit_rate", "not_found_rate"):
+    assert result["counts"] == {"search": 0, "citation": 0, "none": 0, "history": 0}
+    for key in ("recall@5", "recall@10", "mrr", "ndcg@10", "citation_hit_rate", "not_found_rate",
+                "history_recall@5", "history_recall@10", "history_mrr", "history_ndcg@10"):
         assert result[key] == 0.0
     assert result["questions"] == []
 
@@ -463,6 +491,20 @@ def test_main_prints_a_per_type_table_overall_metrics_and_the_misses(tmp_path, c
     assert rows["none"][1] == "1"
     assert rows["citation"][1] == "0"
     assert "miss" in out and S108 in out  # the missed question is named with its gold
+
+
+def test_main_prints_a_history_row(tmp_path, capsys, monkeypatch):
+    stubs = _Stubs(search={"when?": [_chunk("ch1-n13")]}, lookup={})
+    monkeypatch.setattr(run_retrieval, "run", lambda qs: run(qs, search=stubs.search, lookup=stubs.lookup))
+    path = _write(tmp_path, f"when? | {CH1N13} | history\n")
+
+    assert run_retrieval.main([str(path)]) == 0
+
+    out = capsys.readouterr().out
+    rows = {words[0]: words for line in out.splitlines() if (words := line.split()) and words[0] in QUESTION_TYPES}
+    assert rows["history"][1] == "1" and rows["history"][2] == "1.000"
+    assert rows["history"][6] == "-" and rows["history"][7] == "-"  # hit_rate, not_found
+    assert rows["search"][2] == "-"
 
 
 def test_main_refuses_a_bad_file_with_exit_two(tmp_path, capsys):

@@ -14,6 +14,9 @@ Questions file, one per line: `question | gold ref_ids (comma-separated) | type`
 lines are skipped. Types:
 
 - `search`: `search_book_chunks(question)`; the ranked chunks are scored against the gold ids.
+- `history`: `search_book_chunks(question, include_history_notes=True)`, scored like `search` and reported in
+  its own row. For a question whose answer (an effective date, say) lives only in a history note, which
+  the default search leaves out.
 - `citation`: `lookup_book_chunks(question)`; a hit when a chunk it shows is a hit for a gold id. The shown
   chunks are in document order, not by relevance, so there is no rank to score: the metric is a hit rate.
 - `none`: a question the book cannot answer, with no gold. It counts as "not found" when `search` returns
@@ -43,7 +46,7 @@ from config import get_settings
 from ingest.books.ref_ids import is_under, parse_reference
 from rag.book_search import BookHit, LookupResult, lookup_book_chunks, search_book_chunks
 
-QUESTION_TYPES = ("search", "citation", "none")
+QUESTION_TYPES = ("search", "citation", "none", "history")
 _CUTOFFS = (5, 10)
 
 
@@ -168,12 +171,12 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def _search_record(question: Question, hits: list[BookHit]) -> dict:
+def _search_record(question: Question, hits: list[BookHit], kind: str) -> dict:
     ranked = [(h.chunk.ref_id, h.chunk.sub_ref_ids) for h in hits]
     scores = score_ranked(ranked, question.gold)
     return {
         "question": question.text,
-        "type": "search",
+        "type": kind,
         "gold": question.gold,
         "returned": [ref_id for ref_id, _ in ranked],
         **scores,
@@ -205,19 +208,22 @@ def _none_record(question: Question, hits: list[BookHit]) -> dict:
 
 def run(
     questions: list[Question],
-    search: Callable[[str], list[BookHit]] = search_book_chunks,
+    search: Callable[..., list[BookHit]] = search_book_chunks,
     lookup: Callable[[str], LookupResult | None] = lookup_book_chunks,
 ) -> dict:
     """Ask every question of its own tool and score the answers.
 
     Returns `n`, `counts` (questions per type), the means over the `search` questions (`recall@5`,
-    `recall@10`, `mrr`, `ndcg@10`), `citation_hit_rate` (over `citation`), `not_found_rate` (over `none`:
+    `recall@10`, `mrr`, `ndcg@10`), the same four over the `history` questions with a `history_` prefix,
+    `citation_hit_rate` (over `citation`), `not_found_rate` (over `none`:
     higher is better) and `questions`, one record per question with what came back and whether it was right
     (`ok`). A metric over no questions is 0.0; `counts` says whether that means anything."""
     records = []
     for question in questions:
         if question.type == "search":
-            records.append(_search_record(question, search(question.text)))
+            records.append(_search_record(question, search(question.text), "search"))
+        elif question.type == "history":
+            records.append(_search_record(question, search(question.text, include_history_notes=True), "history"))
         elif question.type == "citation":
             records.append(_citation_record(question, lookup(question.text)))
         elif question.type == "none":
@@ -229,6 +235,7 @@ def run(
         return [r for r in records if r["type"] == kind]
 
     searched = of("search")
+    history = of("history")
     return {
         "n": len(records),
         "counts": {kind: len(of(kind)) for kind in QUESTION_TYPES},
@@ -236,20 +243,24 @@ def run(
         "recall@10": _mean([r["recall@10"] for r in searched]),
         "mrr": _mean([r["rr"] for r in searched]),
         "ndcg@10": _mean([r["ndcg@10"] for r in searched]),
+        "history_recall@5": _mean([r["recall@5"] for r in history]),
+        "history_recall@10": _mean([r["recall@10"] for r in history]),
+        "history_mrr": _mean([r["rr"] for r in history]),
+        "history_ndcg@10": _mean([r["ndcg@10"] for r in history]),
         "citation_hit_rate": _mean([float(r["ok"]) for r in of("citation")]),
         "not_found_rate": _mean([float(r["ok"]) for r in of("none")]),
         "questions": records,
     }
 
 
-# (heading, key in `run`'s result, the question type it is a metric of); the cells of other types print "-".
+# (heading, {question type: key in `run`'s result}); the cells of a type a column has no key for print "-".
 _COLUMNS = (
-    ("recall@5", "recall@5", "search"),
-    ("recall@10", "recall@10", "search"),
-    ("mrr", "mrr", "search"),
-    ("ndcg@10", "ndcg@10", "search"),
-    ("hit_rate", "citation_hit_rate", "citation"),
-    ("not_found", "not_found_rate", "none"),
+    ("recall@5", {"search": "recall@5", "history": "history_recall@5"}),
+    ("recall@10", {"search": "recall@10", "history": "history_recall@10"}),
+    ("mrr", {"search": "mrr", "history": "history_mrr"}),
+    ("ndcg@10", {"search": "ndcg@10", "history": "history_ndcg@10"}),
+    ("hit_rate", {"citation": "citation_hit_rate"}),
+    ("not_found", {"none": "not_found_rate"}),
 )
 
 
@@ -257,10 +268,10 @@ def format_report(result: dict, top_k: int) -> str:
     """The questions and the `BOOK_SEARCH_TOP_K` they were searched with, the per-type table (n, then the
     metrics each type has), then every question that came out wrong."""
     lines = [f"{result['n']} questions, BOOK_SEARCH_TOP_K={top_k}", ""]
-    lines.append(f"{'type':<9}{'n':>5}" + "".join(f"{heading:>11}" for heading, _, _ in _COLUMNS))
+    lines.append(f"{'type':<9}{'n':>5}" + "".join(f"{heading:>11}" for heading, _ in _COLUMNS))
     for kind in QUESTION_TYPES:
         n = result["counts"][kind]
-        cells = (f"{result[key]:.3f}" if n and kind == metric_of else "-" for _, key, metric_of in _COLUMNS)
+        cells = (f"{result[keys[kind]]:.3f}" if n and kind in keys else "-" for _, keys in _COLUMNS)
         lines.append(f"{kind:<9}{n:>5}" + "".join(f"{cell:>11}" for cell in cells))
 
     misses = [r for r in result["questions"] if not r["ok"]]
