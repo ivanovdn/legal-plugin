@@ -1,0 +1,68 @@
+# Book retrieval test set: `none` questions from Law Stack Exchange, scored by evals.books.run_retrieval.
+# Spec: docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md (The `none` questions)
+#
+# Source: the Hugging Face dataset ymoslem/Law-StackExchange, revision ab2dbaad9a71b6550316994c8fcd69f24f7f16e6.
+# Licence: this file is under CC BY-SA 4.0. Each question's provenance line gives its own row's licence
+# (CC BY-SA 3.0 or 4.0) and its link. Change made: questions copied verbatim; gold labels added. In this file
+# the label is the type `none`, with no gold ids, and a reason why no node of the book answers the question.
+# The question is the title, HTML-unescaped, whitespace collapsed. A title that is not a question by itself
+# is followed, after one space, by the one sentence of the body that asks it, also verbatim. Typos are kept.
+#
+# Pool rule: tagged trademark or patents; none of the four copyright tags (copyright, fair-use, dmca,
+# public-domain); no foreign-jurisdiction tag; question score >= 2. Pool size: 182.
+# Foreign-jurisdiction tags (the 74 present in the data): alberta, argentina, australia, austria, azerbaijan, bangladesh, belgium, brazil, british-columbia, canada, china, city-of-london, croatia, cyprus, czech-republic, denmark, egypt, england-and-wales, eu-law, european-union, finland, france, germany, great-britain, hong-kong, hungary, iceland, india, indonesia, iran, iraq, ireland, israel, italy, japan, kenya, lebanon, lithuania, malaysia, mexico, netherlands, new-south-wales, new-zealand, nigeria, north-korea, northern-ireland, norway, ontario, pakistan, philippines, poland, portugal, quebec, romania, russia, saudi-arabia, schengen, scotland, singapore, slovakia, south-africa, spain, sri-lanka, sweden, switzerland, taiwan, thailand, turkey, uae, ukraine, united-kingdom, vatican-city-state, victoria, vietnam.
+# Kept out of that list on purpose: international, any-jurisdiction, multiple-jurisdiction, civil-law (not a country or region).
+# Order: the pool sorted by question_id, then random.Random(20261118).shuffle(pool); rank = 1-based position.
+# The pool is walked in rank order and a candidate is taken only when no node of the book answers it (spec,
+# The `none` questions); nothing is chosen by topic, by ease or by how search does. A drop is a "# dropped"
+# line; a candidate the book might answer, even in part, is dropped, naming the node.
+# Walked: ranks 1–17 of 182; taken 15, dropped 2.
+#
+# Checked against, by reading the parsed book (Circular 92, Dec. 2025 text), never by searching it: Title 17,
+# with ch. 9 (mask works, which §912(a) keeps apart from title 35), ch. 12 and ch. 13 (vessel hull designs;
+# §1329, a design patent ends the protection; §1330(2), trademark rights unaffected); 18 U.S.C. §§2318, 2319,
+# 2319A–2319C and 2323 (§2320, counterfeit marks, is not in the book; §2323 forfeits what it bars); 28 U.S.C.
+# §137, §1338 (patent, copyright and trademark jurisdiction), §1400 (venue, (b) for patents) and §1498 (only
+# (b), (c) and (e): copyright, mask works, designs; the patent subsection (a) is not in the book); 44 U.S.C.
+# §2117; the Public Laws, among them the PRO-IP Act (Pub. L. 110-403), whose §§102–104 and 205 amend the
+# Trademark Act and 18 U.S.C. §2320 on counterfeiting; TRIPs arts. 35–38 (layout-designs of integrated
+# circuits); the chapter and appendix notes. The book's patent and trademark text is jurisdiction, venue,
+# counterfeiting remedies and the chip and hull rights: nothing on what can be patented or registered, on the
+# rights a patent or a mark gives, or on when a mark is infringed.
+# "tags": the row's Law Stack Exchange tags. "none": the law that would answer the question, and the nearest
+# nodes of the book and why they don't.
+#
+#   question | (no gold) | none
+
+# lse:77123 https://law.stackexchange.com/q/77123 · CC BY-SA 4.0 · tags: open-source-software, patents · none: whether a patent filed later overrides the code's licence turns on patent law (prior art, the right to exclude: 35 U.S.C.) and the licence's terms; the book's patent text, 28 U.S.C. §1338(a) (jurisdiction) and §1400(b) (venue), with 17 U.S.C. §1329 and §912(a), says nothing on licences, and §203 termination runs only from 35 years after a grant
+Is it possible to use for commercial purposes code released with a license which allows it, even if it was patented afterwards? | | none
+# lse:11831 https://law.stackexchange.com/q/11831 · CC BY-SA 3.0 · tags: patents · none: patent eligibility of a formula is 35 U.S.C. §101 and case law (Benson, Alice); the book's §102(b) keeps principles and discoveries out of copyright, not out of patents, and its patent text, 28 U.S.C. §1338(a) (jurisdiction) and §1400(b) (venue), with 17 U.S.C. §1329 and §912(a), says nothing on what is patentable
+Can you patent a math formula? | | none
+# lse:78870 https://law.stackexchange.com/q/78870 · CC BY-SA 4.0 · tags: patents · none: whether a patent holder must license, supply or cap prices is patent and antitrust law; the book's only compulsory-licence text near it is TRIPs art. 37(2), on layout-designs of integrated circuits, not patents, and 28 U.S.C. §1498's government-use-of-patents subsection (a) is not in the book (only (b), (c), (e))
+Do patent holders have an obligation to make their patents available? To what extent? | | none
+# lse:20080 https://law.stackexchange.com/q/20080 · CC BY-SA 3.0 · tags: trademark, fraud, advertisements, food · none: false advertising and an unenforced foreign geographic designation (Lanham Act §43(a), FTC Act); the book's trademark text is 28 U.S.C. §1338(a)–(b) (jurisdiction) and the PRO-IP Act's counterfeit-mark damages amendments (Pub. L. 110-403 §§103–104), which need a registered mark counterfeited and say nothing on a menu claim
+How can a restaurant, Old Homestead Steakhouse, continue their false claims of selling Kobe beef? | | none
+# lse:34155 https://law.stackexchange.com/q/34155 · CC BY-SA 4.0 · tags: licensing, business, patents, open-source-software, academia · none: turns on the academic licence's terms and on patent law; the book's §117 (copies of a computer program) and §102(b) say nothing on what a software licence may restrict, and its patent text is 28 U.S.C. §1338(a) (jurisdiction) and §1400(b) (venue)
+Can a professor patent and license a technology if the development used software with non-commerical license? | | none
+# lse:33533 https://law.stackexchange.com/q/33533 · CC BY-SA 4.0 · tags: licensing, trademark · none: using a trademark in a domain name, asked for Poland, is Polish and EU trademark law; the book's only domain-name text is 17 U.S.C. §504(c)(3) (false contact information presumes willful copyright infringement), and its trademark text is 28 U.S.C. §1338 (US jurisdiction)
+Is it legal to use "Java" in a domain name for a website? | | none
+# lse:87472 https://law.stackexchange.com/q/87472 · CC BY-SA 4.0 · tags: patents · none: when a patent takes effect, and provisional rights in a published application, are 35 U.S.C. §154(d); the book's patent text is 28 U.S.C. §1338(a) (jurisdiction) and §1400(b) (venue), nothing on applications or on enforcement before grant
+Can one enforce a patent while it is only "pending approval"? | | none
+# lse:4414 https://law.stackexchange.com/q/4414 · CC BY-SA 3.0 · tags: internet, trademark, domain-name · none: turns on the registrar's agreement and the domain dispute policy (UDRP); the book's only domain-name text is 17 U.S.C. §504(c)(3) (false contact information and willful copyright infringement) and Pub. L. 108-482 §205(a) (free speech in domain names), and its trademark text is 28 U.S.C. §1338 (jurisdiction)
+When google.com was available to be bought after a clerical error, did they lose their right to own it? | | none
+# lse:90729 https://law.stackexchange.com/q/90729 · CC BY-SA 4.0 · tags: trademark, court, social-media · none: trial publicity and litigation risk (Model Rule 3.6, prior statements as evidence); nothing in the book governs what a party says about its case, and its trademark text, 28 U.S.C. §1338, says only which court hears it
+Why is it really bad to publicly talk about a case you are involved in on social media? | | none
+# lse:79067 https://law.stackexchange.com/q/79067 · CC BY-SA 4.0 · tags: intellectual-property, trademark, is-x-legal · none: trademark use in commerce and likelihood of confusion (Lanham Act); the book's trademark text is 28 U.S.C. §1338(a)–(b) (jurisdiction), 17 U.S.C. §1330(2) and the PRO-IP Act's counterfeit-mark amendments (Pub. L. 110-403 §§102–104, 205), none on what use of a mark is lawful
+Would it be legal to use a brand's name (e,g, Samsung, macOS) in my personal email address? | | none
+# lse:51398 https://law.stackexchange.com/q/51398 · CC BY-SA 4.0 · tags: intellectual-property, trademark · none: common-law rights in an unregistered mark and a later registration by another (15 U.S.C. §1051); the book's trademark text is 28 U.S.C. §1338 (jurisdiction) and 17 U.S.C. §1330, whose rights in an unregistered design, in (1), are vessel-hull designs, not marks
+What can happen if I don't register a trademark for my business? | | none
+# lse:11399 https://law.stackexchange.com/q/11399 · CC BY-SA 3.0 · tags: software, patents · none: patentable subject matter and examination of a software method (35 U.S.C. §§101–103); the book's §102(b) keeps processes and methods of operation out of copyright, not out of patents, and its patent text is 28 U.S.C. §1338(a) (jurisdiction) and §1400(b) (venue)
+This piece of computer science was patented - I thought you can't patent software? | | none
+# dropped lse:28033 · the software code's ownership is in the book: §201(b) (work made for hire), §201(d)(1) (transfer by operation of law), §204(a) (a transfer needs a signed writing, against reassigning it to oneself) and §205 / §705(b) (recorded transfers and the open Copyright Office records, for whom it now belongs to)
+# dropped lse:79880 · doubtful none: "free to use" spans copyright as well as trademark, and whether a fictional character's, location's or universe's name is protected expression is governed by §102(a) (original works of authorship) and §106; dropped rather than risk a none the book governs
+# lse:66651 https://law.stackexchange.com/q/66651 · CC BY-SA 4.0 · tags: trademark, liability, open-source-software · none: trademark infringement by an open-source project and who is liable (Lanham Act); the book's trademark text is 28 U.S.C. §1338(a)–(b) (jurisdiction), 17 U.S.C. §1330(2) and the PRO-IP Act's counterfeit-mark amendments (Pub. L. 110-403 §§102–104, 205), none on infringement of a mark, and its takedown rules (§512) are for copyright only
+How do trademarks apply to Open Source? | | none
+# lse:44928 https://law.stackexchange.com/q/44928 · CC BY-SA 4.0 · tags: united-states, trademark, business · none: likelihood of confusion between a song title and an app's name (Lanham Act); the book's trademark text is 28 U.S.C. §1338(a)–(b) (jurisdiction), 17 U.S.C. §1330(2) and the PRO-IP Act's counterfeit-mark amendments (Pub. L. 110-403 §§102–104, 205), none on confusion
+Does the app TikTok violate trademark? | | none
+# lse:88930 https://law.stackexchange.com/q/88930 · CC BY-SA 4.0 · tags: patents · none: patentability of a circuit that combines ICs (35 U.S.C. §§101–103: novelty, non-obviousness) and freedom-to-operate searches; the book's chip text is mask works (17 U.S.C. ch. 9, which §912(a) keeps apart from title 35) and TRIPs arts. 35–38 (layout-designs), neither a patent rule, and its patent text is 28 U.S.C. §1338(a) (jurisdiction) and §1400(b) (venue)
+At what point does combining integrated circuits yield something patentable? | | none

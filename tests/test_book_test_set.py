@@ -18,19 +18,26 @@ from evals.books.run_retrieval import QUESTION_TYPES, load_questions
 SETS = Path(__file__).resolve().parent.parent / "evals" / "books" / "sets"
 
 # Each file: the question types it may hold, and the least and most questions it may have.
-SET_FILES = {"lse-search.txt": (("search",), 55, 65)}
+SET_FILES = {"lse-search.txt": (("search",), 55, 65), "lse-none.txt": (("none",), 12, 18)}
 
 SPEC = "docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md"
 
 LSE_SEARCH_RE = re.compile(
     r"^# lse:(\d+) https://law\.stackexchange\.com/q/\1 · CC BY-SA (?:3\.0|4\.0) · cited: .+ · (?:answers|governs) · gold: .+$"
 )
+LSE_NONE_RE = re.compile(r"^# lse:(\d+) https://law\.stackexchange\.com/q/\1 · CC BY-SA (?:3\.0|4\.0) · tags: .+ · none: .+$")
+# Each Law Stack Exchange file, and the provenance line every question in it carries.
+LSE_FILES = {"lse-search.txt": LSE_SEARCH_RE, "lse-none.txt": LSE_NONE_RE}
 DROPPED_RE = re.compile(r"^# dropped lse:(\d+) · .+$")
 SECTION_RE = re.compile(r"§|\bU\.?\s?S\.?\s?C\b|\bsection\s+\d|\b\d{3}[A-C]?\([a-z0-9]+\)", re.I)
-# The walk 3b and 3c continue from: the last rank walked, and what became of the ranks walked.
-WALKED_RE = re.compile(
-    r"^# Walked: ranks 1–(\d+) of 193; taken (\d+), dropped (\d+)\. Of those taken: answers (\d+), governs (\d+)\.$"
-)
+# Each Law Stack Exchange file's walk line, which a later batch continues from: the last rank walked of the
+# pool's size, and what became of the ranks walked. Only the search file splits its takes into answers/governs.
+WALKED_RE = {
+    "lse-search.txt": re.compile(
+        r"^# Walked: ranks 1–(\d+) of 193; taken (\d+), dropped (\d+)\. Of those taken: answers (\d+), governs (\d+)\.$"
+    ),
+    "lse-none.txt": re.compile(r"^# Walked: ranks 1–(\d+) of 182; taken (\d+), dropped (\d+)\.$"),
+}
 
 
 def _is_question(line: str) -> bool:
@@ -85,16 +92,20 @@ def test_no_question_appears_twice():
 
 
 def test_lse_questions_carry_their_source_and_licence():
-    path = SETS / "lse-search.txt"
-    bad = [(above, question) for above, question in _entries(path) if not LSE_SEARCH_RE.match(above)]
-    assert bad == []
+    ids = []
+    for name, provenance in LSE_FILES.items():
+        path = SETS / name
+        bad = [(above, question) for above, question in _entries(path) if not provenance.match(above)]
+        assert bad == [], name
 
-    # A candidate is taken or dropped once: no id twice, among the taken or across taken and dropped.
-    lines = path.read_text(encoding="utf-8").splitlines()
-    taken = [LSE_SEARCH_RE.match(above).group(1) for above, _ in _entries(path)]
-    dropped_lines = [line for line in lines if line.startswith("# dropped")]
-    assert [line for line in dropped_lines if not DROPPED_RE.match(line)] == []
-    ids = taken + [DROPPED_RE.match(line).group(1) for line in dropped_lines]
+        lines = path.read_text(encoding="utf-8").splitlines()
+        taken = [provenance.match(above).group(1) for above, _ in _entries(path)]
+        dropped_lines = [line for line in lines if line.startswith("# dropped")]
+        assert [line for line in dropped_lines if not DROPPED_RE.match(line)] == [], name
+        ids += taken + [DROPPED_RE.match(line).group(1) for line in dropped_lines]
+
+    # A candidate is taken or dropped once, in one file: no id twice, among the taken, across taken and
+    # dropped, or across the two files.
     assert sorted({i for i in ids if ids.count(i) > 1}) == []
 
 
@@ -103,8 +114,9 @@ def test_no_lse_search_question_names_a_section():
     assert named == []
 
 
-def test_lse_headers_name_the_source_revision_and_licence():
-    header = "\n".join(_header(SETS / "lse-search.txt"))
+@pytest.mark.parametrize("name", LSE_FILES)
+def test_lse_headers_name_the_source_revision_and_licence(name):
+    header = "\n".join(_header(SETS / name))
     for needed in (
         "ymoslem/Law-StackExchange",
         "ab2dbaad9a71b6550316994c8fcd69f24f7f16e6",
@@ -116,18 +128,21 @@ def test_lse_headers_name_the_source_revision_and_licence():
         assert needed in header, needed
 
 
-def test_lse_search_header_records_the_walk():
+@pytest.mark.parametrize("name", WALKED_RE)
+def test_lse_headers_record_the_walk(name):
     """The next batch starts at the rank after the last one walked, so the header must say it, and say it
     right: every rank walked was either taken or dropped, and the counts are the file's own."""
-    path = SETS / "lse-search.txt"
-    walked = [m for line in _header(path) if (m := WALKED_RE.match(line))]
-    assert len(walked) == 1, "expected one '# Walked: ranks 1–N of 193; …' line in the header"
-    last, taken, dropped, answers, governs = (int(n) for n in walked[0].groups())
+    path = SETS / name
+    walked = [m for line in _header(path) if (m := WALKED_RE[name].match(line))]
+    assert len(walked) == 1, f"expected one '# Walked: ranks 1–N of <pool size>; …' line in the header of {name}"
+    last, taken, dropped, *split = (int(n) for n in walked[0].groups())
 
     comments = [above for above, _ in _entries(path)]
     lines = path.read_text(encoding="utf-8").splitlines()
     assert taken == len(comments)
     assert dropped == sum(line.startswith("# dropped ") for line in lines)
     assert last == taken + dropped
-    assert answers == sum(" · answers · " in c for c in comments)
-    assert governs == sum(" · governs · " in c for c in comments)
+    if split:  # the search file's takes, split by what their gold does
+        answers, governs = split
+        assert answers == sum(" · answers · " in c for c in comments)
+        assert governs == sum(" · governs · " in c for c in comments)
