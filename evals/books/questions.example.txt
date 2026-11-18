@@ -13,7 +13,7 @@
 # A gold is a full ref_id, or a bare path (usc17-s107), which matches in any book and edition.
 # Blank lines and lines starting with # are skipped; the question may contain "|", the last two are the separators.
 #
-#   uv run python -m evals.books.run_retrieval evals/books/questions.example.txt
+#   BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval evals/books/questions.example.txt
 
 What factors decide whether a use is fair use? | circ92-2025-12:usc17-s107 | search
 17 U.S.C. §107 | circ92-2025-12:usc17-s107 | citation

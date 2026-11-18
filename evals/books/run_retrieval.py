@@ -6,8 +6,8 @@ Needs Ollama (the query embedding) and Qdrant (the book collection), so it is NO
 `scripts/check.sh` and is not one of the zero-LLM `evals/` runners: `scripts/eval.sh` never runs it. Its
 arithmetic is unit-tested with stubs (tests/test_book_retrieval_eval.py).
 
-Why it exists: the chunk budget, the embedding model and `BOOK_MIN_SCORE` are open until an attorney-
-written question set exists (spec, Goal 7 and Open questions). This is the thing that will read the set.
+Why it exists: the chunk budget, the embedding model and `BOOK_MIN_SCORE` are decided on the test set in
+`evals/books/sets/` (its baseline is in docs/rag.md, "Measuring retrieval"). This is the thing that reads it.
 Run it before and after changing any of the three, on the same file.
 
 Questions file, one per line: `question | gold ref_ids (comma-separated) | type`. `#` lines and blank
