@@ -33,7 +33,7 @@
 # nodes of the book and why they don't.
 #
 # Second reading (fresh agent, book text only): agreed on 15 of 15 (100%)
-# Second reading, overlap: the two golds shared at least one node in 15 of 15; mean Jaccard 1.00. Disagreements settled from the book: first kept 0, second taken 0, mixed 0.
+# Second reading, overlap: both readers judged all 15 unanswerable (NONE); no disagreements to settle.
 #
 #   question | (no gold) | none
 

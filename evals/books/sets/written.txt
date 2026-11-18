@@ -17,7 +17,7 @@
 #
 # Second reading (fresh agent, book text only): agreed on 10 of 15 (67%)
 # Second reading, overlap: the two golds shared at least one node in 15 of 15; mean Jaccard 0.82. Disagreements settled from the book: first kept 5, second taken 0, mixed 0.
-# The second reader saw only the question text; the first reading also read the question's body.
+# The second reader saw only the question text; the first reading was by the questions' author, writing from the book.
 #
 #   question | gold node paths, comma-separated | type
 
