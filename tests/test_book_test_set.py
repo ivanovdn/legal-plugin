@@ -14,11 +14,16 @@ from pathlib import Path
 import pytest
 
 from evals.books.run_retrieval import QUESTION_TYPES, load_questions
+from ingest.books.ref_ids import parse_reference
 
 SETS = Path(__file__).resolve().parent.parent / "evals" / "books" / "sets"
 
 # Each file: the question types it may hold, and the least and most questions it may have.
-SET_FILES = {"lse-search.txt": (("search",), 55, 65), "lse-none.txt": (("none",), 12, 18)}
+SET_FILES = {
+    "lse-search.txt": (("search",), 55, 65),
+    "lse-none.txt": (("none",), 12, 18),
+    "citations.txt": (("citation",), 12, 18),
+}
 
 SPEC = "docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md"
 
@@ -84,6 +89,11 @@ def test_every_gold_names_a_node_of_the_book(name, circ92_whole_parse):
     index = circ92_whole_parse.tree.index()
     missing = [(q.text, g) for q in load_questions(SETS / name) for g in q.gold if g.rpartition(":")[2] not in index]
     assert missing == []
+
+
+def test_every_citation_question_names_its_gold():
+    for q in load_questions(SETS / "citations.txt"):
+        assert len(q.gold) == 1 and parse_reference(q.text) == q.gold[0], q.text
 
 
 def test_no_question_appears_twice():

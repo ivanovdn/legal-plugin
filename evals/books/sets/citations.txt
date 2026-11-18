@@ -1,0 +1,18 @@
+# Citation questions for the Circular 92 retrieval test set, scored through the book's lookup.
+# Written by Claude from the book's structure, one citation per line in the form an attorney would write it.
+# Each gold is the node its citation names, and parse_reference(text) must return it.
+§ 107 | usc17-s107 | citation
+17 USC 512(c)(3) | usc17-s512-c-3 | citation
+17 U.S.C. § 512(c)(3)(A)(i) | usc17-s512-c-3-A-i | citation
+17 U.S.C. § 110(5)(B)(ii)(II) | usc17-s110-5-B-ii-II | citation
+sec. 1201(a)(1)(C) | usc17-s1201-a-1-C | citation
+§§ 203(a)(2)(A) | usc17-s203-a-2-A | citation
+section 101 "joint work" | usc17-s101-def-joint-work | citation
+section 101 "fixed" | usc17-s101-def-fixed | citation
+18 U.S.C. 2319 | usc18-s2319 | citation
+Pub. L. 105-304, sec. 401 | pl105-304-s401 | citation
+TRIPs art. 35 | trips-art35 | citation
+ch. 1, n. 13 | ch1-n13 | citation
+17 U.S.C. § 122(f)(1) | usc17-s122-f-1 | citation
+section 108(h)(2)(C) | usc17-s108-h-2-C | citation
+sec. 401(b)(1) | usc17-s401-b-1 | citation
