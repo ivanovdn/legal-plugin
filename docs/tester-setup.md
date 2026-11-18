@@ -588,6 +588,16 @@ sudo sed -i '' '/legal-triage\.internal\.trinetix\.net/d' /etc/hosts
    installed for you by IT reappear by themselves. Use it only if Legal Triage is
    still showing after a restart, and if you're unsure, ask us first.
 
+   ⚠ **It also makes the assistant forget who you are.** The panel keeps track
+   of you in that cache, so afterwards the assistant treats you as a new person.
+   Your **Preferences** tab is empty again, and the assistant no longer remembers
+   what you discussed with it in Chat. It does still remember each document's
+   last review, because a review belongs to the document, not to you. If you run
+   this command, copy your Preferences notes somewhere first. Afterwards, redo
+   [Step 6](#step-6-everyone--put-your-name-in), paste your notes back in, and
+   let us know, so we can match your earlier history to you. Anything else that
+   clears Word's add-in cache does the same.
+
 2. **Remove the server name** — administrator PowerShell, one line:
 
    ```powershell
@@ -624,8 +634,12 @@ day — what the three tabs do, and how to tell us when it's wrong — is a sepa
 short guide**, sent alongside this one.
 
 **Do I have to do this again on my other laptop?**
-Yes — all of it, once per machine. Your name and your preferences follow your
-login, not the machine, but the certificate and the add-in are per-laptop.
+Yes — all of it, once per machine, including
+[Step 6](#step-6-everyone--put-your-name-in). There's no company login in the
+assistant yet, so it recognises your laptop, not you. On a second laptop it starts
+without your name or your Preferences notes, and without memory of what you
+discussed with it in Chat. Type your name the same way on each laptop, and copy
+your Preferences notes across.
 
 ---
 
