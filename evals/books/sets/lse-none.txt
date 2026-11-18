@@ -34,6 +34,7 @@
 #
 # Second reading (fresh agent, book text only): agreed on 15 of 15 (100%)
 # Second reading, overlap: both readers judged all 15 unanswerable (NONE); no disagreements to settle.
+# Owner's check (2026-11-18): 1 questions, 0 corrected.
 #
 #   question | (no gold) | none
 
@@ -55,7 +56,7 @@ Can one enforce a patent while it is only "pending approval"? | | none
 When google.com was available to be bought after a clerical error, did they lose their right to own it? | | none
 # lse:90729 https://law.stackexchange.com/q/90729 · CC BY-SA 4.0 · tags: trademark, court, social-media · none: trial publicity and litigation risk (Model Rule 3.6, prior statements as evidence); nothing in the book governs what a party says about its case, and its trademark text, 28 U.S.C. §1338, says only which court hears it · second reading: agreed
 Why is it really bad to publicly talk about a case you are involved in on social media? | | none
-# lse:79067 https://law.stackexchange.com/q/79067 · CC BY-SA 4.0 · tags: intellectual-property, trademark, is-x-legal · none: trademark use in commerce and likelihood of confusion (Lanham Act); the book's trademark text is 28 U.S.C. §1338(a)–(b) (jurisdiction), 17 U.S.C. §1330(2) and the PRO-IP Act's counterfeit-mark amendments (Pub. L. 110-403 §§102–104, 205), none on what use of a mark is lawful · second reading: agreed
+# lse:79067 https://law.stackexchange.com/q/79067 · CC BY-SA 4.0 · tags: intellectual-property, trademark, is-x-legal · none: trademark use in commerce and likelihood of confusion (Lanham Act); the book's trademark text is 28 U.S.C. §1338(a)–(b) (jurisdiction), 17 U.S.C. §1330(2) and the PRO-IP Act's counterfeit-mark amendments (Pub. L. 110-403 §§102–104, 205), none on what use of a mark is lawful · second reading: agreed · owner's check: confirmed
 Would it be legal to use a brand's name (e,g, Samsung, macOS) in my personal email address? | | none
 # lse:51398 https://law.stackexchange.com/q/51398 · CC BY-SA 4.0 · tags: intellectual-property, trademark · none: common-law rights in an unregistered mark and a later registration by another (15 U.S.C. §1051); the book's trademark text is 28 U.S.C. §1338 (jurisdiction) and 17 U.S.C. §1330, whose rights in an unregistered design, in (1), are vessel-hull designs, not marks · second reading: agreed
 What can happen if I don't register a trademark for my business? | | none
