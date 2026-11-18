@@ -13,7 +13,15 @@ from types import SimpleNamespace
 import pytest
 
 from evals.books import run_retrieval
-from evals.books.run_retrieval import QUESTION_TYPES, Question, is_hit, load_questions, run, score_ranked
+from evals.books.run_retrieval import (
+    INCLUDES_HISTORY_NOTES,
+    QUESTION_TYPES,
+    Question,
+    is_hit,
+    load_questions,
+    run,
+    score_ranked,
+)
 from ingest.books.models import BookChunk
 from rag.book_search import BookHit, LookupResult, lookup_book_chunks, search_book_chunks
 
@@ -369,6 +377,12 @@ def test_a_history_question_is_searched_with_history_notes_included():
     assert stubs.searched == ["when?", "fair use?"]
 
 
+def test_every_type_but_citation_is_searched_with_its_notes_setting():
+    """`citation` is looked up; every other type is searched, with or without the history notes as
+    INCLUDES_HISTORY_NOTES says. The set's tests read the same map, so a type missing from it would go unchecked."""
+    assert sorted([*INCLUDES_HISTORY_NOTES, "citation"]) == sorted(QUESTION_TYPES)
+
+
 def test_history_is_scored_like_search_and_reported_apart():
     stubs = _Stubs(search={"when?": [_chunk("usc17-s108"), _chunk("ch1-n13")], "fair use?": []}, lookup={})
     result = run([Question("when?", [CH1N13], "history"), Question("fair use?", [S107], "search")],
@@ -403,7 +417,7 @@ def test_run_refuses_an_unknown_type_rather_than_skipping_it():
 
 
 def test_a_failing_search_stops_the_run_rather_than_scoring_a_miss():
-    def search(query: str) -> list[BookHit]:
+    def search(query: str, *, include_history_notes: bool = False) -> list[BookHit]:
         raise ConnectionError("qdrant is down")
 
     with pytest.raises(ConnectionError):

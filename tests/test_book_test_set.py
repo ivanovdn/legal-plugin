@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from evals.books.run_retrieval import QUESTION_TYPES, load_questions
+from evals.books.run_retrieval import INCLUDES_HISTORY_NOTES, QUESTION_TYPES, load_questions
 from ingest.books.ref_ids import parse_reference
 from rag.book_search import kind_filter
 
@@ -30,10 +30,6 @@ SET_FILES = {
 
 SPEC = "docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md"
 
-# Each question type the runner searches for, and whether it searches with the history notes included
-# (evals.books.run_retrieval: `history` passes include_history_notes=True, `search` the default).
-SEARCHES_NOTES = {"search": False, "history": True}
-
 LSE_SEARCH_RE = re.compile(
     r"^# lse:(\d+) https://law\.stackexchange\.com/q/\1 · CC BY-SA (?:3\.0|4\.0) · cited: .+ · (?:answers|governs) · gold: .+$"
 )
@@ -44,7 +40,14 @@ DROPPED_RE = re.compile(r"^# dropped lse:(\d+) · .+$")
 WRITTEN_RE = re.compile(r"^# written by Claude · (search|history) · gold: .+$")
 # The files whose questions are searched for, not looked up: none of them may name a section.
 SEARCHED_FILES = ("lse-search.txt", "written.txt")
-SECTION_RE = re.compile(r"§|\bU\.?\s?S\.?\s?C\b|\bsection\s+\d|\b\d{3}[A-C]?\([a-z0-9]+\)", re.I)
+# A section named the way the book's citations are written: `§`, `U.S.C.`, `sec.`/`section`/`sections`, `art.`/
+# `article`, `Pub. L.`, `ch. 1, n. 13`, or a 3- or 4-digit number with a subsection (`1201(a)`). Not a bare number:
+# written.txt's questions carry years.
+SECTION_RE = re.compile(
+    r"§|\bU\.?\s?S\.?\s?C\b|\bsec(?:tions?|s?\.)\s*\d|\bart(?:icle|\.)\s*\d|\bPub\.?\s*L\b|\bch\.\s*\d+,?\s*n\.|"
+    r"\b\d{3,4}[A-C]?\([a-z0-9]+\)",
+    re.I,
+)
 # Each Law Stack Exchange file's walk line, which a later batch continues from: the last rank walked of the
 # pool's size, and what became of the ranks walked. Only the search file splits its takes into answers/governs.
 WALKED_RE = {
@@ -53,8 +56,8 @@ WALKED_RE = {
     ),
     "lse-none.txt": re.compile(r"^# Walked: ranks 1–(\d+) of 182; taken (\d+), dropped (\d+)\.$"),
 }
-# The files whose gold a second, blind reader labelled again from the book's text (citations.txt's gold is what
-# parse_reference returns, so there is nothing to read). Each header carries the agreement line, and each entry's
+# The files whose gold was labelled a second time, blind, from the book's text, by fresh agents (four, a quarter
+# of the questions each); citations.txt's gold is what parse_reference returns, so there is nothing to read. Each header carries the agreement line, and each entry's
 # comment the verdict: `agreed`, or the second reader's gold and how the disagreement was settled. The owner's
 # check (Task 8) may follow the verdict.
 SECOND_READ_FILES = ("lse-search.txt", "lse-none.txt", "written.txt")
@@ -125,12 +128,28 @@ def test_every_gold_is_a_kind_its_search_returns(name, circ92_whole_parse):
     unsearched = [
         (q.text, g, index[path].kind)
         for q in load_questions(SETS / name)
-        if q.type in SEARCHES_NOTES
+        if q.type != "citation"  # looked up by its id, and lookup reaches every kind
         for g in q.gold
         if (path := g.rpartition(":")[2]) in index
-        and index[path].kind not in _searched_kinds(SEARCHES_NOTES[q.type])
+        and index[path].kind not in _searched_kinds(INCLUDES_HISTORY_NOTES[q.type])
     ]
     assert unsearched == []
+
+
+@pytest.mark.parametrize("name", SET_FILES)
+def test_every_gold_is_written_as_a_bare_path(name):
+    """The spec: ids are node paths. `load_questions` also takes a full ref_id or a citation in words, and the checks
+    above read only what follows the last `:`, so a gold with a wrong book prefix (`circ92-2024-01:usc17-s107`) or
+    written as a citation (`§ 107`, which makes the citation check trivially true) would pass them all. So the gold
+    field as written, not as parsed, must hold bare paths."""
+    golds = [
+        g.strip()
+        for line in (SETS / name).read_text(encoding="utf-8").splitlines()
+        if _is_question(line)
+        for g in line.rsplit("|", 2)[1].split(",")
+        if g.strip()
+    ]
+    assert [g for g in golds if ":" in g or parse_reference(g) != g] == []
 
 
 @pytest.mark.parametrize("name", SET_FILES)
@@ -151,8 +170,14 @@ def test_every_citation_question_names_its_gold():
         assert len(q.gold) == 1 and parse_reference(q.text) == q.gold[0], q.text
 
 
+def _normalized(question: str) -> str:
+    """Casefolded, every run of whitespace and punctuation made one space: questions that differ only there are the
+    same question."""
+    return re.sub(r"[\W_]+", " ", question.casefold()).strip()
+
+
 def test_no_question_appears_twice():
-    texts = [q.text for name in SET_FILES for q in load_questions(SETS / name)]
+    texts = [_normalized(q.text) for name in SET_FILES for q in load_questions(SETS / name)]
     assert sorted({t for t in texts if texts.count(t) > 1}) == []
 
 
@@ -178,6 +203,28 @@ def test_lse_questions_carry_their_source_and_licence():
 def test_no_searched_question_names_a_section(name):
     named = [q.text for q in load_questions(SETS / name) if SECTION_RE.search(q.text)]
     assert named == []
+
+
+def test_the_section_check_catches_every_citation_form():
+    """SECTION_RE is checked against the forms it has to catch: every question in citations.txt names a section."""
+    missed = [q.text for q in load_questions(SETS / "citations.txt") if not SECTION_RE.search(q.text)]
+    assert missed == []
+
+
+@pytest.mark.parametrize(
+    "text, names_a_section",
+    [
+        ("Is 1201(a) violated?", True),
+        ("Does 2319(b) apply?", True),
+        ("Under sec. 107, is this fair?", True),
+        ("Do sections 107 and 108 both apply?", True),
+        ("Is it covered by Article 35 of TRIPs?", True),
+        ("Did the 1976 Act change this in 1978?", False),  # years are not sections
+        ("Was the work published before 1989?", False),
+    ],
+)
+def test_the_section_check_on_forms_outside_the_set(text, names_a_section):
+    assert bool(SECTION_RE.search(text)) is names_a_section
 
 
 def test_written_questions_say_who_wrote_them():

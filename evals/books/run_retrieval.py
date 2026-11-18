@@ -1,6 +1,6 @@
 """Retrieval eval for the reference books: scores `search_books` and `lookup_book` against a question set.
 
-    uv run python -m evals.books.run_retrieval <questions file>
+    BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval <questions file>
 
 Needs Ollama (the query embedding) and Qdrant (the book collection), so it is NOT part of
 `scripts/check.sh` and is not one of the zero-LLM `evals/` runners: `scripts/eval.sh` never runs it. Its
@@ -47,6 +47,9 @@ from ingest.books.ref_ids import is_under, parse_reference
 from rag.book_search import BookHit, LookupResult, lookup_book_chunks, search_book_chunks
 
 QUESTION_TYPES = ("search", "citation", "none", "history")
+# Each question type `run` searches for, and whether its search includes the history notes (`search_book_chunks`
+# leaves them out by default). `citation` is looked up, not searched, so it is not here.
+INCLUDES_HISTORY_NOTES = {"search": False, "history": True, "none": False}
 _CUTOFFS = (5, 10)
 
 
@@ -218,16 +221,18 @@ def run(
     `citation_hit_rate` (over `citation`), `not_found_rate` (over `none`:
     higher is better) and `questions`, one record per question with what came back and whether it was right
     (`ok`). A metric over no questions is 0.0; `counts` says whether that means anything."""
+
+    def searched(question: Question) -> list[BookHit]:
+        return search(question.text, include_history_notes=INCLUDES_HISTORY_NOTES[question.type])
+
     records = []
     for question in questions:
-        if question.type == "search":
-            records.append(_search_record(question, search(question.text), "search"))
-        elif question.type == "history":
-            records.append(_search_record(question, search(question.text, include_history_notes=True), "history"))
+        if question.type in ("search", "history"):
+            records.append(_search_record(question, searched(question), question.type))
         elif question.type == "citation":
             records.append(_citation_record(question, lookup(question.text)))
         elif question.type == "none":
-            records.append(_none_record(question, search(question.text)))
+            records.append(_none_record(question, searched(question)))
         else:
             raise ValueError(f"question {question.text!r} has type {question.type!r}, not one of {QUESTION_TYPES}")
 
