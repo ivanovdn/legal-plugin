@@ -66,7 +66,6 @@ def test_each_set_file_holds_only_its_types(name):
     assert {q.type for q in load_questions(SETS / name)} <= set(types)
 
 
-@pytest.mark.xfail(strict=True, reason="filled to 55+ in Task 3c")
 @pytest.mark.parametrize("name", SET_FILES)
 def test_each_set_file_has_its_size(name):
     _, least, most = SET_FILES[name]
