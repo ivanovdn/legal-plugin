@@ -1,0 +1,66 @@
+# Book retrieval test set: `search` questions from Law Stack Exchange, scored by evals.books.run_retrieval.
+# Spec: docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md
+#
+# Source: the Hugging Face dataset ymoslem/Law-StackExchange, revision ab2dbaad9a71b6550316994c8fcd69f24f7f16e6.
+# Licence: this file is under CC BY-SA 4.0. Each question's provenance line gives its own row's licence
+# (CC BY-SA 3.0 or 4.0) and its link. Change made: questions copied verbatim; gold labels added.
+# The question is the title, HTML-unescaped, whitespace collapsed. A title that is not a question by itself
+# is followed, after one space, by the one sentence of the body that asks it, also verbatim. Typos are kept.
+#
+# Pool rule: tagged copyright, fair-use, dmca or public-domain; no foreign-jurisdiction tag; some answer,
+# HTML-stripped, matches 17\s*U\.?\s*S\.?\s*C\.? (case-insensitive); question score >= 2. Pool size: 193.
+# Foreign-jurisdiction tags (the 74 present in the data): alberta, argentina, australia, austria, azerbaijan, bangladesh, belgium, brazil, british-columbia, canada, china, city-of-london, croatia, cyprus, czech-republic, denmark, egypt, england-and-wales, eu-law, european-union, finland, france, germany, great-britain, hong-kong, hungary, iceland, india, indonesia, iran, iraq, ireland, israel, italy, japan, kenya, lebanon, lithuania, malaysia, mexico, netherlands, new-south-wales, new-zealand, nigeria, north-korea, northern-ireland, norway, ontario, pakistan, philippines, poland, portugal, quebec, romania, russia, saudi-arabia, schengen, scotland, singapore, slovakia, south-africa, spain, sri-lanka, sweden, switzerland, taiwan, thailand, turkey, uae, ukraine, united-kingdom, vatican-city-state, victoria, vietnam.
+# Kept out of that list on purpose: international, any-jurisdiction, multiple-jurisdiction, civil-law (not a country or region).
+# Order: the pool sorted by question_id, then random.Random(20261118).shuffle(pool); rank = 1-based position.
+# The pool is walked in rank order and each candidate taken or dropped by the spec's rules (Choosing the
+# `search` questions); nothing is chosen by topic, by ease or by how search does. A drop is a "# dropped" line.
+# Walked: ranks 1–20 of 193; taken 20, dropped 0. Of those taken: answers 9, governs 11.
+#
+# Gold: bare node paths of the parsed book (Circular 92, Dec. 2025 text), chosen by reading the book, never by
+# searching it: the smallest node that holds the answer, and every node a complete answer needs.
+# "cited" is what the answerers cited from 17 U.S.C.: a hint only, often wrong. "answers": the gold's text
+# settles the question by itself. "governs": the gold is the provision the question turns on, though facts or
+# case law decide it.
+#
+#   question | gold node paths, comma-separated | type
+
+# lse:77738 https://law.stackexchange.com/q/77738 · CC BY-SA 4.0 · cited: §102(b) · governs · gold: §102(b), copyright never extends to an idea, procedure, process, system, concept, principle or discovery however it is illustrated: the line between the free data and the graph's protected expression
+Where are the limits of creative expression in graphical data displays? | usc17-s102-b | search
+# lse:7707 https://law.stackexchange.com/q/7707 · CC BY-SA 3.0 · cited: §106, §504, §506 · governs · gold: §106(2) and §106(3), preparing derivative works (a transcription) and distributing copies to the public by sale or other transfer of ownership (giving them away) are the owner's exclusive rights; whether fair use excuses it is case law
+Are there legal consequences for giving away my own musical transcriptions of copyrighted works on a website? | usc17-s106-2, usc17-s106-3 | search
+# lse:17935 https://law.stackexchange.com/q/17935 · CC BY-SA 3.0 · cited: §302 · answers · gold: §302(b), a joint work (the band) lasts for the life of the last surviving author plus 70 years; §302(c), a work made for hire (the studio film) lasts 95 years from publication or 120 from creation, on no one's life
+Copyright protection: life + 70 years. But whose life? | usc17-s302-b, usc17-s302-c | search
+# lse:33789 https://law.stackexchange.com/q/33789 · CC BY-SA 4.0 · cited: §411, §501(b), §502, §506(3), §409 · answers · gold: §705(b), the Copyright Office's records of registrations and recorded transfers are open to public inspection; §705(c), for a fee the Office searches them and reports what they show for a work
+How can I determine whether a copyright troll actually owns the copyright they claim? | usc17-s705-b, usc17-s705-c | search
+# lse:13241 https://law.stackexchange.com/q/13241 · CC BY-SA 3.0 · cited: §101 · answers · gold: §101 'derivative work' names a translation; §106(2) makes preparing derivative works the copyright owner's exclusive right
+Are there any laws on copyrighted material, preventing them from being translated? | usc17-s101-def-derivative-work, usc17-s106-2 | search
+# lse:25825 https://law.stackexchange.com/q/25825 · CC BY-SA 3.0 · cited: §106, §107, §501, §506, §506(a)(1)(A) · governs · gold: §106(2), preparing derivative works of the game is the owner's exclusive right (whether a cheat is one is case law); §1201(a)(2), no one may make or sell a tool primarily designed to circumvent a measure controlling access to a work (the anti-cheat bypass)
+Is creating and selling "cheats" or "hacks" for games illegal? | usc17-s106-2, usc17-s1201-a-2 | search
+# lse:74978 https://law.stackexchange.com/q/74978 · CC BY-SA 4.0 · cited: §504, §412 · answers · gold: §504(b), actual damages plus the infringer's profits attributable to the infringement; §504(c), statutory damages instead: $750 to $30,000 per work, up to $150,000 if willful, down to $200 if innocent
+How is damage calculated when infringing a copyright? | usc17-s504-b, usc17-s504-c | search
+# lse:9412 https://law.stackexchange.com/q/9412 · CC BY-SA 3.0 · cited: §102 · governs · gold: §102(a), copyright subsists only in original works of authorship; whether a mechanical OCR adds any originality is case law (Feist)
+Is OCRed text automatically copyright? | usc17-s102-a | search
+# lse:70220 https://law.stackexchange.com/q/70220 · CC BY-SA 4.0 · cited: §101 · answers · gold: §101 'publication', distribution of copies to the public by sale or other transfer, or offering them for further distribution; a performance or display alone is not publication (the copyright half; the defamation sense is outside the book)
+How is "publication" different in copyright and defamation cases | usc17-s101-def-publication | search
+# lse:77246 https://law.stackexchange.com/q/77246 · CC BY-SA 4.0 · cited: §201(a), §201, §101, §102, §101(1) · governs · gold: §101 'work made for hire' (1), a work prepared by an employee within the scope of employment; whether a job candidate is an employee is agency law (paragraph (2) needs a signed writing, which the question doesn't have)
+Are projects produced as pre-conditions for employment interviews sole work or work-for-hire? | usc17-s101-def-work-made-for-hire-1 | search
+# lse:17769 https://law.stackexchange.com/q/17769 · CC BY-SA 3.0 · cited: §102(a)(8), §120, §120(a) · governs · gold: §120(a), the copyright in a constructed architectural work visible from a public place does not cover making, distributing or displaying pictorial representations of it; whether a scale model is one is for the courts
+Is it legal to sell scale models of buildings I have no affiliation with? | usc17-s120-a | search
+# lse:1837 https://law.stackexchange.com/q/1837 · CC BY-SA 4.0 · cited: §401, §504(c)(2) · answers · gold: §401(b), the notice is the © symbol, 'Copyright' or 'Copr.', the year of first publication, and the copyright owner's name
+How to properly maintain website footer copyright notice? | usc17-s401-b | search
+# lse:9341 https://law.stackexchange.com/q/9341 · CC BY-SA 3.0 · cited: §506 · governs · gold: §106, the copyright owner alone has the exclusive rights to do and to authorize each listed use, and nothing in it lapses when the owner can't be found (no one paragraph covers an unspecified 'use')
+Can I use a picture commercially if I cannot get ahold of an owner? | usc17-s106 | search
+# lse:55268 https://law.stackexchange.com/q/55268 · CC BY-SA 4.0 · cited: §101 · governs · gold: §101 'work made for hire' (1), a work prepared by an employee within the scope of employment; §201(b), the employer is then the author and owns the copyright; whether an off-hours academic book is within the scope is case law
+Does my university employer have a claim to the proceeds from an academic book I am writing? | usc17-s101-def-work-made-for-hire-1, usc17-s201-b | search
+# lse:93860 https://law.stackexchange.com/q/93860 · CC BY-SA 4.0 · cited: §106 · governs · gold: §106(1), reproducing the work (scanning its pages) is the owner's exclusive right; §107, fair use, weighing purpose, amount and market effect, may excuse a limited copy
+What is the law on scanning pages from a copyright book for a friend? | usc17-s106-1, usc17-s107 | search
+# lse:65155 https://law.stackexchange.com/q/65155 · CC BY-SA 4.0 · cited: §106 · governs · gold: §106(1), making copies (an unlicensed copy of the program and its fonts) is the owner's exclusive right; that a typeface itself is unprotected is a Copyright Office rule outside the book
+Using fonts with a pirated version of Photoshop? Violating copyrighted materials? | usc17-s106-1 | search
+# lse:58740 https://law.stackexchange.com/q/58740 · CC BY-SA 4.0 · cited: §107, §107(4), §106 · governs · gold: §107, the fair-use factors (purpose and character, nature, amount, market effect), none of which is whether the source copy was lawful, and an unpublished work is not by that alone barred from fair use; case law weighs them
+Is the source important for fair use? | usc17-s107 | search
+# lse:78442 https://law.stackexchange.com/q/78442 · CC BY-SA 4.0 · cited: §101, §106, §102(b) · answers · gold: §101 'derivative work', a work based upon a preexisting work and recast, transformed or adapted, such as a translation, arrangement or dramatization, or revisions that as a whole are an original work
+What is considered a derivative work? | usc17-s101-def-derivative-work | search
+# lse:1903 https://law.stackexchange.com/q/1903 · CC BY-SA 3.0 · cited: §115 · answers · gold: §115(a)(1)(A), once phonorecords of a nondramatic musical work have been distributed to the public under the owner's authority (including by digital phonorecord delivery), anyone may get a compulsory license to make and distribute phonorecords of it
+Can anyone record a cover of a song I put on SoundCloud? | usc17-s115-a-1-A | search
+# lse:74866 https://law.stackexchange.com/q/74866 · CC BY-SA 4.0 · cited: §401(b), §401(d), §504(c)(2) · answers · gold: §401(b)(2), the year is the year of first publication; §401(b)(3), the name is that of the owner of copyright, so the new owner's name with the original year
+File copyright header after copyright transfer How should the copyright header look like if the copyright (of proprietary software) was transferred to another entity? | usc17-s401-b-2, usc17-s401-b-3 | search
