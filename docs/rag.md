@@ -194,12 +194,51 @@ All are on `RECORDED` in `api/runtime_facts.py`, so every `turn_log` row keeps t
 | `BOOK_CHUNK_MAX_TOKENS` | `800` | chunk budget in embedding-model tokens, context header included; changing it moves chunk boundaries, never `ref_id`s |
 | `BOOK_SEARCH_TOP_K` | `8` | passages `search_books` returns |
 | `BOOK_DENSE_CANDIDATES` / `BOOK_SPARSE_CANDIDATES` | `30` / `30` | candidates each prefetch fetches before fusion |
-| `BOOK_MIN_SCORE` | `0` (off) | drops hits scoring below it. It compares the rerank score when the reranker ran, else the fused score, which are not on one scale; off until a test set calibrates it |
+| `BOOK_MIN_SCORE` | `0` (off) | drops hits scoring below it. It compares the rerank score when the reranker ran, else the fused score, which are not on one scale; off until it is calibrated on the test set's `none` questions (*Measuring retrieval*) |
 | `BOOK_LOOKUP_MAX_TOKENS` | `6000` | the text one `lookup_book` call returns |
 
 ### Measuring retrieval
 
-`BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval <questions file>` scores `search_books` and `lookup_book` against a question set: Recall@5, Recall@10, MRR, nDCG@10 and the not-found rate. A line is `question | gold ids | type`, with type `search`, `citation` or `none` ([`questions.example.txt`](../evals/books/questions.example.txt) shows the shape). It refuses to run below `BOOK_SEARCH_TOP_K=10`, because the @10 numbers would then describe eight results. It needs Ollama and Qdrant, so it is not in `scripts/check.sh`. **No test set exists yet**; the chunk budget, the embedding model and `BOOK_MIN_SCORE` wait for one (roadmap).
+`BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval <questions file>` scores `search_books` and `lookup_book` against a question set: Recall@5, Recall@10, MRR, nDCG@10, the citation hit rate and the not-found rate. A line is `question | gold ids | type`, with type `search`, `history`, `citation` or `none` ([`questions.example.txt`](../evals/books/questions.example.txt) shows the shape). `history` is a search with the history notes included, for an answer that lives only in a note, such as an effective date; it is scored like `search` and reported in its own row. The runner refuses to run below `BOOK_SEARCH_TOP_K=10`, because the @10 numbers would then describe eight results. It needs Ollama and Qdrant, so it is not in `scripts/check.sh`.
+
+**The test set** ([design](superpowers/specs/2026-11-18-book-retrieval-test-set-design.md)) is four files in `evals/books/sets/`, one per source, so a score always says where its questions came from. No attorney wrote or checked it.
+
+| File | Questions | Where they come from |
+|---|---|---|
+| [`lse-search.txt`](../evals/books/sets/lse-search.txt) | 60 `search`: 18 `answers`, 42 `governs` | Law Stack Exchange, word for word (Hugging Face `ymoslem/Law-StackExchange`, revision `ab2dbaad`, CC BY-SA): copyright questions with no foreign-jurisdiction tag and an answer citing 17 U.S.C., walked in a seeded random order. Gold chosen by Claude from the book's text |
+| [`lse-none.txt`](../evals/books/sets/lse-none.txt) | 15 `none` | Law Stack Exchange, word for word: trademark and patent questions that no node of the book answers |
+| [`citations.txt`](../evals/books/sets/citations.txt) | 15 `citation` | Claude, from the book's structure, in mixed citation forms; the gold is the node the citation names |
+| [`written.txt`](../evals/books/sets/written.txt) | 15: 7 `history`, 8 `search` | Claude, for what the site never asks: effective dates in notes, TRIPs arts. 35–38, Titles 18 and 28, definitions in plain words. Scored apart from `lse-search.txt` |
+
+- **Provenance.** Each file's header states the source, the selection rule and the seed. A comment line before each question gives its link and licence, what the answerers cited (a hint, often wrong) and a one-line reason for the gold. A gold is the smallest node that holds the answer, read from the parsed book, never from search. `answers` means the gold's text settles the question by itself; `governs` means the gold is the provision the question turns on, while facts or case law decide it.
+- **Frozen** at commit `01d2969`, before the first scored run. After a scored run a gold changes only to fix a labelling error, with the reason written down, never because search missed it.
+- **How far the gold can be trusted.** A second agent labelled the questions again from the book's text alone, without the first labels or the answerers' citations, and each disagreement was settled by reading the book. `lse-search.txt`: the two golds were identical on 5 of 60 (8%) and shared at least one node on 48 of 60, mean Jaccard 0.39; of the 55 settled, the first reading was kept on 41, the second taken on 3, and a mix of both on 11. `lse-none.txt`: 15 of 15. `written.txt`: identical on 10 of 15, mean Jaccard 0.82. The second reader saw only the question text, while the first also read the question's body; the owner decided (2026-11-18) that a gold may rely on facts in the body that the scored text doesn't carry. The owner then checked 10 entries against the book (5 from `lse-search.txt`, 1 from `lse-none.txt`, 4 from `written.txt`) and corrected none. `citations.txt` had no second reading: its gold is what `parse_reference` returns for the citation, and a test checks that.
+
+Run one file at a time, from the repo root:
+
+```bash
+BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval evals/books/sets/lse-search.txt
+# answers and governs apart: keep the question under each `answers` provenance line, then score that file
+awk '/^# lse:.* · answers · /{k=1;next} /^#/{next} k&&NF{print;k=0}' evals/books/sets/lse-search.txt > "$TMPDIR/answers.txt"
+BOOK_SEARCH_TOP_K=10 uv run python -m evals.books.run_retrieval "$TMPDIR/answers.txt"   # and the same with `governs`
+```
+
+**Baseline: 2026-11-18, commit `01d2969`.** Settings: `BOOK_SEARCH_TOP_K=10`, `BOOK_CHUNK_MAX_TOKENS=800`, embeddinggemma (`embeddinggemma:latest` on the local Ollama), `BOOK_DENSE_CANDIDATES` and `BOOK_SPARSE_CANDIDATES` 30 each, `BOOK_MIN_SCORE=0` (off). The reranker was enabled with `RERANKER_URL` empty, so every call failed and the fused order stood (`Reranker error: Request URL is missing an 'http://' or 'https://' protocol`, once per searched question): these numbers are un-reranked. Local Qdrant, `legal_books` with 1,245 points. Each run took 1 to 4 s of wall time (`lse-search.txt` 4 s).
+
+| File | Type | n | Recall@5 | Recall@10 | MRR | nDCG@10 | Hit rate | Not found |
+|---|---|---|---|---|---|---|---|---|
+| `lse-search.txt` | search | 60 | 0.348 | 0.416 | 0.297 | 0.273 | – | – |
+| `lse-search.txt`, `answers` only | search | 18 | 0.407 | 0.454 | 0.317 | 0.287 | – | – |
+| `lse-search.txt`, `governs` only | search | 42 | 0.322 | 0.399 | 0.263 | 0.249 | – | – |
+| `lse-none.txt` | none | 15 | – | – | – | – | – | 0.000 |
+| `citations.txt` | citation | 15 | – | – | – | – | 1.000 | – |
+| `written.txt` | search | 8 | 0.562 | 0.938 | 0.335 | 0.432 | – | – |
+| `written.txt` | history | 7 | 0.429 | 0.571 | 0.202 | 0.293 | – | – |
+
+- **`lse-search.txt` is the main number.** 18 of its 60 questions had every gold node in the top 10, 15 had some, and 27 had none. For `history`, the gold note was in the top 10 for 4 of 7 questions and absent for 3.
+- **`answers` and `governs`.** The spec's warning sign was `governs` scoring far above `answers`: broad nodes easy to find, propping up the main number. It scored below. The `answers` subset is small, though: one question is worth up to 0.056 of its Recall@10, so the split is noisy.
+- **Not-found is 0 by construction while the floor is off.** With no floor, search returns its top 10 whatever they score, so no `none` question can come back empty. `lse-none.txt` is there to calibrate `BOOK_MIN_SCORE`. Its hardest negative is lse:88930 (when combining integrated circuits yields something patentable), which sits near the mask-work text, §902(b)(2) on originality: a floor has to drop that one without dropping real answers. The book lacks 18 U.S.C. §2320 (counterfeit marks) and 28 U.S.C. §1498(a) (patents used by the government; its §1498 has only (b), (c) and (e)), so a question on either is a `none` although the book has text next to it.
+- **Order inside a tie changes from run to run.** RRF gives a chunk only the dense list found and a chunk only BM25 found at the same rank the same fused score (0.5 for each list's first), and Qdrant returns tied points in a different order on different calls; the query embedding is the same each time. Over 20 repeat runs on these settings, Recall@10 did not move and the rank metrics did: `lse-search.txt` Recall@5 0.312–0.356, MRR 0.259–0.304, nDCG@10 0.245–0.275; its `answers` subset Recall@5 0.352–0.435; `written.txt` search MRR 0.276–0.412. The table is the first run. Until ties break the same way every time, a settings change that moves those metrics by less than these ranges is not a finding.
 
 ### Known limits
 

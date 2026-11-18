@@ -1,6 +1,7 @@
 # FORMAT ONLY. These lines show the shape of a questions file, one line per question type.
-# They are NOT a test set: no attorney wrote or checked them, and the numbers they produce mean
-# nothing. The real set is separate work (spec 2026-10-30-reference-books-design.md, Goal 7).
+# They are NOT a test set, and the numbers they produce mean nothing. The test set is the four files
+# in evals/books/sets/ (spec docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md); how
+# to run them and their baseline are in docs/rag.md, "Measuring retrieval".
 #
 #   question | gold ref_ids, comma-separated | type
 #

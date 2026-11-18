@@ -156,7 +156,9 @@ legal-plugin/
 │   └── check_locks.py · check_degradation_vocabulary.py · check_wiki.py · check_docs_links.py · document_changes.py · delete_document_data.py · test-windows-install.ps1
 │
 ├── evals/                      # Zero-LLM regression harness (parse + compaction-gate cases, baseline.json)
-│   └── books/run_retrieval.py  # Retrieval scores for the book test set (needs Ollama + Qdrant; not in check.sh)
+│   └── books/
+│       ├── run_retrieval.py    # Retrieval scores for the book test set (needs Ollama + Qdrant; not in check.sh)
+│       └── sets/               # The test set, frozen: lse-search, lse-none, citations, written (.txt); baseline in rag.md
 ├── config.py                   # pydantic-settings — single config import
 ├── docker-compose.yml          # Local stack: Qdrant, Redis, app-db, Langfuse v3 (+ its Postgres/ClickHouse/MinIO)
 ├── docker-compose.remote.yml   # VM overlay: backend, Phoenix, Caddy (serves the built Word pane)
