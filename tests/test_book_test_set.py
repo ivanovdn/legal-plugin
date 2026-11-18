@@ -59,14 +59,18 @@ def _header(path: Path) -> list[str]:
     return header
 
 
+@pytest.mark.parametrize("name", SET_FILES)
+def test_each_set_file_holds_only_its_types(name):
+    types = SET_FILES[name][0]
+    assert set(types) <= set(QUESTION_TYPES)
+    assert {q.type for q in load_questions(SETS / name)} <= set(types)
+
+
 @pytest.mark.xfail(strict=True, reason="filled to 55+ in Task 3c")
 @pytest.mark.parametrize("name", SET_FILES)
-def test_each_set_file_has_its_types_and_size(name):
-    types, least, most = SET_FILES[name]
-    assert set(types) <= set(QUESTION_TYPES)
-    questions = load_questions(SETS / name)
-    assert {q.type for q in questions} <= set(types)
-    assert least <= len(questions) <= most
+def test_each_set_file_has_its_size(name):
+    _, least, most = SET_FILES[name]
+    assert least <= len(load_questions(SETS / name)) <= most
 
 
 @pytest.mark.parametrize("name", SET_FILES)
