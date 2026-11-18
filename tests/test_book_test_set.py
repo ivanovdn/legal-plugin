@@ -4,8 +4,8 @@ docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md).
 
 The runner cannot see these faults, and each one would read as a finding about the retrieval:
 
-- a gold that is grammatical but names no node of the book, or a history note as the gold of a `search`
-  question, which leaves the notes out: the question is a miss forever;
+- a gold that is grammatical but names no node of the book, or a node of a kind its question's search leaves
+  out (a history note under `search`, a repealed stub under either): the question is a miss forever;
 - a question that names a section, or one that appears twice: either inflates the score;
 - a Law Stack Exchange question without its link and licence, which the licence forbids.
 """
@@ -16,6 +16,7 @@ import pytest
 
 from evals.books.run_retrieval import QUESTION_TYPES, load_questions
 from ingest.books.ref_ids import parse_reference
+from rag.book_search import kind_filter
 
 SETS = Path(__file__).resolve().parent.parent / "evals" / "books" / "sets"
 
@@ -28,6 +29,10 @@ SET_FILES = {
 }
 
 SPEC = "docs/superpowers/specs/2026-11-18-book-retrieval-test-set-design.md"
+
+# Each question type the runner searches for, and whether it searches with the history notes included
+# (evals.books.run_retrieval: `history` passes include_history_notes=True, `search` the default).
+SEARCHES_NOTES = {"search": False, "history": True}
 
 LSE_SEARCH_RE = re.compile(
     r"^# lse:(\d+) https://law\.stackexchange\.com/q/\1 · CC BY-SA (?:3\.0|4\.0) · cited: .+ · (?:answers|governs) · gold: .+$"
@@ -96,21 +101,40 @@ def test_every_gold_names_a_node_of_the_book(name, circ92_whole_parse):
     assert missing == []
 
 
+def _searched_kinds(include_history_notes: bool) -> set[str]:
+    """The node kinds `search_book_chunks` returns, read off its own filter."""
+    (condition,) = kind_filter(include_history_notes).must
+    assert condition.key == "kind"
+    return set(condition.match.any)
+
+
 @pytest.mark.parametrize("name", SET_FILES)
-def test_a_note_is_gold_only_for_a_history_question(name, circ92_whole_parse):
-    """`search` leaves history notes out, so a note as the gold of a `search` question is a miss forever; and a
-    `history` question is there for an answer that lives in a note, so at least one of its golds is a note."""
+def test_every_gold_is_a_kind_its_search_returns(name, circ92_whole_parse):
+    """A gold of a kind the question's search leaves out (a history note under `search`, a repealed stub under
+    either) can never be found: the question is a miss forever."""
     index = circ92_whole_parse.tree.index()
+    unsearched = [
+        (q.text, g, index[path].kind)
+        for q in load_questions(SETS / name)
+        if q.type in SEARCHES_NOTES
+        for g in q.gold
+        if (path := g.rpartition(":")[2]) in index
+        and index[path].kind not in _searched_kinds(SEARCHES_NOTES[q.type])
+    ]
+    assert unsearched == []
 
-    def is_note(gold: str) -> bool:
-        node = index.get(gold.rpartition(":")[2])
-        return node is not None and node.kind == "history_note"
 
-    for q in load_questions(SETS / name):
-        if q.type == "search":
-            assert not any(is_note(g) for g in q.gold), q.text
-        if q.type == "history":
-            assert any(is_note(g) for g in q.gold), q.text
+@pytest.mark.parametrize("name", SET_FILES)
+def test_a_history_question_has_a_note_among_its_golds(name, circ92_whole_parse):
+    """A `history` question is there for an answer that lives in a history note."""
+    index = circ92_whole_parse.tree.index()
+    noteless = [
+        q.text
+        for q in load_questions(SETS / name)
+        if q.type == "history"
+        and not any((n := index.get(g.rpartition(":")[2])) and n.kind == "history_note" for g in q.gold)
+    ]
+    assert noteless == []
 
 
 def test_every_citation_question_names_its_gold():

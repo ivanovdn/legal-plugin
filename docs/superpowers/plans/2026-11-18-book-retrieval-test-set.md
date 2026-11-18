@@ -32,7 +32,7 @@
 
 1. **A gold id that is grammatical but names no node.** The runner can't see this, so the question becomes a miss forever. Covered by `test_every_gold_names_a_node_of_the_book` (Task 3a).
 2. **A citation question that doesn't parse to its own gold.** It would score the parser, not the lookup. Covered by `test_every_citation_question_names_its_gold` (Task 5).
-3. **A `history` question searched without notes.** Its gold could never be found. Covered by `test_a_history_question_is_searched_with_history_notes_included` (Task 1). Likewise a note as the gold of a `search` question, and a `history` question with no note among its golds: covered by `test_a_note_is_gold_only_for_a_history_question` (Task 6).
+3. **A `history` question searched without notes.** Its gold could never be found. Covered by `test_a_history_question_is_searched_with_history_notes_included` (Task 1). Likewise a gold of a kind its question's search leaves out (a history note under `search`, a repealed stub under either), read off `rag.book_search.kind_filter`: covered by `test_every_gold_is_a_kind_its_search_returns`; and a `history` question with no note among its golds: covered by `test_a_history_question_has_a_note_among_its_golds` (both Task 6).
 4. **A searched question (`lse-search.txt` or `written.txt`) that names a section, or a question that appears twice.** Either inflates the score. Covered by `test_no_searched_question_names_a_section` (Tasks 3a and 6) and `test_no_question_appears_twice` (Task 3a).
 5. **A Law Stack Exchange question without its link or licence**, which the licence forbids. Covered by `test_lse_questions_carry_their_source_and_licence` (Tasks 3a and 4).
 
