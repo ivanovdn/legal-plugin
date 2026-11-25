@@ -190,10 +190,10 @@ After the graph:
 
 | # | Role | Content | When | Cap |
 |---|---|---|---|---|
-| 1 | system | `CHAT_SYSTEM_PROMPT` (`prompts.py`): answer from the document, the edit-JSON format, SCOPE, SOURCES, preference blocks | always | none |
+| 1 | system | `CHAT_SYSTEM_PROMPT` (`prompts.py`): answer from the document, plain text, the edit-JSON format, SCOPE, SOURCES, CONTRACT TEXT, LEGAL TERMS, DRAFTING TO THE FIRM'S POSITION, preference blocks | always | none |
 | 2 | system | attorney preferences: `_PREFERENCES_DIRECTIVE` + `USER.md` (`skills/grounding.py::preferences_block_for_state`) | the file is non-empty | `preferences_max_chars` |
-| 3 | system | the playbook bundle for the detected type | grounding attaches (below) | none |
-| 3′ | system | `_CHAT_NO_MSA_NOTE` + `--- FIRM MSA POSITIONS (playbook) ---` (`skills/grounding.py::load_msa_positions`) | grounding attaches, the type is SOW, and no MSA is available (none on file, or the lookup failed). The answer then opens with `NO_MSA_ANSWER_NOTE`, added in code and stripped from replayed history | none (~19k chars) |
+| 3 | system | the playbook bundle for the detected type, under the **chat** wrapper (`skills/grounding.py::load_chat_playbook`): the ceiling for legal substance, the form left to row 1 | grounding attaches (below) | none |
+| 3′ | system | `_CHAT_NO_MSA_NOTE` [+ `_CHAT_MSA_REFERENCE_NOTE`, quoting the SOW's own sentence that names an MSA, found by `skills/grounding.py::msa_reference`] + `--- FIRM MSA POSITIONS (playbook) ---` (`load_msa_positions`) | grounding attaches, the type is SOW, and no MSA is available (none on file, or the lookup failed). The answer then opens with `NO_MSA_ANSWER_NOTE`, added in code and stripped from replayed history | none (~19k chars; the quote ≤ 400) |
 | 4 | system | `--- GOVERNING MSA (title) ---` | grounding attaches, the type is SOW, and an MSA is on file | `msa_max_chars`, marked when truncated |
 | 5 | system | `--- PRIOR REVIEW ---` + "answer recall questions from this review" | a review exists for the document | none |
 | 6 | system | condensed summaries, oldest first (`compaction.py::render_segment`) | segments exist | `compaction_max_injected_segments` |
@@ -267,7 +267,7 @@ All of these tables live in one database: the `app-db` compose service.
 `contract_review` (`skills/contract_review/contract_review.py`) builds the messages, and `llm_caller` makes the call.
 - **Grounding** comes from the same `skills/grounding.py` as chat:
   1. `detect_contract_type`
-  2. `load_playbook_bundle`
+  2. `load_playbook_bundle` (the **review** wrapper, which also fixes the seven-table output form; chat uses `load_chat_playbook`)
   3. for a SOW only, `attach_parent_msa` (`rag/related_docs.py::get_parent_msa`, capped at `msa_max_chars`)
 
   If the MSA lookup fails, the review records `msa_lookup_failed` and runs standalone. Unlike chat, a SOW review with no MSA does not get the firm's MSA positions (row 3′ of §4) yet.

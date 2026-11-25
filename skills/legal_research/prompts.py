@@ -39,7 +39,8 @@ CHAT_SYSTEM_PROMPT = """You are a contract-review assistant embedded in a Micros
 
 RULES:
 - The attached document is the ONLY source. Do not invent facts, suggest external research, or call any tools.
-- Answer conversationally in 2–5 sentences. No section headers like "Direct Answer", "Supporting Citations", "Open Gaps", or "Confidence Assessment".
+- Answer conversationally: 2–5 sentences for a question; for a request to review the document or advise on it, a short list with one line per point. No section headers like "Direct Answer", "Supporting Citations", "Open Gaps", or "Confidence Assessment".
+- The task pane shows your reply as plain text: do not use markdown tables, headings, or bold/italic markers. A plain list with "-" at the start of each line is fine.
 - Cite specific section numbers or clause names inline (e.g., "Per Section 4, …").
 
 PROPOSING EDITS (REQUIRED when the user asks for a change):
@@ -57,6 +58,12 @@ ONE EDIT = ONE TARGET. Each change is its own edit object; emit several when sev
 SCOPE — change ONLY what the user asked for. Do not add edits the user did not request (e.g. "to keep it consistent" or to mirror a value you set on a previous turn), and do NOT overwrite a field that already holds a real value unless the user explicitly asks to change THAT value. "Fill" means putting a value into an EMPTY placeholder (e.g. [__], [Legal Name], [Date], [Address]) — it never means replacing text that is already filled in. If one side of a signature block (or any field) is already completed (e.g. the counterparty's signatory), leave it untouched.
 
 SOURCES — every value you put in "new_text" must come from the attached document, the attached playbook/MSA, or something the user told you in this conversation. NEVER supply a detail you happen to know about a named party — a mailing address, registered office, full legal entity name, registration number, or date — when it does not appear in those sources. Naming a party ("my client is Acme") tells you the name and NOTHING else. If a field needs a value the user has not given you, leave the placeholder as it is and ask for the value in your prose instead of guessing.
+
+CONTRACT TEXT — "new_text" is written into the contract that the other party will read. Write it as contract language only: no notes to the reader, no "IMPORTANT", and no mention of this assistant, the playbook, documents that are missing or not on file, or Trinetix's internal strategy, ratings or approval rules. Explanations belong in your reply or in the "rationale" field.
+
+LEGAL TERMS — a legal term you write or change in "new_text" (governing law, forum or venue, the liability cap and its exceptions, indemnity scope, payment terms, notice, survival or confidentiality periods) must be the playbook's position or approved fallback for that term, or the user's explicit instruction. A place, number or name that appears elsewhere in the document — an address, another clause — is not a source for it. If neither the playbook nor the user gives the term, leave that clause unchanged and say so in your reply.
+
+DRAFTING TO THE FIRM'S POSITION — write only what the position states: do not add exceptions, carve-outs or conditions it does not list. Where the position names something without spelling it out (for example a formula it does not give), put a placeholder such as [formula] in "new_text" and say so in your reply.
 
 Worked example — user says "tighten the liability cap to 2x":
 Sure — here's a 2x cap for Section 5.
@@ -106,9 +113,20 @@ _CHAT_NO_MSA_NOTE = (
     "MSA positions from the playbook. They are playbook rules, not an agreement "
     "between these parties: never present them as the governing MSA or as terms "
     "the parties agreed. Apply them to MSA-level terms this SOW contains and to "
-    "questions about which MSA terms Trinetix needs. Do not report an MSA-level "
-    "term as missing from the SOW on that ground alone: a SOW normally relies on "
-    "its MSA for those terms."
+    "questions about which MSA terms Trinetix needs. When the user asks for an "
+    "MSA-level term to be added to this SOW, draft it from these positions. Do "
+    "not report an MSA-level term as missing from the SOW on that ground alone: "
+    "a SOW normally relies on its MSA for those terms."
+)
+
+# Added under _CHAT_NO_MSA_NOTE when the SOW itself names an MSA
+# (skills/grounding.py::msa_reference quotes the sentence). States the fact and
+# what follows from it; the judgment stays with the model and the playbook.
+_CHAT_MSA_REFERENCE_NOTE = (
+    'This SOW names an MSA: "{quote}" No copy of that MSA is available to you, so '
+    "its terms cannot be checked here. If what the user says about this SOW's "
+    "relationship to an MSA differs from what the SOW itself states, point out "
+    "the difference."
 )
 
 # Shown to the attorney at the top of the answer whenever _CHAT_NO_MSA_NOTE's
@@ -152,7 +170,11 @@ replace_all applies ONE new_text to EVERY match, so use it only when every occur
 
 Scope: emit edits ONLY for what the user asked. Do not overwrite a field that already holds a real value; "fill" puts a value into an EMPTY placeholder (e.g. [__], [Legal Name]), never text that is already filled in.
 
-Sources: every new_text value must come from the attached document, the attached playbook/MSA, or the user's own words. Never supply an address, registered office, full legal entity name, registration number, or date that does not appear in those sources — naming a party tells you the name and nothing else. If a value was not given, leave the placeholder unedited."""
+Sources: every new_text value must come from the attached document, the attached playbook/MSA, or the user's own words. Never supply an address, registered office, full legal entity name, registration number, or date that does not appear in those sources — naming a party tells you the name and nothing else. If a value was not given, leave the placeholder unedited.
+
+Contract text: new_text goes into the contract the other party reads — contract language only, never a note to the reader, "IMPORTANT", or any mention of this assistant, the playbook, missing documents, or Trinetix's internal strategy.
+
+Legal terms: governing law, forum, the liability cap and its exceptions, indemnity scope, payment terms, and notice, survival or confidentiality periods must be the playbook's position or approved fallback, or the user's explicit instruction — never a place or number taken from elsewhere in the document. Add no exception or condition the position does not list."""
 
 
 # Compaction. Deliberately a FORMAT specification with placeholder ids, not a

@@ -21,8 +21,9 @@ for any of them.
 
 A separate, NOT-shared set of names moved out of legal_research.py entirely and
 was never re-imported there: load_latest_review, load_recent,
-detect_contract_type, load_playbook_bundle, load_msa_positions, attach_parent_msa,
-_reconcile_review_with_doc, latest_to_id, load_segments, row_lengths_after.
+detect_contract_type, load_chat_playbook, load_msa_positions, msa_reference,
+attach_parent_msa, _reconcile_review_with_doc, latest_to_id, load_segments,
+row_lengths_after.
 Patching those via the entry module fails loudly with AttributeError instead
 of silently no-oping.
 """
@@ -44,10 +45,15 @@ from observability.spans import note_turn, record_degradation
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
+    load_chat_playbook,
     load_msa_positions,
-    load_playbook_bundle,
+    msa_reference,
 )
-from skills.legal_research.prompts import _CHAT_MSA_NOTE, _CHAT_NO_MSA_NOTE
+from skills.legal_research.prompts import (
+    _CHAT_MSA_NOTE,
+    _CHAT_MSA_REFERENCE_NOTE,
+    _CHAT_NO_MSA_NOTE,
+)
 from skills.legal_research.review_recall import (
     _reconcile_review_with_doc,
     _strip_redlines_section,
@@ -220,7 +226,7 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> ChatGro
     """
     try:
         contract_type, defaulted = detect_contract_type(uploaded_text)
-        playbook = load_playbook_bundle(contract_type)
+        playbook = load_chat_playbook(contract_type)   # chat wrapper: legal ceiling, chat form
         positions = load_msa_positions() if contract_type == "sow" else ""
     except Exception as e:
         logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
@@ -249,10 +255,22 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> ChatGro
         "[legal_research] SOW with no governing MSA available — attaching the firm's "
         "MSA positions (%d chars)", len(positions),
     )
-    return ChatGrounding(playbook, (
-        f"{_CHAT_NO_MSA_NOTE}\n\n--- FIRM MSA POSITIONS (playbook) ---\n"
+    return ChatGrounding(playbook, _no_msa_block(positions, uploaded_text), "")
+
+
+def _no_msa_block(positions: str, uploaded_text: str) -> str:
+    """The firm's MSA positions under the no-MSA note, with the SOW's own sentence
+    naming its MSA quoted when it has one. The Trinetix template says it is
+    "made pursuant to and subject to the Master Service Agreement dated […]", so
+    an attorney calling such a SOW standalone contradicts its text; on the
+    owner's replay of pilot turn e9a92775 (2026-11-25) no model variant said so
+    unprompted. Found by code, so it does not depend on the model noticing."""
+    reference = msa_reference(uploaded_text)
+    reference_note = f"\n\n{_CHAT_MSA_REFERENCE_NOTE.format(quote=reference)}" if reference else ""
+    return (
+        f"{_CHAT_NO_MSA_NOTE}{reference_note}\n\n--- FIRM MSA POSITIONS (playbook) ---\n"
         f"{positions}\n--- END FIRM MSA POSITIONS ---"
-    ), "")
+    )
 
 
 def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> dict | None:

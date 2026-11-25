@@ -69,7 +69,7 @@ legal-plugin/
 │       └── memory_writer.py    # Writes audit log + review + conversation (Postgres)
 │
 ├── skills/                     # Legal capabilities — each in its own folder
-│   ├── base.py                 # load_skill_prompt() / load_bundle() with ceiling constraint
+│   ├── base.py                 # load_skill_prompt() / load_bundle() (review ceiling) / load_chat_bundle() (chat ceiling)
 │   ├── grounding.py            # Shared: type detection, playbook bundle, parent-MSA attach, firm MSA positions, preferences block
 │   ├── contract_generation/    # ReAct agent — searches + generates contracts
 │   │   ├── contract_generation.py
@@ -168,6 +168,8 @@ Playbook-driven skills pair a Python function with a playbook the legal team edi
 - `compliance_check.py`, `drafting.py` and `legal_research/` have no SKILL.md — their prompts live in code (`prompts.py` for legal_research)
 
 The playbook is loaded via `load_skill_prompt()` / `load_bundle()` from `skills/base.py`, which wrap it with a **ceiling constraint**: the LLM will ONLY follow the playbook instructions, never improvise from its pretraining knowledge. If the playbook doesn't cover something, the LLM says "Not covered by current playbook" and stops.
+
+Doc chat wraps the same bundle differently (`load_chat_bundle()`, via `skills/grounding.py::load_chat_playbook`). The review wrapper also fixes the reply's form ("no output formats beyond the playbook"), and the playbook's form is the seven-table review, so in chat it forbade the chat's own edit blocks and short answers. The chat wrapper keeps the playbook as the ceiling for every legal position and leaves the form to the chat rules (prompt audit, 2026-11-25).
 
 This means: **the legal team controls exactly what the LLM outputs by editing SKILL.md**. No code changes needed.
 

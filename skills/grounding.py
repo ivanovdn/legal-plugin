@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from rag.related_docs import get_parent_msa
-from skills.base import _clean_for_prompt, load_bundle
+from skills.base import _clean_for_prompt, load_bundle, load_chat_bundle
 from config import get_settings
 from memory.preferences import load_preferences
 from observability.degradations import PREFERENCES_LOAD_FAILED
@@ -67,8 +67,54 @@ def detect_contract_type(text: str) -> tuple[str, bool]:
 
 
 def load_playbook_bundle(contract_type: str) -> str:
-    """The assembled per-type playbook bundle (role -> ... -> No-Signature Gate)."""
+    """The assembled per-type playbook bundle (role -> ... -> No-Signature Gate),
+    wrapped for a contract review."""
     return load_bundle(_PLAYBOOK_DIR, contract_type)
+
+
+def load_chat_playbook(contract_type: str) -> str:
+    """The same bundle wrapped for doc chat: the legal ceiling without the
+    review's output form (skills/base.py::_CHAT_CEILING_PREFIX)."""
+    return load_chat_bundle(_PLAYBOOK_DIR, contract_type)
+
+
+# A SOW names its MSA in its opening, in a sentence such as "…is made pursuant to
+# and subject to the Master Service Agreement dated [Month] [Date], [Year] (the
+# "MSA")…" — the Trinetix template's own wording (SOW rule 1), at character 375
+# of the template. Only the opening counts: pilot turn e9a92775's standalone SOW
+# first says "this Master Service Agreement" at character 22,126, in a liability
+# clause carried over from an MSA, and quoting that as "this SOW names an MSA" led
+# gpt-oss to treat the SOW's own terms as an MSA's (replay, 2026-11-25). The full
+# name is preferred; a bare "MSA" is the fallback.
+_MSA_REFERENCE_PATTERNS = (
+    re.compile(r"\bmaster\s+services?\s+agreement\b", re.I),
+    re.compile(r"\bMSA\b"),
+)
+_MSA_REFERENCE_OPENING_CHARS = 2000
+_MSA_REFERENCE_MAX_CHARS = 400
+
+
+def msa_reference(text: str) -> str:
+    """The sentence in the opening of `text` (its first
+    _MSA_REFERENCE_OPENING_CHARS characters) that names an MSA,
+    whitespace-collapsed and capped at _MSA_REFERENCE_MAX_CHARS; "" when the
+    opening names none. A sentence ends at a full stop or a line break, so an
+    abbreviation such as "Inc." can end it early; the quote is a pointer for the
+    model, not evidence."""
+    for pattern in _MSA_REFERENCE_PATTERNS:
+        match = pattern.search(text, 0, _MSA_REFERENCE_OPENING_CHARS)
+        if not match:
+            continue
+        start = max(text.rfind(".", 0, match.start()), text.rfind("\n", 0, match.start()),
+                    text.rfind("\r", 0, match.start())) + 1
+        ends = [i for i in (text.find(".", match.end()), text.find("\n", match.end()),
+                            text.find("\r", match.end())) if i != -1]
+        end = min(ends) + 1 if ends else len(text)
+        sentence = " ".join(text[start:end].split())
+        if len(sentence) > _MSA_REFERENCE_MAX_CHARS:
+            sentence = sentence[:_MSA_REFERENCE_MAX_CHARS].rsplit(" ", 1)[0] + " …"
+        return sentence
+    return ""
 
 
 # The parts of the MSA skill that state the firm's positions. Its other sections

@@ -19,10 +19,15 @@ from skills.drafting import drafting
 from skills.grounding import detect_contract_type
 from skills.legal_research import legal_research
 from skills.legal_research.edit_parsing import _sanitize_history
+from skills.base import (
+    _CEILING_PREFIX, _CEILING_SUFFIX, _CHAT_CEILING_PREFIX, _CHAT_CEILING_SUFFIX,
+    load_bundle, load_chat_bundle,
+)
 import skills.grounding as _grounding_module
 import skills.legal_research.prompts as _prompts
 
 _MSA_MATRIX = Path(__file__).parent.parent / "skills/contract_review/playbook/msa/playbook_matrix.md"
+_PLAYBOOK_ROOT = Path(__file__).parent.parent / "skills/contract_review/playbook"
 
 
 def _make_state(**overrides):
@@ -1420,7 +1425,7 @@ def test_doc_chat_attaches_playbook_and_msa_ordered(monkeypatch):
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK_BUNDLE_TEXT")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ctype: "PLAYBOOK_BUNDLE_TEXT")
     monkeypatch.setattr(ctx, "attach_parent_msa",
                         lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"))
 
@@ -1455,7 +1460,7 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
                         lambda llm, messages, name="doc_chat": seen.update(messages=messages) or FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("nda", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "NDA_BUNDLE")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ctype: "NDA_BUNDLE")
     def _no_msa_for_nda(text, client_id, max_chars):
         raise AssertionError("attach_parent_msa must not be called for an NDA")
     monkeypatch.setattr(ctx, "attach_parent_msa", _no_msa_for_nda)
@@ -1605,6 +1610,107 @@ def test_replayed_history_drops_the_no_msa_note():
     assert replayed == [{"role": "assistant", "content": "The cap is 12 months."}]
 
 
+# The Trinetix SOW template's preamble names its MSA (SOW rule 1: "pursuant to
+# and subject to the MSA"). Wording follows the template; no client text.
+_SOW_UNDER_AN_MSA = (
+    "STATEMENT OF WORK No. [Number]\n\n"
+    "This Statement of Work (the “SOW”), effective as of [Month] [Date], [Year], is made "
+    "pursuant to and subject to the Master Service Agreement dated [Month] [Date], [Year] "
+    "(the “MSA”) between the Client and the Vendor.\n"
+    "Limitation of Liability: as set out in the MSA.\n"
+)
+
+
+def test_sow_chat_with_no_msa_quotes_the_sows_own_sentence_naming_one(monkeypatch):
+    msgs, _ = _run_sow_chat(monkeypatch, msa_lookup=_no_msa, text=_SOW_UNDER_AN_MSA)
+    assert (
+        'This SOW names an MSA: "This Statement of Work (the “SOW”), effective as of '
+        "[Month] [Date], [Year], is made pursuant to and subject to the Master Service Agreement "
+        'dated [Month] [Date], [Year] (the “MSA”) between the Client and the Vendor." '
+        "No copy of that MSA is available to you"
+    ) in _system_text(msgs)
+
+
+def test_no_msa_note_tells_the_model_to_draft_an_msa_term_when_asked(monkeypatch):
+    # Without it qwen3.6 refused "Add a limitation of liability clause to this
+    # SOW per the firm's position": the note's "a SOW normally relies on its MSA
+    # for those terms" read as "do not put them in a SOW" (replay, 2026-11-25).
+    msgs, _ = _run_sow_chat(monkeypatch, msa_lookup=_no_msa)
+    assert ("When the user asks for an MSA-level term to be added to this SOW, "
+            "draft it from these positions.") in _system_text(msgs)
+
+
+def test_sow_chat_naming_no_msa_quotes_nothing(monkeypatch):
+    msgs, _ = _run_sow_chat(monkeypatch, msa_lookup=_no_msa)   # _STANDALONE_SOW names no MSA
+    system = _system_text(msgs)
+    assert "This SOW names an MSA" not in system
+    assert "MSA-025 Liability cap" in system
+
+
+def test_sow_chat_with_an_msa_on_file_quotes_nothing(monkeypatch):
+    msgs, _ = _run_sow_chat(
+        monkeypatch, msa_lookup=lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"),
+        text=_SOW_UNDER_AN_MSA,
+    )
+    assert "This SOW names an MSA" not in _system_text(msgs)
+
+
+# Prompt audit 2026-11-25: chat reused the REVIEW wrapper, whose "no output
+# formats beyond the playbook … produce ONLY what the playbook instructs"
+# forbade the chat's json edit blocks (gpt-oss answered with a full review;
+# qwen3.6 refused to draft a clause).
+def test_chat_bundle_is_the_review_bundle_under_the_chat_wrapper():
+    for ctype in ("nda", "msa", "sow", "baa"):
+        review = load_bundle(_PLAYBOOK_ROOT, ctype)
+        chat = load_chat_bundle(_PLAYBOOK_ROOT, ctype)
+        body = review[len(_CEILING_PREFIX):-len(_CEILING_SUFFIX)]
+        assert review == _CEILING_PREFIX + body + _CEILING_SUFFIX
+        assert chat == _CHAT_CEILING_PREFIX + body + _CHAT_CEILING_SUFFIX
+        assert "produce ONLY what the playbook above instructs" not in chat
+        assert "output formats beyond what the playbook specifies" not in chat
+
+
+def test_sow_chat_wraps_the_playbook_for_chat(monkeypatch):
+    msgs, _ = _run_sow_chat(monkeypatch, msa_lookup=_no_msa)
+    system = _system_text(msgs)
+    assert _CHAT_CEILING_PREFIX in system
+    assert "# SOW Review Skill" in system
+    assert "produce ONLY what the playbook above instructs" not in system
+
+
+def test_contract_review_keeps_the_review_wrapper(monkeypatch):
+    _patch_msa(monkeypatch, lambda client_id, **kw: None)
+    state = _make_state(request="Review this contract.", uploaded_docs=[{"text": _SOW_SAMPLE}],
+                        task_type="contract_review")
+    systems = [m["content"] for m in contract_review(state)["messages"] if m["role"] == "system"]
+    playbook = next(c for c in systems if "# SOW Review Skill" in c)
+    assert playbook.startswith(_CEILING_PREFIX)
+    assert playbook.endswith(_CEILING_SUFFIX)
+
+
+def test_bundles_carry_no_skill_frontmatter():
+    # Each SKILL.md's name/description block leaked into all four bundles:
+    # the build notice above it hid it from the frontmatter strip.
+    for ctype in ("nda", "msa", "sow", "baa"):
+        bundle = load_bundle(_PLAYBOOK_ROOT, ctype)
+        assert "\nname: " not in bundle, ctype
+        assert "\ndescription: " not in bundle, ctype
+        assert f"# {ctype.upper()} Review Skill" in bundle
+
+
+def test_chat_rules_keep_edit_text_to_contract_language_and_legal_terms_to_the_playbook():
+    # Prompt audit 2026-11-25: a memo inserted as contract text (trace 28f1e291),
+    # governing law taken from a party's office address (139251ec), and
+    # carve-outs the position does not list (13c44a72).
+    for prompt in (_prompts.CHAT_SYSTEM_PROMPT, _prompts._JSON_RETRY_SYSTEM):
+        low = prompt.lower()
+        assert "contract language only" in low
+        assert "governing law" in low and "approved fallback" in low
+        assert "not a source for it" in low or "never a place or number taken from elsewhere" in low
+    assert "DRAFTING TO THE FIRM'S POSITION" in _prompts.CHAT_SYSTEM_PROMPT
+    assert "plain text" in _prompts.CHAT_SYSTEM_PROMPT
+
+
 def test_doc_chat_caps_document_not_grounding(monkeypatch):
     lr = importlib.import_module("skills.legal_research.legal_research")
     ctx = importlib.import_module("skills.legal_research.context")
@@ -1627,7 +1733,7 @@ def test_doc_chat_caps_document_not_grounding(monkeypatch):
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ctype: "PLAYBOOK")
     monkeypatch.setattr(ctx, "attach_parent_msa",
                         lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
 
@@ -1711,7 +1817,7 @@ def test_doc_chat_breakdown_reports_the_untruncated_document(monkeypatch):
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ctype: "PLAYBOOK")
     monkeypatch.setattr(ctx, "attach_parent_msa",
                         lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
 
@@ -1762,7 +1868,7 @@ def test_doc_chat_breakdown_reports_real_compressible_history(monkeypatch):
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
     monkeypatch.setattr(ctx_mod, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx_mod, "detect_contract_type", lambda text: ("nda", False))
-    monkeypatch.setattr(ctx_mod, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx_mod, "load_chat_playbook", lambda ctype: "PLAYBOOK")
 
     state = _make_state(
         request="summarize", task_type="research",
@@ -1934,7 +2040,7 @@ def test_doc_chat_lean_path_skips_playbook_and_msa(monkeypatch):
     # that would show up in the assembled messages lets the assertion below
     # actually detect over-grounding.
     monkeypatch.setattr(ctx, "detect_contract_type", lambda t: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ct: "PLAYBOOK_BUNDLE")
     monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
 
     state = _make_state(request="who is signy from trinetix side?", task_type="research",
@@ -1961,7 +2067,7 @@ def test_doc_chat_grounded_path_attaches_playbook(monkeypatch):
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda t: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ct: "PLAYBOOK_BUNDLE")
     monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
     state = _make_state(request="does this SOW conflict with the MSA?", task_type="research",
                         uploaded_docs=[{"text": "STATEMENT OF WORK\n\nbody"}],
@@ -1987,7 +2093,7 @@ def test_conditional_grounding_toggle_off_always_attaches(monkeypatch):
                         lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda doc_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda t: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ct: "PLAYBOOK_BUNDLE")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ct: "PLAYBOOK_BUNDLE")
     monkeypatch.setattr(ctx, "attach_parent_msa", lambda *a, **k: ("Model MSA", "MSA_BODY"))
     # A plain factual question that would NOT trigger the gate:
     state = _make_state(request="who signs?", task_type="research",

@@ -721,7 +721,7 @@ def test_doc_chat_truncation_records_an_announced_degradation(monkeypatch):
     monkeypatch.setattr(lr, "traced_invoke", lambda llm, messages, name="doc_chat": FakeResp())
     monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("sow", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ctype: "PLAYBOOK")
     monkeypatch.setattr(ctx, "attach_parent_msa",
                         lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY"))
 
@@ -775,7 +775,7 @@ def test_grounding_failure_records_a_SILENT_degradation(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("qdrant unreachable")
 
-    monkeypatch.setattr(ctx, "load_playbook_bundle", boom)
+    monkeypatch.setattr(ctx, "load_chat_playbook", boom)
 
     @traced("turn")
     def turn():
@@ -1245,7 +1245,7 @@ def _turn_whose_json_retry_crashes(monkeypatch):
     monkeypatch.setattr(lr, "traced_invoke", fake_invoke)
     monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
     monkeypatch.setattr(ctx, "detect_contract_type", lambda text: ("nda", False))
-    monkeypatch.setattr(ctx, "load_playbook_bundle", lambda ctype: "PLAYBOOK")
+    monkeypatch.setattr(ctx, "load_chat_playbook", lambda ctype: "PLAYBOOK")
     get_settings.cache_clear()
 
     state = {

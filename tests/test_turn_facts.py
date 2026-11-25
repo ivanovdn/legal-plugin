@@ -170,7 +170,7 @@ def test_chat_grounding_notes_nothing_when_the_playbook_fails(monkeypatch):
     def boom(_contract_type):
         raise OSError("bundle missing")
 
-    monkeypatch.setattr(context, "load_playbook_bundle", boom)
+    monkeypatch.setattr(context, "load_chat_playbook", boom)
     facts = _noted_by(lambda: context._build_chat_grounding({"filters": {}}, _SOW))
 
     assert "contract_type" not in facts

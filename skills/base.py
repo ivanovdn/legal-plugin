@@ -21,6 +21,29 @@ PLAYBOOK END
 
 Remember: produce ONLY what the playbook above instructs. Nothing more."""
 
+# The chat path's wrapper for the SAME bundle. The review ceiling above also
+# fixes the reply's form ("no output formats beyond the playbook", "produce ONLY
+# what the playbook instructs"), and the playbook's form is the seven-table
+# review. Wrapped that way in chat, it forbade the chat's own json edit blocks
+# and short answers: gpt-oss answered every grounded question with a full
+# review, and qwen3.6 refused to draft a clause (prompt audit, 2026-11-25). The
+# legal ceiling is unchanged; only the form is left to the chat rules.
+_CHAT_CEILING_PREFIX = """FIRM PLAYBOOK — the ceiling for every legal position you state, rate or draft in this chat. Take legal positions, ratings, fallbacks and approvers only from it (and from the firm MSA positions or the governing MSA when they are attached). Do not supplement it from your training knowledge; if it does not cover a point, say so rather than improvising. Its review workflow, No Signature Checklist and "Required Final Output Format" (Review Summary, Key Findings and the other tables) describe the full contract review on the Findings tab: in this chat, apply their rules, but answer in the chat format set by the first system message.
+
+---
+PLAYBOOK START
+---
+
+"""
+
+_CHAT_CEILING_SUFFIX = """
+
+---
+PLAYBOOK END
+---
+
+Reminder: the playbook above is the ceiling for legal substance. The chat rules in the first system message govern the form of your reply and of any edits."""
+
 
 # Order in which bundle files are concatenated to form the system message.
 # Rationale: role → guiding principles → scoring vocabulary (risk + approvers) →
@@ -75,8 +98,12 @@ def _strip_leading_comments(text: str) -> str:
 
 
 def _clean_for_prompt(text: str) -> str:
-    """Frontmatter + build-notice stripping applied to anything entering the prompt."""
-    return _strip_leading_comments(_strip_frontmatter(text))
+    """Build-notice + frontmatter stripping applied to anything entering the prompt.
+
+    The notice comes first in a generated file, so it is stripped first: the
+    other order looked for frontmatter at the very start, found the notice, and
+    let every SKILL.md's `name:`/`description:` block into all four bundles."""
+    return _strip_frontmatter(_strip_leading_comments(text))
 
 
 def load_skill_prompt(skill_dir: Path) -> str:
@@ -87,7 +114,19 @@ def load_skill_prompt(skill_dir: Path) -> str:
 
 
 def load_bundle(playbook_root: Path, contract_type: str) -> str:
-    """Concatenate the playbook bundle for one contract type and wrap with ceiling constraints.
+    """The playbook bundle for one contract type, wrapped for a contract REVIEW
+    (the ceiling covers both substance and the review's output form)."""
+    return _CEILING_PREFIX + _bundle_body(playbook_root, contract_type) + _CEILING_SUFFIX
+
+
+def load_chat_bundle(playbook_root: Path, contract_type: str) -> str:
+    """The same bundle wrapped for doc CHAT: the ceiling for legal substance,
+    with the reply's form left to the chat rules (see _CHAT_CEILING_PREFIX)."""
+    return _CHAT_CEILING_PREFIX + _bundle_body(playbook_root, contract_type) + _CHAT_CEILING_SUFFIX
+
+
+def _bundle_body(playbook_root: Path, contract_type: str) -> str:
+    """Concatenate the playbook bundle for one contract type, unwrapped.
 
     `playbook_root` is the directory containing `global/` and per-type subfolders
     (typically `skills/contract_review/playbook/`).
@@ -112,8 +151,7 @@ def load_bundle(playbook_root: Path, contract_type: str) -> str:
                 f"Bundle file missing: {path}. Run `python scripts/build_playbook.py`."
             )
         parts.append(_clean_for_prompt(path.read_text(encoding="utf-8")).strip())
-    body = "\n\n".join(parts)
-    return _CEILING_PREFIX + body + _CEILING_SUFFIX
+    return "\n\n".join(parts)
 
 
 def stub_skill(name: str):
