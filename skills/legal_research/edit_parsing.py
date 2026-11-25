@@ -5,11 +5,14 @@ The Python mirror of the Word add-in's parseEditBlocks.ts, and it must stay
 tolerant of the same three shapes the local model actually emits inside one
 fenced block: a single object, an array, and stacked top-level objects.
 
-Imports nothing from this project — pure text in, structured data out.
+Imports nothing from this project but prompts.py's text constants (a module
+that imports nothing itself) — pure text in, structured data out.
 """
 import json
 import logging
 import re
+
+from skills.legal_research.prompts import NO_MSA_ANSWER_NOTE
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,9 @@ def _strip_structured_blocks(prose: str) -> str:
         return ""
     out = _JSON_BLOCK_RE.sub("", prose)
     out = _PREFERENCE_BLOCK_RE.sub("", out)
+    # The no-MSA note is the system's line, not the model's: replayed, it would
+    # teach the model to write it itself, on turns where it may not be true.
+    out = out.replace(NO_MSA_ANSWER_NOTE, "")
     # A stripped block leaves its blank lines behind; collapse them so the
     # replayed turn reads as ordinary prose.
     return re.sub(r"\n{3,}", "\n\n", out).strip()

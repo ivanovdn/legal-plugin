@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from rag.related_docs import get_parent_msa
-from skills.base import load_bundle
+from skills.base import _clean_for_prompt, load_bundle
 from config import get_settings
 from memory.preferences import load_preferences
 from observability.degradations import PREFERENCES_LOAD_FAILED
@@ -69,6 +69,48 @@ def detect_contract_type(text: str) -> tuple[str, bool]:
 def load_playbook_bundle(contract_type: str) -> str:
     """The assembled per-type playbook bundle (role -> ... -> No-Signature Gate)."""
     return load_bundle(_PLAYBOOK_DIR, contract_type)
+
+
+# The parts of the MSA skill that state the firm's positions. Its other sections
+# (mandatory behaviour, review workflow, No Signature Gate, required output,
+# quality checklist) are the procedure for reviewing an MSA, which would compete
+# with the SOW playbook a SOW turn is already following.
+_MSA_POSITION_SECTIONS = ("Source position", "Clause review rules")
+
+
+def _sections(markdown: str, names: tuple[str, ...]) -> str:
+    """The named `## ` sections of a playbook file, in file order, each running to
+    the next `## ` heading. Raises ValueError when one is missing, so a rebuilt
+    playbook that renames a heading fails loudly instead of dropping the rules."""
+    kept: list[list[str]] = []
+    found: set[str] = set()
+    current: list[str] | None = None
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            name = line[3:].strip()
+            current = [line] if name in names else None
+            if current is not None:
+                kept.append(current)
+                found.add(name)
+        elif current is not None:
+            current.append(line)
+    missing = [n for n in names if n not in found]
+    if missing:
+        raise ValueError(f"playbook section(s) not found: {missing}")
+    return "\n\n".join("\n".join(section).strip() for section in kept)
+
+
+def load_msa_positions() -> str:
+    """The firm's MSA positions, for a SOW turn with no governing MSA to compare
+    against: the MSA skill's source position and clause rules, then the MSA
+    playbook matrix. Pilot turn e9a92775 (2026-11-03) asked which MSA terms a
+    standalone SOW needed; with none of this in the prompt, the model wrote MSA
+    terms from its own knowledge."""
+    skill = _clean_for_prompt((_PLAYBOOK_DIR / "msa" / "SKILL.md").read_text(encoding="utf-8"))
+    matrix = _clean_for_prompt(
+        (_PLAYBOOK_DIR / "msa" / "playbook_matrix.md").read_text(encoding="utf-8")
+    )
+    return _sections(skill, _MSA_POSITION_SECTIONS) + "\n\n" + matrix.strip()
 
 
 def attach_parent_msa(text: str, client_id: str, max_chars: int) -> tuple[str, str] | None:

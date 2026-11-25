@@ -2,7 +2,9 @@
 """Tests for skill implementations."""
 
 import importlib
+import re
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
@@ -16,7 +18,11 @@ from skills.contract_review.contract_review import contract_review
 from skills.drafting import drafting
 from skills.grounding import detect_contract_type
 from skills.legal_research import legal_research
+from skills.legal_research.edit_parsing import _sanitize_history
 import skills.grounding as _grounding_module
+import skills.legal_research.prompts as _prompts
+
+_MSA_MATRIX = Path(__file__).parent.parent / "skills/contract_review/playbook/msa/playbook_matrix.md"
 
 
 def _make_state(**overrides):
@@ -1461,6 +1467,142 @@ def test_doc_chat_no_msa_for_nda(monkeypatch):
     )
     lr.legal_research(state)
     assert "NDA_BUNDLE" in "\n".join(m["content"] for m in seen["messages"])
+
+
+# --- A SOW chat with no MSA available gets the firm's MSA positions -------------
+# Pilot turn e9a92775 (2026-11-03): "this is a standalone SOW with no supporting
+# MSA, advise on the provisions of MSA that should be included". The prompt held
+# the SOW playbook and not one MSA row, so the model wrote MSA terms from its own
+# knowledge, and the attorney applied all 8 of its edits. These tests run the REAL
+# type detection and playbook files; only the model, the stored review and the
+# MSA lookup are faked.
+
+_STANDALONE_SOW = (
+    "STATEMENT OF WORK\n\n"
+    "This Statement of Work is entered into by Client and Trinetix Inc.\n"
+    "Limitation of Liability: Aggregate Cap. Liability is capped at the fees paid.\n"
+)
+_MSA_QUESTION = (
+    "this is a standalone SOW with no supporting MSA, advise on the provisions "
+    "of MSA that should be included in this SOW"
+)
+
+
+def _no_msa(text, client_id, max_chars):
+    return None
+
+
+def _run_sow_chat(monkeypatch, *, msa_lookup, text=_STANDALONE_SOW, request=_MSA_QUESTION):
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
+    captured = {}
+
+    class FakeResp:
+        content = "answer"
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: object())
+    monkeypatch.setattr(lr, "traced_invoke",
+                        lambda llm, messages, name="doc_chat": captured.update(messages=messages) or FakeResp())
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    monkeypatch.setattr(ctx, "attach_parent_msa", msa_lookup)
+    state = _make_state(
+        request=request, task_type="research", uploaded_docs=[{"text": text}],
+        filters={"client_id": "internal"}, document_id="doc-sow",
+    )
+    out = lr.legal_research(state)
+    return captured["messages"], out
+
+
+def _system_text(messages):
+    return "\n".join(m["content"] for m in messages if m["role"] == "system")
+
+
+def test_sow_chat_with_no_msa_available_is_given_the_firms_msa_positions(monkeypatch):
+    msgs, _ = _run_sow_chat(monkeypatch, msa_lookup=_no_msa)
+    system = _system_text(msgs)
+    assert "MSA-025 Liability cap" in system
+    assert "### 14. Limitation of liability" in system
+    assert "MSA-025" not in msgs[-1]["content"]
+
+
+def test_sow_chat_whose_msa_lookup_fails_is_still_given_the_msa_positions(monkeypatch):
+    def lookup_fails(text, client_id, max_chars):
+        raise RuntimeError("qdrant unreachable")
+
+    msgs, _ = _run_sow_chat(monkeypatch, msa_lookup=lookup_fails)
+    assert "MSA-025 Liability cap" in _system_text(msgs)
+
+
+def test_sow_chat_with_an_msa_on_file_gets_that_msa_and_not_the_positions(monkeypatch):
+    msgs, _ = _run_sow_chat(
+        monkeypatch, msa_lookup=lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"),
+    )
+    system = _system_text(msgs)
+    assert "MSA_BODY_TEXT" in system
+    assert "MSA-025" not in system
+
+
+def test_nda_chat_is_not_given_the_msa_positions(monkeypatch):
+    def must_not_look_up(text, client_id, max_chars):
+        raise AssertionError("no MSA lookup for an NDA")
+
+    msgs, out = _run_sow_chat(
+        monkeypatch, msa_lookup=must_not_look_up,
+        text="MUTUAL NON-DISCLOSURE AGREEMENT\n\nThe parties agree to keep information confidential.\n",
+        request="should we soften the confidentiality clause?",
+    )
+    assert "MSA-025" not in _system_text(msgs)
+    assert out["llm_response"] == "answer"
+
+
+def test_sow_answer_with_no_msa_available_opens_with_a_note_saying_so(monkeypatch):
+    _, out = _run_sow_chat(monkeypatch, msa_lookup=_no_msa)
+    assert out["llm_response"].startswith(_prompts.NO_MSA_ANSWER_NOTE)
+    assert out["llm_response"].endswith("answer")
+
+
+def test_sow_answer_with_an_msa_on_file_carries_no_note(monkeypatch):
+    _, out = _run_sow_chat(
+        monkeypatch, msa_lookup=lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"),
+    )
+    assert out["llm_response"] == "answer"
+
+
+def test_sow_breakdown_counts_the_msa_positions_as_playbook(monkeypatch):
+    _, with_positions = _run_sow_chat(monkeypatch, msa_lookup=_no_msa)
+    _, with_msa = _run_sow_chat(
+        monkeypatch, msa_lookup=lambda text, client_id, max_chars: ("Model MSA", "MSA_BODY_TEXT"),
+    )
+    def playbook_chars(out):
+        return next(p["chars"] for p in out["context_breakdown"]["parts"] if p["key"] == "playbook")
+
+    grown = playbook_chars(with_positions) - playbook_chars(with_msa)
+    assert grown >= 10_000  # the MSA matrix alone is ~13.7k characters
+
+
+def test_msa_positions_hold_every_matrix_row_and_the_clause_rules():
+    positions = _grounding_module.load_msa_positions()
+    rows = re.findall(r"^\| (MSA-\d{3})", _MSA_MATRIX.read_text(encoding="utf-8"), re.M)
+    assert len(rows) > 20
+    assert [r for r in rows if r not in positions] == []
+    assert "## Source position" in positions
+    assert "### 17. Dispute resolution / law" in positions
+
+
+def test_msa_positions_leave_out_the_msa_review_procedure():
+    # The MSA skill's own procedure (run an MSA review, its gate, its output
+    # format) would compete with the SOW playbook the turn is already following.
+    positions = _grounding_module.load_msa_positions()
+    for heading in ("## Mandatory behavior", "## Review workflow", "## No Signature Gate",
+                    "## Required output", "## Quality control checklist"):
+        assert heading not in positions, heading
+
+
+def test_replayed_history_drops_the_no_msa_note():
+    replayed = _sanitize_history([
+        {"role": "assistant", "content": _prompts.NO_MSA_ANSWER_NOTE + "\n\nThe cap is 12 months."},
+    ])
+    assert replayed == [{"role": "assistant", "content": "The cap is 12 months."}]
 
 
 def test_doc_chat_caps_document_not_grounding(monkeypatch):

@@ -70,7 +70,7 @@ legal-plugin/
 │
 ├── skills/                     # Legal capabilities — each in its own folder
 │   ├── base.py                 # load_skill_prompt() / load_bundle() with ceiling constraint
-│   ├── grounding.py            # Shared: type detection, playbook bundle, parent-MSA attach, preferences block
+│   ├── grounding.py            # Shared: type detection, playbook bundle, parent-MSA attach, firm MSA positions, preferences block
 │   ├── contract_generation/    # ReAct agent — searches + generates contracts
 │   │   ├── contract_generation.py
 │   │   └── SKILL.md            # Playbook — editable by legal team

@@ -284,7 +284,9 @@ document 16,008 → 0. Real MSA grounding comes only from
 appear in the counter.
 
 **Without the MSA ingested, the budget has to come down further.** Fixed content
-on a VM with no MSA is document + playbook + system ≈ 53,500 chars, so at
+on a VM with no MSA is document + playbook + system ≈ 53,500 chars (a grounded
+SOW turn adds ~19,200 more: the firm's MSA positions, attached when no MSA is
+available), so at
 `CHAT_CONTEXT_MAX_CHARS=90000` a turn sits at ~59% and nothing ever fires. The
 arithmetic: auto fires when history ≥ `0.9 × budget − fixed`, and the document
 starts truncating when history > `budget − fixed`. At 68,000 that is a fire at

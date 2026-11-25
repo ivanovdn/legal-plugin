@@ -33,6 +33,7 @@ The stores fall into three kinds. Some feed a prompt. Some are records that no m
 | **Preferences** (`USER.md`) | file `data/attorneys/<attorney_id>/USER.md` | the attorney's standing preferences, written by the attorney | `attorney_id` | permanent; re-read every turn | chat and review: an early system block, below the playbook's authority |
 | **Playbook bundle** | generated markdown, `skills/contract_review/playbook/` | the per-type legal playbook | detected contract type | ships with the code | review: always. Chat: when `_needs_grounding` matches |
 | **Governing MSA** | Qdrant `legal_docs` (`doc_type="msa"`) | MSA text, capped at `msa_max_chars` | `client_id` | long-lived | SOW review; SOW chat when grounded. **Never on the VM: its collection is empty** |
+| **Firm MSA positions** | the generated playbook: `msa/SKILL.md` (*Source position*, *Clause review rules*) + `msa/playbook_matrix.md` | the firm's standard MSA terms, ~19k chars | a SOW with no governing MSA available | ships with the code | chat only: a grounded SOW turn with no MSA (every SOW turn on the VM). Not reviews yet ([roadmap](roadmap.md)) |
 | **`review_store`** | Postgres `app-db` | full markdown of every review | `document_id`, shared across attorneys | permanent | chat: the latest review, redlines stripped, then reconciled |
 | **`conversation_store`** | Postgres | every doc-chat message, raw | `(document_id, attorney_id)` | permanent | chat: the messages after the last condensed one. Also compaction's input |
 | **`conversation_summary`** | Postgres | condensed segments of extractive quotes, each over a fixed row-id range | `(document_id, attorney_id)` | permanent, append-only | chat: the newest segments as system messages, below the grounding |
@@ -192,6 +193,7 @@ After the graph:
 | 1 | system | `CHAT_SYSTEM_PROMPT` (`prompts.py`): answer from the document, the edit-JSON format, SCOPE, SOURCES, preference blocks | always | none |
 | 2 | system | attorney preferences: `_PREFERENCES_DIRECTIVE` + `USER.md` (`skills/grounding.py::preferences_block_for_state`) | the file is non-empty | `preferences_max_chars` |
 | 3 | system | the playbook bundle for the detected type | grounding attaches (below) | none |
+| 3′ | system | `_CHAT_NO_MSA_NOTE` + `--- FIRM MSA POSITIONS (playbook) ---` (`skills/grounding.py::load_msa_positions`) | grounding attaches, the type is SOW, and no MSA is available (none on file, or the lookup failed). The answer then opens with `NO_MSA_ANSWER_NOTE`, added in code and stripped from replayed history | none (~19k chars) |
 | 4 | system | `--- GOVERNING MSA (title) ---` | grounding attaches, the type is SOW, and an MSA is on file | `msa_max_chars`, marked when truncated |
 | 5 | system | `--- PRIOR REVIEW ---` + "answer recall questions from this review" | a review exists for the document | none |
 | 6 | system | condensed summaries, oldest first (`compaction.py::render_segment`) | segments exist | `compaction_max_injected_segments` |
@@ -268,7 +270,7 @@ All of these tables live in one database: the `app-db` compose service.
   2. `load_playbook_bundle`
   3. for a SOW only, `attach_parent_msa` (`rag/related_docs.py::get_parent_msa`, capped at `msa_max_chars`)
 
-  If the MSA lookup fails, the review records `msa_lookup_failed` and runs standalone.
+  If the MSA lookup fails, the review records `msa_lookup_failed` and runs standalone. Unlike chat, a SOW review with no MSA does not get the firm's MSA positions (row 3′ of §4) yet.
 - **Message order.** System: playbook → preferences → `_OUTPUT_CONSTRAINTS` → `_MSA_COMPARISON_DIRECTIVE` (last; SOW with an MSA only). User: the request + `--- CONTRACT TEXT ---` [+ `--- GOVERNING MSA ---`] [+ attorney notes].
 - **No chat history.** `llm_caller._HISTORY_FREE_TASK_TYPES` drops it, because a review must depend only on its inputs.
 - **No input cap.** `llm_caller` only *detects* a prompt over `(ollama_num_ctx − ollama_num_predict_review) × est_chars_per_token` and flags `context_truncated`. It never cuts.

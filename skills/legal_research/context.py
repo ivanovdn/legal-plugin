@@ -21,13 +21,14 @@ for any of them.
 
 A separate, NOT-shared set of names moved out of legal_research.py entirely and
 was never re-imported there: load_latest_review, load_recent,
-detect_contract_type, load_playbook_bundle, attach_parent_msa,
+detect_contract_type, load_playbook_bundle, load_msa_positions, attach_parent_msa,
 _reconcile_review_with_doc, latest_to_id, load_segments, row_lengths_after.
 Patching those via the entry module fails loudly with AttributeError instead
 of silently no-oping.
 """
 import logging
 import re
+from typing import NamedTuple
 
 from config import get_settings
 from graph.state import LegalAgentState
@@ -43,9 +44,10 @@ from observability.spans import note_turn, record_degradation
 from skills.grounding import (
     attach_parent_msa,
     detect_contract_type,
+    load_msa_positions,
     load_playbook_bundle,
 )
-from skills.legal_research.prompts import _CHAT_MSA_NOTE
+from skills.legal_research.prompts import _CHAT_MSA_NOTE, _CHAT_NO_MSA_NOTE
 from skills.legal_research.review_recall import (
     _reconcile_review_with_doc,
     _strip_redlines_section,
@@ -185,13 +187,33 @@ def _needs_grounding(question: str) -> bool:
     return bool(_GROUNDING_TRIGGER_RE.search(question))
 
 
-def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[str, str]:
-    """(playbook_bundle, msa_block) for the chat path. Empty strings on failure —
-    grounding must never break the chat turn. MSA only for SOWs.
+class ChatGrounding(NamedTuple):
+    """What a doc-chat turn is grounded in, in prompt order. Each part is "" when
+    absent. A SOW gets EITHER its governing MSA (msa_block) OR, when none is
+    available, the firm's MSA positions (msa_positions) — never both."""
+    playbook: str
+    msa_positions: str
+    msa_block: str
 
-    The two lookups fail separately. When one try covered both, a failed MSA
-    lookup was logged "answering ungrounded" and coded chat_grounding_failed
-    while the playbook sat in the prompt (pilot trace 9f239597, 2026-10-08).
+
+_UNGROUNDED = ChatGrounding("", "", "")
+
+
+def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> ChatGrounding:
+    """The playbook bundle, plus for a SOW its governing MSA or, failing that, the
+    firm's MSA positions. Empty strings on failure — grounding must never break
+    the chat turn.
+
+    The lookups fail separately. When one try covered both, a failed MSA lookup
+    was logged "answering ungrounded" and coded chat_grounding_failed while the
+    playbook sat in the prompt (pilot trace 9f239597, 2026-10-08). The MSA
+    positions load with the playbook: both are files of the same generated
+    bundle, so a failure there is a broken playbook, not a missing MSA.
+
+    A SOW with no MSA gets the positions because pilot turn e9a92775
+    (2026-11-03) asked which MSA terms a standalone SOW needed: the prompt held
+    the SOW playbook alone, and the model supplied MSA terms from its own
+    knowledge. On the VM no MSA is on file at all, so this is every SOW turn.
 
     Notes what it attached for the turn_log row: the contract type only once
     its playbook loaded, the MSA title only once its block is built.
@@ -199,13 +221,14 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
     try:
         contract_type, defaulted = detect_contract_type(uploaded_text)
         playbook = load_playbook_bundle(contract_type)
+        positions = load_msa_positions() if contract_type == "sow" else ""
     except Exception as e:
         logger.warning("[legal_research] chat grounding failed: %s — answering ungrounded", e)
         record_degradation(CHAT_GROUNDING_FAILED, announced=False, detail=e.__class__.__name__)
-        return "", ""
+        return _UNGROUNDED
     note_turn(contract_type=contract_type, contract_type_defaulted=defaulted)
     if contract_type != "sow":
-        return playbook, ""
+        return ChatGrounding(playbook, "", "")
     client_id = (state.get("filters") or {}).get("client_id", "")
     try:
         parent = attach_parent_msa(uploaded_text, client_id, get_settings().msa_max_chars)
@@ -214,15 +237,22 @@ def _build_chat_grounding(state: LegalAgentState, uploaded_text: str) -> tuple[s
             "[legal_research] governing-MSA lookup failed: %s — answering from the playbook alone", e
         )
         record_degradation(MSA_LOOKUP_FAILED, announced=False, detail=e.__class__.__name__)
-        return playbook, ""
-    if not parent:
-        return playbook, ""
-    title, msa_text = parent
-    note_turn(msa_title=title)
-    return playbook, (
-        f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
-        f"{msa_text}\n--- END GOVERNING MSA ---"
+        parent = None
+    if parent:
+        title, msa_text = parent
+        note_turn(msa_title=title)
+        return ChatGrounding(playbook, "", (
+            f"{_CHAT_MSA_NOTE}\n\n--- GOVERNING MSA ({title}) ---\n"
+            f"{msa_text}\n--- END GOVERNING MSA ---"
+        ))
+    logger.info(
+        "[legal_research] SOW with no governing MSA available — attaching the firm's "
+        "MSA positions (%d chars)", len(positions),
     )
+    return ChatGrounding(playbook, (
+        f"{_CHAT_NO_MSA_NOTE}\n\n--- FIRM MSA POSITIONS (playbook) ---\n"
+        f"{positions}\n--- END FIRM MSA POSITIONS ---"
+    ), "")
 
 
 def _cap_chat_context(messages: list[dict], uploaded_text: str, request: str) -> dict | None:

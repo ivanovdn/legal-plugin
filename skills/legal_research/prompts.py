@@ -96,6 +96,32 @@ _CHAT_MSA_NOTE = (
 )
 
 
+# Structural, model-neutral note added when a SOW chat has NO governing MSA to
+# compare against (none on file, or the lookup failed) and the firm's MSA
+# positions are attached instead. It says what the block is and is not; every
+# legal judgment stays with the playbook rows it introduces.
+_CHAT_NO_MSA_NOTE = (
+    "No governing MSA for this SOW is available to you: none is on file, or it "
+    "could not be retrieved. One may still exist. Below are the firm's standard "
+    "MSA positions from the playbook. They are playbook rules, not an agreement "
+    "between these parties: never present them as the governing MSA or as terms "
+    "the parties agreed. Apply them to MSA-level terms this SOW contains and to "
+    "questions about which MSA terms Trinetix needs. Do not report an MSA-level "
+    "term as missing from the SOW on that ground alone: a SOW normally relies on "
+    "its MSA for those terms."
+)
+
+# Shown to the attorney at the top of the answer whenever _CHAT_NO_MSA_NOTE's
+# block was attached. Added in code, so it does not depend on the model saying
+# it, and stripped from replayed history (_strip_structured_blocks) so the model
+# never sees it as something to imitate. The pane renders answers as plain text.
+NO_MSA_ANSWER_NOTE = (
+    "Note: no MSA for this SOW was available to the assistant, so this answer "
+    "uses the firm's standard MSA positions from the playbook, not a signed "
+    "agreement with this client."
+)
+
+
 # Second-chance prompt for the preference path, mirroring _JSON_RETRY_SYSTEM's
 # role for edits: the model often acknowledges a "remember…" request in prose
 # and forgets the block. Deliberately does NOT re-send the document — this only

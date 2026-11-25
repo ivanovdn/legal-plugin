@@ -40,6 +40,7 @@ from skills.legal_research.edit_parsing import (
 )
 from skills.legal_research.prompts import (
     CHAT_SYSTEM_PROMPT,
+    NO_MSA_ANSWER_NOTE,
     RESEARCH_SYSTEM_PROMPT,
     _JSON_RETRY_SYSTEM,
     _PREFERENCE_RETRY_SYSTEM,
@@ -152,9 +153,9 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     review_block = _load_prior_review_block(state, uploaded_text)
     attach = (not get_settings().chat_conditional_grounding) or _needs_grounding(request)
     if attach:
-        playbook, msa_block = _build_chat_grounding(state, uploaded_text)
+        playbook, msa_positions, msa_block = _build_chat_grounding(state, uploaded_text)
     else:
-        playbook, msa_block = "", ""
+        playbook, msa_positions, msa_block = "", "", ""
 
     chat_history = _load_prior_conversation(state)
     if not chat_history:
@@ -172,6 +173,8 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
         system_messages.append({"role": "system", "content": prefs_block})
     if playbook:
         system_messages.append({"role": "system", "content": playbook})
+    if msa_positions:
+        system_messages.append({"role": "system", "content": msa_positions})
     if msa_block:
         system_messages.append({"role": "system", "content": msa_block})
     if review_block:
@@ -207,7 +210,9 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # truncation notice sitting right beside it.
     breakdown = build_context_breakdown(
         doc_chars=truncation["kept_chars"] if truncation else len(uploaded_text),
-        playbook_chars=len(playbook),
+        # The MSA positions are playbook text, not an MSA: counting them as
+        # "msa" would show an MSA in the pane's counter on a turn that had none.
+        playbook_chars=len(playbook) + len(msa_positions),
         msa_chars=len(msa_block),
         review_chars=len(review_block),
         history_chars=sum(len(m["content"]) for m in chat_history),
@@ -365,6 +370,10 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
                 "[legal_research] preference retry produced no block; raw=%r", retry_raw[:200]
             )
 
+    # Added after every parse and retry above has read `content`, so the note
+    # never reaches the edit or preference parsers.
+    if msa_positions:
+        content = f"{NO_MSA_ANSWER_NOTE}\n\n{content}"
     return content, edits, prefs
 
 

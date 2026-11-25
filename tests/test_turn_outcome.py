@@ -779,13 +779,13 @@ def test_grounding_failure_records_a_SILENT_degradation(monkeypatch):
 
     @traced("turn")
     def turn():
-        playbook, msa = ctx._build_chat_grounding(
+        playbook, positions, msa = ctx._build_chat_grounding(
             {"filters": {"client_id": "c1"}}, "SOME AGREEMENT TEXT"
         )
-        return playbook, msa, degradations()
+        return playbook, positions, msa, degradations()
 
-    playbook, msa, reasons = turn()
-    assert playbook == "" and msa == ""          # answers ungrounded, as before
+    playbook, positions, msa, reasons = turn()
+    assert playbook == "" and positions == "" and msa == ""   # answers ungrounded, as before
     assert reasons == [CHAT_GROUNDING_FAILED]
 
     events = [e for e in spans_by_name("turn")[0].events if e.name == "degradation"]
@@ -1202,13 +1202,14 @@ def test_chat_msa_lookup_failure_keeps_the_playbook_and_is_named_as_such(monkeyp
 
     @traced("turn")
     def turn():
-        playbook, msa = ctx._build_chat_grounding(
+        playbook, positions, msa = ctx._build_chat_grounding(
             {"filters": {"client_id": "internal"}}, _SOW_TEXT
         )
-        return playbook, msa, degradations()
+        return playbook, positions, msa, degradations()
 
-    playbook, msa, reasons = turn()
+    playbook, positions, msa, reasons = turn()
     assert playbook != ""                 # the SOW playbook still grounds the answer
+    assert "MSA-025" in positions         # and, with no MSA to read, the firm's MSA positions
     assert msa == ""
     assert reasons == [MSA_LOOKUP_FAILED]
 
