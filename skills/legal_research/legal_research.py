@@ -10,7 +10,7 @@ from langgraph.prebuilt import create_react_agent
 from config import get_settings
 from graph.state import LegalAgentState
 from observability.degradations import (
-    CONTEXT_TRUNCATED, EDIT_RETRY_FAILED, LEGAL_RESEARCH_FAILED,
+    CONTEXT_TRUNCATED, EDIT_RETRY_FAILED, LEGAL_RESEARCH_FAILED, THINKING_EMPTY_ANSWER,
 )
 from observability.spans import mark_failed, record_degradation, traced
 from observability.tracing import message_usage, traced_agent_invoke, traced_invoke
@@ -66,6 +66,27 @@ def _build_llm() -> ChatOllama:
             num_predict=settings.ollama_num_predict_chat,
         )
     return _llm_cache["chat"]
+
+
+def _build_thinking_llm() -> ChatOllama:
+    """The doc-chat model for grounded turns: it reasons before answering,
+    with the model card's thinking-mode sampling and an output cap that leaves
+    room for the reasoning (config.py, chat_think_*). The reasoning comes back
+    in additional_kwargs["reasoning_content"], never in .content, so it is
+    neither shown, parsed for edits nor stored in the conversation."""
+    if "chat_think" not in _llm_cache:
+        settings = get_settings()
+        _llm_cache["chat_think"] = ChatOllama(
+            model=settings.llm_model,
+            base_url=settings.ollama_base_url,
+            temperature=settings.chat_think_temperature,
+            top_p=settings.chat_think_top_p,
+            top_k=settings.chat_think_top_k,
+            reasoning=True,
+            num_ctx=settings.ollama_num_ctx,
+            num_predict=settings.ollama_num_predict_chat_think,
+        )
+    return _llm_cache["chat_think"]
 
 
 def _build_json_llm() -> ChatOllama:
@@ -251,15 +272,29 @@ def _run_doc_chat(state: LegalAgentState, uploaded_text: str) -> tuple[str, list
     # Same reason as llm_caller: without a pre-call line an in-flight doc-chat
     # turn leaves no trace anywhere until it finishes, so a slow shared Ollama
     # is indistinguishable from a hang.
+    # A grounded turn (the playbook attached: an edit, a firm position, a clause
+    # judgment) reasons first; plain Q&A stays on the fast path. Keyed on the
+    # playbook actually being in the prompt, not on the gate alone, so a turn
+    # whose grounding failed to load is not made slower for nothing.
+    think = bool(playbook) and settings.chat_think_grounded
     logger.info(
-        "[legal_research] -> doc_chat model=%s doc=%d chars grounded=%s history=%d msgs=%d",
-        settings.llm_model, len(uploaded_text), bool(playbook), len(chat_history), len(messages),
+        "[legal_research] -> doc_chat model=%s doc=%d chars grounded=%s think=%s history=%d msgs=%d",
+        settings.llm_model, len(uploaded_text), bool(playbook), think, len(chat_history), len(messages),
     )
     started = time.monotonic()
 
-    llm = _build_llm()
+    llm = _build_thinking_llm() if think else _build_llm()
     response = traced_invoke(llm, messages, name="doc_chat")
     content = response.content if hasattr(response, "content") else str(response)
+    if think and not content.strip():
+        # A thinking turn can spend itself on reasoning and return no answer:
+        # 1 of 48 on the 2026-11-25 replays ("add a liability cap", ~4,900
+        # chars of reasoning, empty content), which the attorney would have
+        # seen as a blank reply. Ask the fast model once instead.
+        logger.warning("[legal_research] thinking turn returned no answer — asking the fast model once")
+        record_degradation(THINKING_EMPTY_ANSWER, announced=False)
+        response = traced_invoke(_build_llm(), messages, name="doc_chat_fast_fallback")
+        content = response.content if hasattr(response, "content") else str(response)
     # observability/tracing.py already extracts this for OTel spans; route the
     # same value to state so the pane can show real token counts. Do not
     # re-implement the extraction.

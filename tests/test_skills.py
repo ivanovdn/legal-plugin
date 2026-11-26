@@ -1655,6 +1655,120 @@ def test_sow_chat_with_an_msa_on_file_quotes_nothing(monkeypatch):
     assert "This SOW names an MSA" not in _system_text(msgs)
 
 
+# Thinking for grounded chat (2026-11-25): a turn that gets the playbook reasons
+# first; plain Q&A stays on the fast model. The two builders are faked apart.
+_NDA_TEXT = "MUTUAL NON-DISCLOSURE AGREEMENT\n\nThe parties agree to keep information confidential.\n"
+
+
+def _run_chat_seeing_the_model(monkeypatch, request, *, think_setting=None, reasoning="", playbook_fails=False,
+                               thinking_answers_nothing=False, seen=None):
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    ctx = importlib.import_module("skills.legal_research.context")
+    used = {}
+    seen = seen if seen is not None else {}
+
+    class Resp:
+        def __init__(self, llm):
+            empty = thinking_answers_nothing and llm == "THINKING"
+            self.content = "" if empty else f"answer from {llm}"
+            self.additional_kwargs = {"reasoning_content": reasoning}
+
+    def invoke(llm, messages, name="doc_chat"):
+        used.setdefault("llm", llm)
+        seen.setdefault("calls", []).append((llm, name))
+        return Resp(llm)
+
+    monkeypatch.setattr(lr, "_build_llm", lambda: "FAST")
+    monkeypatch.setattr(lr, "_build_thinking_llm", lambda: "THINKING")
+    monkeypatch.setattr(lr, "traced_invoke", invoke)
+    monkeypatch.setattr(lr, "record_degradation",
+                        lambda code, announced, detail=None: seen.setdefault("degradations", []).append((code, announced)))
+    monkeypatch.setattr(ctx, "load_latest_review", lambda document_id: None)
+    if playbook_fails:
+        def broken(ctype):
+            raise FileNotFoundError("bundle missing")
+        monkeypatch.setattr(ctx, "load_chat_playbook", broken)
+    if think_setting is not None:
+        monkeypatch.setenv("CHAT_THINK_GROUNDED", think_setting)
+    get_settings.cache_clear()
+    try:
+        state = _make_state(request=request, task_type="research", uploaded_docs=[{"text": _NDA_TEXT}],
+                            filters={"client_id": "internal"}, document_id="doc-nda")
+        out = lr.legal_research(state)
+    finally:
+        get_settings.cache_clear()
+    return used["llm"], out
+
+
+def test_grounded_chat_uses_the_thinking_model(monkeypatch):
+    used, _ = _run_chat_seeing_the_model(monkeypatch, "should we soften the confidentiality clause?")
+    assert used == "THINKING"
+
+
+def test_plain_question_stays_on_the_fast_model(monkeypatch):
+    used, _ = _run_chat_seeing_the_model(monkeypatch, "who signs?")
+    assert used == "FAST"
+
+
+def test_grounded_chat_with_thinking_switched_off_stays_fast(monkeypatch):
+    used, _ = _run_chat_seeing_the_model(monkeypatch, "should we soften the confidentiality clause?",
+                                         think_setting="false")
+    assert used == "FAST"
+
+
+def test_grounded_question_whose_playbook_failed_to_load_stays_fast(monkeypatch):
+    used, _ = _run_chat_seeing_the_model(monkeypatch, "should we soften the confidentiality clause?",
+                                         playbook_fails=True)
+    assert used == "FAST"
+
+
+def test_an_empty_thinking_answer_falls_back_to_the_fast_model_once(monkeypatch):
+    seen = {}
+    _, out = _run_chat_seeing_the_model(monkeypatch, "should we soften the confidentiality clause?",
+                                        thinking_answers_nothing=True, seen=seen)
+    assert seen["calls"] == [("THINKING", "doc_chat"), ("FAST", "doc_chat_fast_fallback")]
+    assert out["llm_response"] == "answer from FAST"
+    assert seen["degradations"] == [("thinking_empty_answer", False)]
+
+
+def test_a_thinking_answer_is_not_asked_again(monkeypatch):
+    seen = {}
+    _run_chat_seeing_the_model(monkeypatch, "should we soften the confidentiality clause?", seen=seen)
+    assert seen["calls"] == [("THINKING", "doc_chat")]
+    assert "degradations" not in seen
+
+
+def test_the_models_reasoning_never_reaches_the_answer(monkeypatch):
+    _, out = _run_chat_seeing_the_model(monkeypatch, "should we soften the confidentiality clause?",
+                                        reasoning="PRIVATE CHAIN OF THOUGHT")
+    assert out["llm_response"] == "answer from THINKING"
+
+
+def test_thinking_model_is_built_from_the_think_settings(monkeypatch):
+    lr = importlib.import_module("skills.legal_research.legal_research")
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT_CHAT_THINK", "7777")
+    monkeypatch.setenv("CHAT_THINK_TEMPERATURE", "0.9")
+    monkeypatch.setenv("CHAT_THINK_TOP_P", "0.85")
+    monkeypatch.setenv("CHAT_THINK_TOP_K", "15")
+    get_settings.cache_clear()
+    lr._llm_cache.pop("chat_think", None)
+    try:
+        llm = lr._build_thinking_llm.__wrapped__()
+        assert (llm.reasoning, llm.temperature, llm.top_p, llm.top_k, llm.num_predict) == (True, 0.9, 0.85, 15, 7777)
+        assert llm.num_ctx == get_settings().ollama_num_ctx
+        assert lr._build_llm().reasoning is False      # the fast path is untouched
+    finally:
+        lr._llm_cache.pop("chat_think", None)
+        get_settings.cache_clear()
+
+
+def test_thinking_defaults_are_the_measured_ones():
+    s = get_settings()
+    assert s.chat_think_grounded is True
+    assert (s.chat_think_temperature, s.chat_think_top_p, s.chat_think_top_k) == (1.0, 0.95, 20)
+    assert s.ollama_num_predict_chat_think > 6143        # the most thinking measured on the 2026-11-25 replay
+
+
 # Prompt audit 2026-11-25: chat reused the REVIEW wrapper, whose "no output
 # formats beyond the playbook … produce ONLY what the playbook instructs"
 # forbade the chat's json edit blocks (gpt-oss answered with a full review;

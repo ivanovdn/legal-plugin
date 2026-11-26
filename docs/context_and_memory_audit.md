@@ -217,7 +217,7 @@ After the graph:
   - `build_context_breakdown` measures every part → `report.context_breakdown` → the pane's gauge (`ContextMeter`).
   - The backend computes `can_compact` and `auto_compact`. They decide whether the Condense button shows and whether the pane fires `POST /api/compact` automatically.
   - Each turn logs `[compaction] auto=… can=… pct=… truncated=…`.
-- **Model call** (`_build_llm`): `ChatOllama(temperature=0, reasoning=False, num_ctx=ollama_num_ctx, num_predict=ollama_num_predict_chat)`, with no tools. `num_ctx` must equal the server's window, or Ollama reloads the model.
+- **Model call**, with no tools. A grounded turn (the playbook attached, `chat_think_grounded` on) uses `_build_thinking_llm`: `ChatOllama(reasoning=True, temperature/top_p/top_k = chat_think_*, num_ctx=ollama_num_ctx, num_predict=ollama_num_predict_chat_think)`; the reasoning comes back apart from the answer and is never shown, parsed or stored. Any other turn uses `_build_llm`: `ChatOllama(temperature=0, reasoning=False, num_ctx=ollama_num_ctx, num_predict=ollama_num_predict_chat)`. `num_ctx` must equal the server's window, or Ollama reloads the model.
 - **Edit retry** (`_build_json_llm`) fires when the answer promised an edit but carried no edit block.
   - It is one `format="json"` call with the request, the full (uncapped) document and the first answer. It gets no history, preferences or grounding.
   - If it fails, the first answer is kept and `edit_retry_failed` is recorded.
@@ -417,7 +417,10 @@ All of these live in `config.py` and can be overridden from the environment.
 | `est_chars_per_token` | `4.89` | chars→tokens for the gauge and the review overflow check; measured on legal text |
 | `ollama_num_ctx` | `131072` | must equal the Ollama server's window, or the model reloads |
 | `ollama_num_predict_chat` / `_review` | `2048` / `8192` | output caps; a review's input headroom is `num_ctx − num_predict_review` |
-| `ollama_think_review` | `True` | reviews think; chat never does |
+| `ollama_think_review` | `True` | reviews think |
+| `chat_think_grounded` | `True` | a grounded chat turn thinks first; plain Q&A never does ([decision](decisions/2026-11-25-thinking-for-grounded-chat.md)) |
+| `ollama_num_predict_chat_think` | `8192` | output cap for a thinking chat turn; the reasoning counts against it (up to 6,143 tokens measured) |
+| `chat_think_temperature` / `_top_p` / `_top_k` | `1.0` / `0.95` / `20` | the Qwen3.6 card's thinking-mode sampling; its `min_p 0` and `presence_penalty 1.5` come from the model's Ollama Modelfile |
 
 **Grounding**
 

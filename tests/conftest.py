@@ -9,6 +9,8 @@ from pathlib import Path
 
 os.environ.setdefault("TRACING_ENABLED", "false")
 
+import importlib
+
 import pytest
 import yaml
 from fastapi import BackgroundTasks
@@ -72,6 +74,25 @@ def _no_model_server(monkeypatch):
         "api.turn_record.ollama_facts",
         lambda base_url, model: {"model_digest": "", "ollama_version": ""},
     )
+
+
+@pytest.fixture(autouse=True)
+def _thinking_model_follows_the_chat_fake(monkeypatch):
+    """A grounded doc-chat turn calls _build_thinking_llm, not _build_llm. Most
+    tests fake only _build_llm, and a grounded question then built a REAL
+    ChatOllama and called whatever Ollama answered on localhost (found
+    2026-11-25, adding thinking for grounded chat). Here the thinking builder
+    returns whatever _build_llm returns at call time, so a test's fake covers
+    both. Tests about which model ran fake the two separately; the real builder
+    stays reachable as `_build_thinking_llm.__wrapped__`."""
+    research = importlib.import_module("skills.legal_research.legal_research")
+    real = research._build_thinking_llm
+
+    def follow_the_chat_model():
+        return research._build_llm()
+
+    follow_the_chat_model.__wrapped__ = real
+    monkeypatch.setattr(research, "_build_thinking_llm", follow_the_chat_model)
 
 
 _span_exporter = InMemorySpanExporter()

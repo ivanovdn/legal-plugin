@@ -36,6 +36,8 @@ RECORDED: frozenset[str] = frozenset({
     "interrupt_enabled", "chat_history_n_turns", "chat_history_trim_chars",
     "max_review_iterations", "checkpoint_ttl_seconds", "ollama_num_ctx",
     "ollama_num_predict_chat", "ollama_num_predict_review", "ollama_think_review",
+    "chat_think_grounded", "ollama_num_predict_chat_think", "chat_think_temperature",
+    "chat_think_top_p", "chat_think_top_k",
     "chat_context_max_chars", "est_chars_per_token", "chat_conditional_grounding",
     "msa_max_chars", "conversation_store_enabled", "conversation_max_messages",
     "compaction_enabled", "compaction_keep_recent_messages", "compaction_min_quotes",

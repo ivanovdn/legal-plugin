@@ -101,6 +101,23 @@ class Settings(BaseSettings):
     # 2026-10-15 on Ollama 0.40.4: for qwen3.6, sending true and omitting the
     # field give the same content and the same `thinking` text.)
     ollama_think_review: bool = True
+    # Grounded doc chat (the turns that get the playbook: edits, firm positions,
+    # clause judgments) reasons before answering; plain Q&A stays on the fast,
+    # non-thinking path. Measured 2026-11-25 on 9 replayed pilot turns, 3 runs
+    # each, scored worst-run-counts (VM Phoenix project model-experiments):
+    # qwen3.6 thinking with the model card's thinking-mode sampling got 85% of
+    # runs right against 66% for today's non-thinking temperature 0, at a
+    # median 31 s against 7 s (max 98 s). Thinking used up to 6,143 output
+    # tokens, so it gets its own cap; 2,048 would cut it. The sampling is the
+    # Qwen3.6-35B-A3B card's "thinking mode, general tasks" set; its min_p 0 and
+    # presence_penalty 1.5 come from the model's Ollama Modelfile, which
+    # ChatOllama cannot set. Greedy decoding is what the card warns against in
+    # thinking mode, hence temperature 1 here (decision note 2026-11-25).
+    chat_think_grounded: bool = True
+    ollama_num_predict_chat_think: int = 8192
+    chat_think_temperature: float = 1.0
+    chat_think_top_p: float = 0.95
+    chat_think_top_k: int = 20
     # Derived from a 30s turn ceiling, not chosen. Measured on Spark 2026-08-21
     # (qwen3.6: prefill 1,397 tok/s, generation 51.4 tok/s):
     #     answer   400 tok / 51.4 tok/s        =   7.8s

@@ -12,7 +12,7 @@ AI-powered legal assistant for an internal legal team. Attorneys submit requests
 
 ## Constraints (Never Violate)
 
-1. **temperature=0.0** on all LLM calls
+1. **temperature=0.0** on every LLM call but one: a grounded doc-chat turn thinks first, at the model card's thinking-mode sampling (temperature 1.0), because the card warns against greedy decoding with thinking and it measured best on replayed pilot turns ([decision](decisions/2026-11-25-thinking-for-grounded-chat.md))
 2. **SKILL.md is the ceiling** — LLM strictly follows the playbook, no improvising from pretraining
 3. **Every research answer must cite a source** — no citation = high risk → escalate (`risk_assessor._check_citations`). A user-attached document counts as the source, and `contract_review` is rated from its own verdict rather than citations
 4. **contract_generation and drafting always → human_review** — no exceptions

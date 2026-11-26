@@ -73,6 +73,10 @@ PREFERENCES_LOAD_FAILED = "preferences_load_failed"
 MSA_LOOKUP_FAILED = "msa_lookup_failed"
 INTENT_CLASSIFICATION_FAILED = "intent_classification_failed"
 PLANNING_FAILED = "planning_failed"
+# A grounded chat turn's thinking model returned no answer and the fast model
+# answered instead: an answer lands, without the reasoning that made grounded
+# turns better (decision note 2026-11-25-thinking-for-grounded-chat).
+THINKING_EMPTY_ANSWER = "thinking_empty_answer"
 
 SILENT_REASONS = frozenset({
     CHAT_GROUNDING_FAILED,
@@ -82,6 +86,7 @@ SILENT_REASONS = frozenset({
     MSA_LOOKUP_FAILED,
     INTENT_CLASSIFICATION_FAILED,
     PLANNING_FAILED,
+    THINKING_EMPTY_ANSWER,
 })
 
 ALL_REASONS = FAILED_REASONS | ANNOUNCED_REASONS | SILENT_REASONS

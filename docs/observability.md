@@ -39,7 +39,7 @@ There are three request roots: **`query:<task_type>`** (renamed from `query` by 
 
 Afterwards, **`status = ERROR` on the root means exactly "the attorney did not get their answer."** Expect ERROR on *two* spans on a failed turn — the node says where it broke, the root says the attorney got nothing.
 
-### The vocabulary — closed, 23 codes, gated both ways
+### The vocabulary — closed, 24 codes, gated both ways
 
 Free-text reasons fragment into things you cannot filter on, so the codes are constants in `observability/degradations.py`, in three classes:
 
@@ -47,7 +47,7 @@ Free-text reasons fragment into things you cannot filter on, so the codes are co
 |---|---|---|---|
 | **1 — Failed** | No answer, or an error string as the answer | `mark_failed()` → span `ERROR` | 8 — `llm_call_failed`, `legal_research_failed`, `contract_generation_failed`, `compaction_failed`, `graph_invoke_failed`, `stateless_fallback_failed`, `resume_state_load_failed`, `resume_failed` |
 | **2 — Announced** | Answer lands, quality worse, attorney **meant** to be told — a banner only if that tab renders it ([drills 2 and 3](testing-observability.md)) | `record_degradation(announced=True)` | 8 — `checkpointer_unavailable`, `audit_write_failed`, `review_persist_failed`, `prior_review_load_failed`, `summary_load_failed`, `prior_conversation_load_failed`, `context_truncated`, `edit_retry_failed` |
-| **3 — Silent** | Answer lands, quality quietly worse, **nobody told** | `record_degradation(announced=False)` | 7 — `chat_grounding_failed`, `review_reconciliation_failed`, `compressible_history_read_failed`, `preferences_load_failed`, `msa_lookup_failed`, `intent_classification_failed`, `planning_failed` |
+| **3 — Silent** | Answer lands, quality quietly worse, **nobody told** | `record_degradation(announced=False)` | 8 — `chat_grounding_failed`, `review_reconciliation_failed`, `compressible_history_read_failed`, `preferences_load_failed`, `msa_lookup_failed`, `intent_classification_failed`, `planning_failed`, `thinking_empty_answer` (a grounded chat turn's thinking model returned no answer; the fast model answered instead) |
 | **4 — Telemetry self-catch** | Observability failing to observe | **nothing, on principle** | none — tracing reporting its own best-effort catches as application degradations is how a dashboard becomes decoration |
 
 `announced` has **no default**, on purpose: whether the attorney was told is exactly the thing you must not get wrong by accident. The convention is not invented here — `skills/legal_research/context.py` already used `memory_degraded` to mean *"the attorney was told"*, setting it on a store read failure and pointedly **not** on a reconciliation failure.
