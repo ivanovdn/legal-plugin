@@ -416,8 +416,9 @@ All of these live in `config.py` and can be overridden from the environment.
 | `chat_context_max_chars` | `150000` | the chat budget; above it the document is cut from the end. Derived from a ~30 s prefill ceiling |
 | `est_chars_per_token` | `4.89` | chars→tokens for the gauge and the review overflow check; measured on legal text |
 | `ollama_num_ctx` | `131072` | must equal the Ollama server's window, or the model reloads |
-| `ollama_num_predict_chat` / `_review` | `2048` / `8192` | output caps; a review's input headroom is `num_ctx − num_predict_review` |
+| `ollama_num_predict_chat` / `_review` | `2048` / `16384` | output caps, reasoning included; a review's input headroom is `num_ctx − num_predict_review` |
 | `ollama_think_review` | `True` | reviews think |
+| `review_temperature` / `_top_p` / `_top_k` / `_min_p` / `_presence_penalty` | `0.6` / `0.95` / `20` / `0` / `0` | the Qwen3.6 card's precise thinking set, contract reviews only; sent as raw options, so nothing comes from the Modelfile ([decision](decisions/2026-11-26-review-sampling.md)) |
 | `chat_think_grounded` | `True` | a grounded chat turn thinks first; plain Q&A never does ([decision](decisions/2026-11-25-thinking-for-grounded-chat.md)) |
 | `ollama_num_predict_chat_think` | `8192` | output cap for a thinking chat turn; the reasoning counts against it (up to 6,143 tokens measured) |
 | `chat_think_temperature` / `_top_p` / `_top_k` | `1.0` / `0.95` / `20` | the Qwen3.6 card's thinking-mode sampling; its `min_p 0` and `presence_penalty 1.5` come from the model's Ollama Modelfile |

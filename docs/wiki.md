@@ -1,6 +1,6 @@
 # Legal Plugin — Project Wiki
 
-> Last updated: 2026-11-25 | Python 3.12 | In production on the VM (SRV-AGENT-01) for an attorney pilot since 2026-10-08 — Word add-in on Mac and Windows, model qwen3.6 on Spark, traces in Phoenix | What shipped, and when: [Shipped Log](shipped-log.md)
+> Last updated: 2026-11-26 | Python 3.12 | In production on the VM (SRV-AGENT-01) for an attorney pilot since 2026-10-08 — Word add-in on Mac and Windows, model qwen3.6 on Spark, traces in Phoenix | What shipped, and when: [Shipped Log](shipped-log.md)
 
 ## What Is This
 
@@ -12,7 +12,7 @@ AI-powered legal assistant for an internal legal team. Attorneys submit requests
 
 ## Constraints (Never Violate)
 
-1. **temperature=0.0** on every LLM call but one: a grounded doc-chat turn thinks first, at the model card's thinking-mode sampling (temperature 1.0), because the card warns against greedy decoding with thinking and it measured best on replayed pilot turns ([decision](decisions/2026-11-25-thinking-for-grounded-chat.md))
+1. **temperature=0.0** on every LLM call but two, both of which think first, because the model card warns against greedy decoding with thinking: a grounded doc-chat turn, at the card's general thinking set (temperature 1.0), measured best on replayed pilot turns ([decision](decisions/2026-11-25-thinking-for-grounded-chat.md)); and a contract review, at the card's precise thinking set (temperature 0.6, presence penalty 0), measured best on the Trinetix templates ([decision](decisions/2026-11-26-review-sampling.md))
 2. **SKILL.md is the ceiling** — LLM strictly follows the playbook, no improvising from pretraining
 3. **Every research answer must cite a source** — no citation = high risk → escalate (`risk_assessor._check_citations`). A user-attached document counts as the source, and `contract_review` is rated from its own verdict rather than citations
 4. **contract_generation and drafting always → human_review** — no exceptions

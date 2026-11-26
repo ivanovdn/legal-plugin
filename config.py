@@ -86,9 +86,11 @@ class Settings(BaseSettings):
     # Chat replies are tiny in practice (13-373 chars observed), so 2048 is
     # already generous; a review legitimately emits ~4.6k tokens of tables, so
     # it gets its own, larger cap. Bounding these turns a degenerate loop into a
-    # truncated answer instead of a multi-minute stall.
+    # truncated answer instead of a multi-minute stall. The review cap counts
+    # thinking too: with the review sampling below, one BAA review in 21 used
+    # 10,691 tokens (measured 2026-11-26), which 8,192 would have cut mid-review.
     ollama_num_predict_chat: int = 2048
-    ollama_num_predict_review: int = 8192
+    ollama_num_predict_review: int = 16384
     # Whether a contract review reasons before answering. Sent explicitly so an
     # Ollama or model update cannot change it silently — until 2026-10-15 the
     # review sent no `think` field and ran on Ollama's default, which for
@@ -101,6 +103,20 @@ class Settings(BaseSettings):
     # 2026-10-15 on Ollama 0.40.4: for qwen3.6, sending true and omitting the
     # field give the same content and the same `thinking` text.)
     ollama_think_review: bool = True
+    # Contract review sampling (task_type contract_review only; the other
+    # llm_caller skills stay at temperature 0). Measured 2026-11-26 on the three
+    # Trinetix templates (NDA, BAA, MSA) on Spark, scored per run (VM Phoenix
+    # project model-experiments): the Qwen3.6-35B-A3B card's "thinking mode,
+    # precise tasks" set passed 17 of 21 runs against 8 of 12 for temperature 0,
+    # at the same 80 s median. The card's general thinking set (temperature 1,
+    # what grounded chat uses) passed 3 of 9: it missed blank fields on the BAA
+    # in every run. Raw Ollama options, so min_p and presence_penalty are set
+    # here and not left to the Modelfile (decision note 2026-11-26).
+    review_temperature: float = 0.6
+    review_top_p: float = 0.95
+    review_top_k: int = 20
+    review_min_p: float = 0.0
+    review_presence_penalty: float = 0.0
     # Grounded doc chat (the turns that get the playbook: edits, firm positions,
     # clause judgments) reasons before answering; plain Q&A stays on the fast,
     # non-thinking path. Measured 2026-11-25 on 9 replayed pilot turns, 3 runs

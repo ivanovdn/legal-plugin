@@ -38,6 +38,7 @@ RECORDED: frozenset[str] = frozenset({
     "ollama_num_predict_chat", "ollama_num_predict_review", "ollama_think_review",
     "chat_think_grounded", "ollama_num_predict_chat_think", "chat_think_temperature",
     "chat_think_top_p", "chat_think_top_k",
+    "review_temperature", "review_top_p", "review_top_k", "review_min_p", "review_presence_penalty",
     "chat_context_max_chars", "est_chars_per_token", "chat_conditional_grounding",
     "msa_max_chars", "conversation_store_enabled", "conversation_max_messages",
     "compaction_enabled", "compaction_keep_recent_messages", "compaction_min_quotes",

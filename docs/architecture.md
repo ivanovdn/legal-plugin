@@ -242,7 +242,7 @@ Attorney sends request
            │
            ▼
      ┌───────────┐
-     │ LLM_CALLER│  Ollama /api/chat, temperature=0.0
+     │ LLM_CALLER│  Ollama /api/chat; review_* sampling for a review, else temperature=0.0
      │           │  Uses skill-provided messages or default prompt
      └─────┬─────┘  Skips if agent skill already set llm_response
            │        Records full prompt + response on an LLM span

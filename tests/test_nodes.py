@@ -187,6 +187,44 @@ def test_llm_caller_sends_review_thinking_explicitly(monkeypatch, think):
     assert mock_post.call_args[1]["json"]["think"] is think
 
 
+def test_llm_caller_sends_the_review_sampling_settings_on_a_review(monkeypatch):
+    """A contract review samples with config.review_* (decision note
+    2026-11-26-review-sampling). Odd values prove the wiring: a hardcoded card
+    set would pass a test that only checked 0.6. Every option is sent, because
+    whatever is left out falls to the Modelfile (presence_penalty 1.5)."""
+    for name, value in {"REVIEW_TEMPERATURE": "0.31", "REVIEW_TOP_P": "0.77", "REVIEW_TOP_K": "13",
+                        "REVIEW_MIN_P": "0.02", "REVIEW_PRESENCE_PENALTY": "0.4"}.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "review"}}
+    with patch("graph.nodes.llm_caller.httpx.post", return_value=fake_response) as mock_post:
+        llm_caller(_make_state(request="Review this contract.", task_type="contract_review"))
+    options = mock_post.call_args[1]["json"]["options"]
+    num_predict = get_settings().ollama_num_predict_review
+    get_settings.cache_clear()
+    assert {k: options[k] for k in ("temperature", "top_p", "top_k", "min_p", "presence_penalty")} == {
+        "temperature": 0.31, "top_p": 0.77, "top_k": 13, "min_p": 0.02, "presence_penalty": 0.4}
+    assert options["num_predict"] == num_predict
+
+
+def test_llm_caller_keeps_temperature_zero_for_other_skills(monkeypatch):
+    """Only reviews were measured, so only reviews change: drafting and the other
+    llm_caller skills keep temperature 0 and send no other sampling option."""
+    monkeypatch.setenv("REVIEW_TEMPERATURE", "0.31")
+    get_settings.cache_clear()
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.json.return_value = {"message": {"content": "draft"}}
+    with patch("graph.nodes.llm_caller.httpx.post", return_value=fake_response) as mock_post:
+        llm_caller(_make_state(request="Draft a clause.", task_type="drafting"))
+    get_settings.cache_clear()
+    options = mock_post.call_args[1]["json"]["options"]
+    assert options["temperature"] == 0.0
+    assert not {"top_p", "top_k", "min_p", "presence_penalty"} & set(options)
+
+
 def test_llm_caller_handles_no_chunks(monkeypatch):
     """llm_caller works even with no retrieved chunks."""
     monkeypatch.setenv("LLM_MODEL", "qwen3.6:latest")

@@ -30,6 +30,21 @@ _DEFAULT_SYSTEM_PROMPT = """You are a legal assistant for an internal legal team
 _HISTORY_FREE_TASK_TYPES = frozenset({"contract_review"})
 
 
+def _sampling_options(settings, task_type: str) -> dict:
+    """Ollama sampling for this call. A contract review uses the measured review
+    set (config.review_*); every other skill that reaches this node keeps
+    temperature 0, which is all that was ever measured for them."""
+    if task_type != "contract_review":
+        return {"temperature": 0.0}
+    return {
+        "temperature": settings.review_temperature,
+        "top_p": settings.review_top_p,
+        "top_k": settings.review_top_k,
+        "min_p": settings.review_min_p,
+        "presence_penalty": settings.review_presence_penalty,
+    }
+
+
 def _build_context(chunks: list[dict]) -> str:
     """Format retrieved chunks as numbered context."""
     if not chunks:
@@ -45,7 +60,7 @@ def _build_context(chunks: list[dict]) -> str:
 
 @traced("llm_caller", kind="LLM")
 def llm_caller(state: LegalAgentState) -> LegalAgentState:
-    """Call Ollama with context + request. temperature=0.0 always."""
+    """Call Ollama with context + request. Sampling per _sampling_options."""
     if state.get("llm_response") and not state.get("messages"):
         logger.info("[llm_caller] llm_response already set by agent — skipping")
         return state
@@ -142,6 +157,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
         settings.ollama_base_url,
     )
     started = time.monotonic()
+    sampling = _sampling_options(settings, state.get("task_type", ""))
 
     try:
         response = httpx.post(
@@ -153,7 +169,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
                 # Explicit, never Ollama's default — see config.ollama_think_review.
                 "think": settings.ollama_think_review,
                 "options": {
-                    "temperature": 0.0,
+                    **sampling,
                     "num_ctx": settings.ollama_num_ctx,
                     # Bounded so a repetition loop truncates instead of
                     # running to the context limit (see config.py).
@@ -181,7 +197,7 @@ def llm_caller(state: LegalAgentState) -> LegalAgentState:
             metadata={
                 "task_type": state.get("task_type", ""),
                 "chunks_count": len(chunks),
-                "temperature": 0.0,
+                "temperature": sampling["temperature"],
             },
         )
         logger.info(

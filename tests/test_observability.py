@@ -431,6 +431,8 @@ def test_llm_caller_flags_review_input_over_headroom(monkeypatch):
     monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
         llm_model="m", ollama_base_url="http://x", ollama_num_ctx=1000,
         ollama_num_predict_chat=100, ollama_num_predict_review=500, ollama_think_review=True,
+        review_temperature=0.6, review_top_p=0.95, review_top_k=20, review_min_p=0.0,
+        review_presence_penalty=0.0,
         est_chars_per_token=4.0,
     ))
     state = {"request": "x" * 5000, "task_type": "contract_review", "retrieved_chunks": []}
@@ -457,6 +459,8 @@ def test_llm_caller_does_not_flag_review_within_headroom(monkeypatch):
     monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
         llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
         ollama_num_predict_chat=2048, ollama_num_predict_review=8192, ollama_think_review=True,
+        review_temperature=0.6, review_top_p=0.95, review_top_k=20, review_min_p=0.0,
+        review_presence_penalty=0.0,
         est_chars_per_token=4.89,
     ))
     state = {"request": "short request", "task_type": "contract_review", "retrieved_chunks": []}
@@ -485,6 +489,8 @@ def test_llm_caller_clears_stale_context_truncated_flag(monkeypatch):
     monkeypatch.setattr(mod, "get_settings", lambda: SimpleNamespace(
         llm_model="m", ollama_base_url="http://x", ollama_num_ctx=131072,
         ollama_num_predict_chat=2048, ollama_num_predict_review=8192, ollama_think_review=True,
+        review_temperature=0.6, review_top_p=0.95, review_top_k=20, review_min_p=0.0,
+        review_presence_penalty=0.0,
         est_chars_per_token=4.89,
     ))
     state = {
